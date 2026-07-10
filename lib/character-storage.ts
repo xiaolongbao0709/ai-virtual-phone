@@ -294,11 +294,15 @@ export function parseSillyTavernCharacterFromPng(
   buffer: ArrayBuffer
 ): CharacterImportData | null {
   const u8 = new Uint8Array(buffer);
-  const charaBase64 = readPngTextChunk(u8, "chara");
-  if (!charaBase64) return null;
+  // Try V2 (chara) then V3 (ccv3) keyword
+  let charaB64 = readPngTextChunk(u8, "chara");
+  if (!charaB64) {
+    charaB64 = readPngTextChunk(u8, "ccv3");
+  }
+  if (!charaB64) return null;
 
   try {
-    const jsonStr = decodeURIComponent(escape(atob(charaBase64)));
+    const jsonStr = decodeURIComponent(escape(atob(charaB64)));
     const obj = JSON.parse(jsonStr) as Record<string, unknown>;
 
     // V2 format: data field contains the actual character
@@ -350,7 +354,7 @@ export function parseSillyTavernCharacterFromPng(
  */
 export function isSillyTavernCharacterCard(buffer: ArrayBuffer): boolean {
   const u8 = new Uint8Array(buffer);
-  return readPngTextChunk(u8, "chara") !== null;
+  return readPngTextChunk(u8, "chara") !== null || readPngTextChunk(u8, "ccv3") !== null;
 }
 
 /**
