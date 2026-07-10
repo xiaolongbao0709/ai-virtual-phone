@@ -10,16 +10,10 @@
   SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6a2JhcGhmZ3RndmhiamhveHFhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MzY1NzYwNiwiZXhwIjoyMDk5MjMzNjA2fQ._TBx0xSfo4pud7lmk7vfYgWMWmr2bX3CPxrQyvCyX8E"
   ACCOUNT_GATE_SECRET = "float_account_gate_secret_2026"
   VERIFY_ADMIN_KEY = "float_admin_verify_key_2026"
-[build]
-  command = "npm run build"
-  publish = ".next"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# 瀛椾綋/妯″瀷/鍥剧墖鏄笉甯︽寚绾圭殑闈欐€佽祫婧愶紝浣撶Н澶э紙涓枃瀛椾綋 7~24MB銆?D 妯″瀷 10MB+锛夈€?
-# 璁句负涓€骞?immutable锛屾祻瑙堝櫒鍛戒腑鍚庡洖璁块浂甯﹀銆傛洿鏂拌繖浜涙枃浠舵椂璇锋敼鏂囦欢鍚嶏紙鍔犵増鏈悗缂€锛夛紝
-# 鍚﹀垯鏃у鎴风浼氫竴鐩寸敤缂撳瓨銆?
 [[headers]]
   for = "/fonts/*"
   [headers.values]
@@ -35,9 +29,6 @@
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 
-# 鍏朵綑绋冲畾闈欐€佽祫婧愶細HDR 鐜鍏夈€佸湴鍥捐竟鐣屾暟鎹€侀煶鏁堬紝浠ュ強缁勪欢/涓婚/瑁呴グ鍥剧瓑鐩綍銆?
-# 杩欎簺璧?fetch()/Audio()/Environment 鍔犺浇锛岀粫杩囦簡 SW 鎸夌被鍨嬬殑缂撳瓨锛岄渶 HTTP 澶村厹搴曘€?
-# 鍚屾牱锛氭洿鏂板唴瀹硅鏀规枃浠跺悕銆?
 [[headers]]
   for = "/hdri/*"
   [headers.values]
@@ -78,7 +69,6 @@
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 
-# 鏍圭洰褰曟暎鍥撅紙鍚夌ゥ鐗╁皬鍗枫€侀粯璁ゅ绾革級鈥斺€斿悓鏍锋敼鏂囦欢鍚嶆墠鏇存柊銆?
 [[headers]]
   for = "/mascot.png"
   [headers.values]
@@ -88,4 +78,3 @@
   for = "/default-wallpaper.webp"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
-
