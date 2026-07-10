@@ -72,11 +72,13 @@ export default function CharacterPage() {
             success++;
           } else {
             failed++;
+            console.error("Import failed for:", files[i].name);
           }
         } catch (e) {
           if (e instanceof Error && e.message === CHAR_BLOCKED_FIELDS) {
             blocked.push(files[i].name);
           } else {
+            console.error("Import error for", files[i].name, ":", e);
             failed++;
           }
         }
@@ -105,7 +107,7 @@ export default function CharacterPage() {
     if (!importResult) return "";
     const parts: string[] = [];
     if (importResult.success > 0) parts.push(`成功导入 ${importResult.success} 个角色`);
-    if (importResult.failed > 0) parts.push(`${importResult.failed} 个文件导入失败`);
+    if (importResult.failed > 0) parts.push(`${importResult.failed} 个文件导入失败（格式不支持或数据损坏）`);
     if (importResult.blocked.length > 0) parts.push(`${importResult.blocked.length} 个文件因包含不受支持的字段被阻止`);
     return parts.join("，");
   };
