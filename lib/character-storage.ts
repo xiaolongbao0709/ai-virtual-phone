@@ -1,4 +1,4 @@
-﻿import type { Character, CanvasBgItem } from "./character-types";
+import type { Character, CanvasBgItem } from "./character-types";
 import { normalizeTimeZone } from "./character-time";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 
@@ -17,10 +17,10 @@ const UNSUPPORTED_CHARACTER_IMPORT_FIELDS = [
 registerKvMigration(STORAGE_KEY);
 registerKvMigration(BG_ITEMS_STORAGE_KEY);
 
-// 鈹€鈹€ Read Cache (invalidated on writes) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ���� Read Cache (invalidated on writes) ��������������������
 let _charsCache: Character[] | null = null;
 
-// 鈹€鈹€ localStorage CRUD 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ���� localStorage CRUD ����������������������������������������������������������������
 
 export function generateWechatID(): string {
   const prefixes = ["138", "139", "150", "151", "158", "159", "170", "176", "186", "188", "199"];
@@ -135,7 +135,7 @@ export function createCharacter(
   };
 }
 
-// 鈹€鈹€ JSON import/export 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ���� JSON import/export ��������������������������������������������������������������
 
 export function exportCharacterAsJson(char: Character): void {
   const payload = {
@@ -166,7 +166,7 @@ export function parseCharacterFromJson(
   try {
     const obj = JSON.parse(text) as Record<string, unknown>;
 
-    // Helper: validate avatar 鈥?only accept data-URLs and http(s) URLs
+    // Helper: validate avatar ??only accept data-URLs and http(s) URLs
     function validAvatar(v: unknown): string | null {
       if (typeof v !== "string" || !v.trim()) return null;
       const s = v.trim();
@@ -198,8 +198,19 @@ export function parseCharacterFromJson(
   }
 }
 
-// 鈹€鈹€ PNG import/export 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ���� PNG import/export ����������������������������������������������������������������
 
+/**
+ * Decode latin1/ISO-8859-1 bytes to string without TextDecoder('latin1'),
+ * which may not be available in all Edge/worker runtimes.
+ */
+function decodeLatin1(u8: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < u8.length; i++) {
+    s += String.fromCharCode(u8[i]);
+  }
+  return s;
+}
 function readPngTextChunk(u8: Uint8Array, keyword: string): string | null {
   const sig = [137, 80, 78, 71, 13, 10, 26, 10];
   for (let i = 0; i < 8; i++) {
@@ -230,8 +241,8 @@ function readPngTextChunk(u8: Uint8Array, keyword: string): string | null {
       if (sep >= 0) {
         const kw = new TextDecoder().decode(data.subarray(0, sep));
         if (kw === keyword) {
-          // tEXt 鏂囨湰鏄?latin1 缂栫爜
-          return new TextDecoder("latin1").decode(data.subarray(sep + 1));
+          // tEXt text is latin1; use manual decode for compatibility
+          return decodeLatin1(data.subarray(sep + 1));
         }
       }
     } else if (type === "iTXt") {
@@ -365,7 +376,7 @@ export function parseCharacterFromAnyPng(
 }
 
 
-// 鈹€鈹€ CRC32 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ���� CRC32 ����������������������������������������������������������������������������������������
 
 let _crcTable: Uint32Array | null = null;
 
@@ -393,7 +404,7 @@ function crc32(buf: Uint8Array): number {
 
 function buildPngTextChunk(keyword: string, text: string): Uint8Array {
   const kwBytes = new TextEncoder().encode(keyword);
-  // base64 鏄函 ASCII锛岀敤 latin1 瀛樺偍
+  // base64 �Ǵ� ASCII���� latin1 �洢
   const textBytes = new Uint8Array(text.length);
   for (let i = 0; i < text.length; i++) textBytes[i] = text.charCodeAt(i);
   const dataLen = kwBytes.length + 1 + textBytes.length;
@@ -418,7 +429,7 @@ function buildPngTextChunk(keyword: string, text: string): Uint8Array {
 }
 
 function injectPngTextChunk(pngBytes: Uint8Array, chunk: Uint8Array): Uint8Array {
-  // 鍦?IHDR 涔嬪悗鎻掑叆锛堝亸绉婚噺 = 8绛惧悕 + 4闀垮害 + 4绫诲瀷 + 13鏁版嵁 + 4CRC = 33锛?
+  // ??IHDR ֮����루ƫ���� = 8ǩ�� + 4���� + 4���� + 13���� + 4CRC = 33??
   const insertAt = 33;
   const result = new Uint8Array(pngBytes.length + chunk.length);
   result.set(pngBytes.subarray(0, insertAt), 0);
@@ -510,10 +521,10 @@ export async function exportCharacterAsPng(char: Character): Promise<void> {
   triggerDownload(blob, `${sanitizeFilename(char.name)}.png`);
 }
 
-// 鈹€鈹€ 宸ュ叿鍑芥暟 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ���� ���ߺ��� ����������������������������������������������������������������������������������
 
 function sanitizeFilename(name: string): string {
-  return (name || "瑙掕壊").replace(/[/\\:*?"<>|]/g, "_").slice(0, 60);
+  return (name || "��ɫ").replace(/[/\\:*?"<>|]/g, "_").slice(0, 60);
 }
 
 async function triggerDownload(blob: Blob, filename: string): Promise<void> {
