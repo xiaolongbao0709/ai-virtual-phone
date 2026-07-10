@@ -1,4 +1,4 @@
-import type { Character, CanvasBgItem } from "./character-types";
+﻿import type { Character, CanvasBgItem } from "./character-types";
 import { normalizeTimeZone } from "./character-time";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 
@@ -17,10 +17,10 @@ const UNSUPPORTED_CHARACTER_IMPORT_FIELDS = [
 registerKvMigration(STORAGE_KEY);
 registerKvMigration(BG_ITEMS_STORAGE_KEY);
 
-// ── Read Cache (invalidated on writes) ──────────
+// 鈹€鈹€ Read Cache (invalidated on writes) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 let _charsCache: Character[] | null = null;
 
-// ── localStorage CRUD ────────────────────────────────
+// 鈹€鈹€ localStorage CRUD 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 export function generateWechatID(): string {
   const prefixes = ["138", "139", "150", "151", "158", "159", "170", "176", "186", "188", "199"];
@@ -135,7 +135,7 @@ export function createCharacter(
   };
 }
 
-// ── JSON import/export ───────────────────────────────
+// 鈹€鈹€ JSON import/export 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 export function exportCharacterAsJson(char: Character): void {
   const payload = {
@@ -166,7 +166,7 @@ export function parseCharacterFromJson(
   try {
     const obj = JSON.parse(text) as Record<string, unknown>;
 
-    // Helper: validate avatar — only accept data-URLs and http(s) URLs
+    // Helper: validate avatar 鈥?only accept data-URLs and http(s) URLs
     function validAvatar(v: unknown): string | null {
       if (typeof v !== "string" || !v.trim()) return null;
       const s = v.trim();
@@ -198,7 +198,7 @@ export function parseCharacterFromJson(
   }
 }
 
-// ── PNG import/export ────────────────────────────────
+// 鈹€鈹€ PNG import/export 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function readPngTextChunk(u8: Uint8Array, keyword: string): string | null {
   const sig = [137, 80, 78, 71, 13, 10, 26, 10];
@@ -230,7 +230,7 @@ function readPngTextChunk(u8: Uint8Array, keyword: string): string | null {
       if (sep >= 0) {
         const kw = new TextDecoder().decode(data.subarray(0, sep));
         if (kw === keyword) {
-          // tEXt 文本是 latin1 编码
+          // tEXt 鏂囨湰鏄?latin1 缂栫爜
           return new TextDecoder("latin1").decode(data.subarray(sep + 1));
         }
       }
@@ -274,8 +274,105 @@ export function parseCharacterFromPng(
     return null;
   }
 }
+/**
+ * Parse a SillyTavern V2 character card from a PNG buffer.
+ * SillyTavern cards store character data in a `chara` tEXt chunk.
+ * V2 format: JSON with `data` field containing character info.
+ */
+export function parseSillyTavernCharacterFromPng(
+  buffer: ArrayBuffer
+): CharacterImportData | null {
+  const u8 = new Uint8Array(buffer);
+  const charaBase64 = readPngTextChunk(u8, "chara");
+  if (!charaBase64) return null;
 
-// ── CRC32 ────────────────────────────────────────────
+  try {
+    const jsonStr = decodeURIComponent(escape(atob(charaBase64)));
+    const obj = JSON.parse(jsonStr) as Record<string, unknown>;
+
+    // V2 format: data field contains the actual character
+    const data = (typeof obj.data === "object" && obj.data !== null)
+      ? obj.data as Record<string, unknown>
+      : obj;
+    const specVersion = obj.spec ?? obj.spec_version ?? "v1";
+
+    if (UNSUPPORTED_CHARACTER_IMPORT_FIELDS.some((field) => field in data || field in obj)) {
+      throw new Error(CHAR_BLOCKED_FIELDS);
+    }
+
+    // Helper: validate avatar
+    function validAvatar(v: unknown): string | null {
+      if (typeof v !== "string" || !v.trim()) return null;
+      const s = v.trim();
+      if (s === "none") return null;
+      if (s.startsWith("data:") || s.startsWith("http://") || s.startsWith("https://")) return s;
+      return null;
+    }
+
+    // Extract avatar from the PNG image data if the card embeds it
+    let avatarUrl: string | null = validAvatar(data.avatar);
+    if (!avatarUrl) {
+      // Try extracting avatar from the PNG itself (SillyTavern often stores the card image as the avatar)
+      avatarUrl = pngToDataUrl(u8);
+    }
+
+    const name = String(data.name ?? obj.name ?? "");
+    const description = String(data.description ?? obj.description ?? "");
+    const personality = String(data.personality ?? obj.personality ?? "");
+
+    return {
+      name: name.trim() || "Imported Character",
+      persona: [description, personality].filter(Boolean).join("\n\n"),
+      avatar: avatarUrl,
+      personality: personality || undefined,
+      tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
+      wechatID: undefined,
+      timeZone: undefined,
+    };
+  } catch (e) {
+    if (e instanceof Error && e.message === CHAR_BLOCKED_FIELDS) throw e;
+    return null;
+  }
+}
+
+/**
+ * Try to detect if a PNG buffer contains a SillyTavern character card
+ * (has a `chara` tEXt chunk).
+ */
+export function isSillyTavernCharacterCard(buffer: ArrayBuffer): boolean {
+  const u8 = new Uint8Array(buffer);
+  return readPngTextChunk(u8, "chara") !== null;
+}
+
+/**
+ * Convert the first frame of a PNG to a data URL for use as avatar.
+ */
+function pngToDataUrl(u8: Uint8Array): string {
+  const blob = new Blob([u8.buffer as ArrayBuffer], { type: "image/png" });
+  return URL.createObjectURL(blob);
+}
+
+/**
+ * Universal character card parser: tries native format first, then SillyTavern.
+ */
+export function parseCharacterFromAnyPng(
+  buffer: ArrayBuffer
+): CharacterImportData | null {
+  // Try native float format first
+  const nativeResult = parseCharacterFromPng(buffer);
+  if (nativeResult) return nativeResult;
+
+  // Try SillyTavern format
+  try {
+    return parseSillyTavernCharacterFromPng(buffer);
+  } catch (e) {
+    if (e instanceof Error && e.message === CHAR_BLOCKED_FIELDS) throw e;
+    return null;
+  }
+}
+
+
+// 鈹€鈹€ CRC32 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 let _crcTable: Uint32Array | null = null;
 
@@ -303,7 +400,7 @@ function crc32(buf: Uint8Array): number {
 
 function buildPngTextChunk(keyword: string, text: string): Uint8Array {
   const kwBytes = new TextEncoder().encode(keyword);
-  // base64 是纯 ASCII，用 latin1 存储
+  // base64 鏄函 ASCII锛岀敤 latin1 瀛樺偍
   const textBytes = new Uint8Array(text.length);
   for (let i = 0; i < text.length; i++) textBytes[i] = text.charCodeAt(i);
   const dataLen = kwBytes.length + 1 + textBytes.length;
@@ -328,7 +425,7 @@ function buildPngTextChunk(keyword: string, text: string): Uint8Array {
 }
 
 function injectPngTextChunk(pngBytes: Uint8Array, chunk: Uint8Array): Uint8Array {
-  // 在 IHDR 之后插入（偏移量 = 8签名 + 4长度 + 4类型 + 13数据 + 4CRC = 33）
+  // 鍦?IHDR 涔嬪悗鎻掑叆锛堝亸绉婚噺 = 8绛惧悕 + 4闀垮害 + 4绫诲瀷 + 13鏁版嵁 + 4CRC = 33锛?
   const insertAt = 33;
   const result = new Uint8Array(pngBytes.length + chunk.length);
   result.set(pngBytes.subarray(0, insertAt), 0);
@@ -420,10 +517,10 @@ export async function exportCharacterAsPng(char: Character): Promise<void> {
   triggerDownload(blob, `${sanitizeFilename(char.name)}.png`);
 }
 
-// ── 工具函数 ─────────────────────────────────────────
+// 鈹€鈹€ 宸ュ叿鍑芥暟 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function sanitizeFilename(name: string): string {
-  return (name || "角色").replace(/[/\\:*?"<>|]/g, "_").slice(0, 60);
+  return (name || "瑙掕壊").replace(/[/\\:*?"<>|]/g, "_").slice(0, 60);
 }
 
 async function triggerDownload(blob: Blob, filename: string): Promise<void> {
