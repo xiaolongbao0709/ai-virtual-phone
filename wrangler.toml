@@ -1,15 +1,3 @@
 ﻿name = "float"
 compatibility_date = "2024-11-01"
 pages_build_output_dir = ".next"
-
-[build]
-command = "npm run build"
-
-[build.environment]
-NEXT_PUBLIC_SELF_HOSTED_MODE = "false"
-NEXT_PUBLIC_SUPABASE_URL = "https://gzkbaphfgtgvhbjhoxqa.supabase.co"
-NEXT_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6a2JhcGhmZ3RndmhiamhveHFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2NTc60MDYsImV4cCI6MjA5OTIzMzYwNn0.Hyk-jEH7aN60YGylsJ4mNQV18Gt4-f1BRKyYVx05jg8"
-SUPABASE_URL = "https://gzkbaphfgtgvhbjhoxqa.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6a2JhcGhmZ3RndmhiamhveHFhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MzY1NzYwNiwiZXhwIjoyMDk5MjMzNjA2fQ._TBx0xSfo4pud7lmk7vfYgWMWmr2bX3CPxrQyvCyX8E"
-ACCOUNT_GATE_SECRET = "float_account_gate_secret_2026"
-VERIFY_ADMIN_KEY = "float_admin_verify_key_2026"
