@@ -1,3 +1,15 @@
+﻿[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NEXT_PUBLIC_SELF_HOSTED_MODE = "false"
+  NEXT_PUBLIC_SUPABASE_URL = "https://gzkbaphfgtgvhbjhoxqa.supabase.co"
+  NEXT_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6a2JhcGhmZ3RndmhiamhveHFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2NTc2MDYsImV4cCI6MjA5OTIzMzYwNn0.Hyk-jEH7aN60YGylsJ4mNQV18Gt4-f1BRKyYVx05jg8"
+  SUPABASE_URL = "https://gzkbaphfgtgvhbjhoxqa.supabase.co"
+  SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6a2JhcGhmZ3RndmhiamhveHFhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MzY1NzYwNiwiZXhwIjoyMDk5MjMzNjA2fQ._TBx0xSfo4pud7lmk7vfYgWMWmr2bX3CPxrQyvCyX8E"
+  ACCOUNT_GATE_SECRET = "float_account_gate_secret_2026"
+  VERIFY_ADMIN_KEY = "float_admin_verify_key_2026"
 [build]
   command = "npm run build"
   publish = ".next"
@@ -5,9 +17,9 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# 字体/模型/图片是不带指纹的静态资源，体积大（中文字体 7~24MB、3D 模型 10MB+）。
-# 设为一年 immutable，浏览器命中后回访零带宽。更新这些文件时请改文件名（加版本后缀），
-# 否则旧客户端会一直用缓存。
+# 瀛椾綋/妯″瀷/鍥剧墖鏄笉甯︽寚绾圭殑闈欐€佽祫婧愶紝浣撶Н澶э紙涓枃瀛椾綋 7~24MB銆?D 妯″瀷 10MB+锛夈€?
+# 璁句负涓€骞?immutable锛屾祻瑙堝櫒鍛戒腑鍚庡洖璁块浂甯﹀銆傛洿鏂拌繖浜涙枃浠舵椂璇锋敼鏂囦欢鍚嶏紙鍔犵増鏈悗缂€锛夛紝
+# 鍚﹀垯鏃у鎴风浼氫竴鐩寸敤缂撳瓨銆?
 [[headers]]
   for = "/fonts/*"
   [headers.values]
@@ -23,9 +35,9 @@
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 
-# 其余稳定静态资源：HDR 环境光、地图边界数据、音效，以及组件/主题/装饰图等目录。
-# 这些走 fetch()/Audio()/Environment 加载，绕过了 SW 按类型的缓存，需 HTTP 头兜底。
-# 同样：更新内容请改文件名。
+# 鍏朵綑绋冲畾闈欐€佽祫婧愶細HDR 鐜鍏夈€佸湴鍥捐竟鐣屾暟鎹€侀煶鏁堬紝浠ュ強缁勪欢/涓婚/瑁呴グ鍥剧瓑鐩綍銆?
+# 杩欎簺璧?fetch()/Audio()/Environment 鍔犺浇锛岀粫杩囦簡 SW 鎸夌被鍨嬬殑缂撳瓨锛岄渶 HTTP 澶村厹搴曘€?
+# 鍚屾牱锛氭洿鏂板唴瀹硅鏀规枃浠跺悕銆?
 [[headers]]
   for = "/hdri/*"
   [headers.values]
@@ -66,7 +78,7 @@
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 
-# 根目录散图（吉祥物小卷、默认壁纸）——同样改文件名才更新。
+# 鏍圭洰褰曟暎鍥撅紙鍚夌ゥ鐗╁皬鍗枫€侀粯璁ゅ绾革級鈥斺€斿悓鏍锋敼鏂囦欢鍚嶆墠鏇存柊銆?
 [[headers]]
   for = "/mascot.png"
   [headers.values]
@@ -76,3 +88,4 @@
   for = "/default-wallpaper.webp"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+
