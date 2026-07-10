@@ -72,7 +72,33 @@ export default function CharacterPage() {
             success++;
           } else {
             failed++;
-            console.error("Import failed for:", files[i].name);
+            // Log detailed info for debugging
+            console.error("Import failed for:", files[i].name, "size:", files[i].size, "type:", files[i].type);
+            if (isPng) {
+              try {
+                const b = new Uint8Array(buffer);
+                console.log("PNG signature valid:", b[0]===137 && b[1]===80 && b[2]===78 && b[3]===71);
+                // Show first readable chunk info
+                let pos = 8;
+                while (pos + 12 <= b.length) {
+                  const len = (b[pos]<<24)|(b[pos+1]<<16)|(b[pos+2]<<8)|b[pos+3];
+                  const t = String.fromCharCode(b[pos+4],b[pos+5],b[pos+6],b[pos+7]);
+                  if (/^[A-Za-z]{4}$/.test(t)) {
+                    console.log("PNG chunk:", t, "len:", len);
+                    if (t === "tEXt" || t === "iTXt") {
+                      let sep = -1;
+                      for (let i = pos+8; i < pos+8+len; i++) { if (b[i]===0) { sep = i-(pos+8); break; } }
+                      if (sep >= 0) {
+                        const kw = new TextDecoder().decode(b.slice(pos+8, pos+8+sep));
+                        console.log("  keyword:", kw, "value_len:", len-sep-1);
+                      }
+                    }
+                  }
+                  pos += 12 + len;
+                  if (pos > b.length) break;
+                }
+              } catch(e) { console.error("Debug parse error:", e); }
+            }
           }
         } catch (e) {
           if (e instanceof Error && e.message === CHAR_BLOCKED_FIELDS) {
