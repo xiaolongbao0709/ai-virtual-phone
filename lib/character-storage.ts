@@ -296,9 +296,7 @@ export function parseSillyTavernCharacterFromPng(
       : obj;
     const specVersion = obj.spec ?? obj.spec_version ?? "v1";
 
-    if (UNSUPPORTED_CHARACTER_IMPORT_FIELDS.some((field) => field in data || field in obj)) {
-      throw new Error(CHAR_BLOCKED_FIELDS);
-    }
+    // SillyTavern cards naturally contain greeting/first_mes fields - skip the check
 
     // Helper: validate avatar
     function validAvatar(v: unknown): string | null {
@@ -363,12 +361,7 @@ export function parseCharacterFromAnyPng(
   if (nativeResult) return nativeResult;
 
   // Try SillyTavern format
-  try {
-    return parseSillyTavernCharacterFromPng(buffer);
-  } catch (e) {
-    if (e instanceof Error && e.message === CHAR_BLOCKED_FIELDS) throw e;
-    return null;
-  }
+  return parseSillyTavernCharacterFromPng(buffer);
 }
 
 
