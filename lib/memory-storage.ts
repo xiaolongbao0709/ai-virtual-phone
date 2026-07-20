@@ -91,6 +91,18 @@ export async function loadMemoryEntries(characterId: string): Promise<MemoryEntr
     }
 }
 
+export async function loadMemoryEntryById(id: string): Promise<MemoryEntry | null> {
+    const db = await openDb();
+    if (!db) return null;
+    try {
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const entry = await runRequest(tx.objectStore(STORE_NAME).get(id));
+        return entry ?? null;
+    } finally {
+        db.close();
+    }
+}
+
 export async function loadMemoryEntriesByType(
     characterId: string,
     type: MemoryEntry["type"],
@@ -131,6 +143,25 @@ export async function deleteMemoryEntries(ids: string[]): Promise<void> {
     } finally {
         db.close();
     }
+}
+
+export async function touchMemoryReadState(id: string): Promise<void> {
+    const entry = await loadMemoryEntryById(id);
+    if (!entry) return;
+
+    const now = new Date().toISOString();
+    const readCount = Number(entry.metadata?.readCount ?? 0);
+    const nextEntry: MemoryEntry = {
+        ...entry,
+        updatedAt: now,
+        metadata: {
+            ...entry.metadata,
+            lastReadAt: now,
+            readCount: Number.isFinite(readCount) ? Math.max(0, readCount + 1) : 1,
+        },
+    };
+
+    await saveMemoryEntry(nextEntry);
 }
 
 export async function deleteCharacterMemories(characterId: string): Promise<void> {
