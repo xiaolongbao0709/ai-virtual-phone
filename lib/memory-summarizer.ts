@@ -146,9 +146,14 @@ export async function runSummarizationPipeline(
         createdAt: now,
         updatedAt: now,
         metadata: {
+            status: "active",
+            lastReadAt: now,
+            readCount: 0,
             summarizedEvents: allEntries.length,
             timeSpan: `${earliest} ~ ${latest}`,
             sourceSessionIds,
+            valence: 0.5,
+            arousal: 0.5,
         },
     };
     await saveMemoryEntry(longTermEntry);

@@ -26,7 +26,7 @@ import { loadNativeTimeline, type NativeTimelineEntry } from "@/lib/short-term-a
 import { runSummarizationPipeline } from "@/lib/memory-summarizer";
 import { runCoreMemoryPipeline } from "@/lib/core-memory-builder";
 import { resolveAuxiliaryApiConfig, resolveUserIdentity } from "@/lib/settings-storage";
-import { generateEmbedding, resolveEmbeddingModel } from "@/lib/memory-embedding";
+import { generateEmbedding, resolveEmbeddingModel, computeMemoryRecencyScore } from "@/lib/memory-embedding";
 import { BINDING_ACCENTS } from "@/lib/ui-accent-colors";
 
 type MemoryView = "list" | "detail" | "settings";
@@ -121,6 +121,56 @@ function relativeTime(isoStr: string): string {
     const weeks = Math.floor(days / 7);
     if (weeks < 4) return `${weeks}周前`;
     return `${Math.floor(days / 30)}个月前`;
+}
+
+function fmtMetricValue(value: number | undefined, digits = 2): string {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+    return value.toFixed(digits);
+}
+
+function getMemoryStatusLabel(status?: string): string {
+    switch (status) {
+        case "sleeping": return "睡眠";
+        case "archived": return "归档";
+        case "active":
+        default: return "活跃";
+    }
+}
+
+function renderMemoryMetricPills(entry: MemoryEntry) {
+    const recencyScore = computeMemoryRecencyScore(entry);
+    const readCount = Number(entry.metadata?.readCount ?? 0);
+    const status = getMemoryStatusLabel(entry.metadata?.status);
+    const valence = entry.metadata?.valence;
+    const arousal = entry.metadata?.arousal;
+
+    const pills = [
+        { label: "重要度", value: fmtMetricValue(entry.importance, 2) },
+        { label: "衰减", value: fmtMetricValue(recencyScore, 2) },
+        { label: "状态", value: status },
+        { label: "阅读", value: `${Number.isFinite(readCount) ? Math.max(0, readCount) : 0}次` },
+        ...(typeof valence === "number" ? [{ label: "效价", value: fmtMetricValue(valence, 2) }] : []),
+        ...(typeof arousal === "number" ? [{ label: "唤醒", value: fmtMetricValue(arousal, 2) }] : []),
+    ];
+
+    return (
+        <div className="flex flex-wrap gap-2 mt-3" style={{ alignItems: "center" }}>
+            {pills.map((pill, index) => (
+                <span
+                    key={`${entry.id}-metric-${index}`}
+                    className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-4"
+                    style={{
+                        borderColor: "rgba(255,255,255,0.14)",
+                        background: "rgba(255,255,255,0.04)",
+                        color: "#c7d2fe",
+                    }}
+                >
+                    <span style={{ opacity: 0.8 }}>{pill.label}</span>
+                    <span style={{ fontWeight: 700, color: "#fff" }}>{pill.value}</span>
+                </span>
+            ))}
+        </div>
+    );
 }
 
 type CharacterMemoryInfo = {
@@ -583,6 +633,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                         : entry.content
                                 }
                             </div>
+                            {renderMemoryMetricPills(entry)}
                         </div>
                     ))
                 )}

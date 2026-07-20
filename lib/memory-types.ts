@@ -2,6 +2,19 @@
 
 import type { ContentAppId } from "./settings-types";
 
+export type MemoryStatus = "active" | "sleeping" | "archived";
+
+export type MemoryMetadata = {
+    status?: MemoryStatus;
+    lastReadAt?: string;
+    readCount?: number;
+    valence?: number;
+    arousal?: number;
+    summarizedEvents?: number;
+    timeSpan?: string;
+    sourceSessionIds?: string[];
+};
+
 export type MemoryEntry = {
     id: string;
     characterId: string;
@@ -13,7 +26,7 @@ export type MemoryEntry = {
     createdAt: string;
     updatedAt: string;
     sourceMessageIds?: string[];
-    metadata?: Record<string, unknown>;
+    metadata?: MemoryMetadata;
 };
 
 export type MemoryConfig = {
@@ -29,6 +42,11 @@ export type MemoryConfig = {
     summarizationPrompt: string;            // user-editable prompt template for memory summarization
     coreMemoryPrompt: string;               // user-editable prompt template for core-memory extraction
     vnSummaryPrompt: string;                // user-editable prompt for VN chapter summarization
+    recallAlpha: number;                    // vector weight in hybrid recall score
+    recallBeta: number;                     // importance weight in hybrid recall score
+    recallGamma: number;                    // recency/decay weight in hybrid recall score
+    recallHalfLifeHours: number;            // exponential decay half-life in hours
+    recallReadBoost: number;                // per-read boost factor for recency score
 };
 
 export type MemorySearchResult = {
@@ -101,4 +119,9 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
     summarizationPrompt: DEFAULT_SUMMARIZATION_PROMPT,
     coreMemoryPrompt: DEFAULT_CORE_MEMORY_PROMPT,
     vnSummaryPrompt: "",
+    recallAlpha: 0.55,
+    recallBeta: 0.25,
+    recallGamma: 0.20,
+    recallHalfLifeHours: 24,
+    recallReadBoost: 0.7,
 };

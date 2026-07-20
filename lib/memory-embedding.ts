@@ -2,8 +2,9 @@
 // Embedding generation + vector/keyword search for memory retrieval.
 
 import type { ApiConfig } from "./settings-types";
-import type { MemoryEntry, MemorySearchResult } from "./memory-types";
+import type { MemoryEntry, MemorySearchResult, MemoryStatus } from "./memory-types";
 import { determineBaseUrl, buildRequestHeaders } from "./api-helpers";
+import { loadMemoryConfig, touchMemoryReadState } from "./memory-storage";
 
 // ── Provider → Embedding Model Mapping ──
 
@@ -99,6 +100,77 @@ export function cosineSimilarity(a: number[], b: number[]): number {
     return denom === 0 ? 0 : dot / denom;
 }
 
+// ── Memory status + recency helpers ──
+
+function normalizeImportance(importance: number | undefined): number {
+    if (!Number.isFinite(importance)) return 0;
+    return Math.max(0, Math.min(1, importance));
+}
+
+function getMemoryStatus(entry: MemoryEntry): MemoryStatus {
+    const status = entry.metadata?.status;
+    if (status === "active" || status === "sleeping" || status === "archived") {
+        return status;
+    }
+    return "active";
+}
+
+function statusAwareSemanticScore(entry: MemoryEntry, semanticScore: number): number {
+    const status = getMemoryStatus(entry);
+    if (status === "sleeping") {
+        return semanticScore * 0.75;
+    }
+    return semanticScore;
+}
+
+function getReadCount(entry: MemoryEntry): number {
+    const count = Number(entry.metadata?.readCount ?? 0);
+    return Number.isFinite(count) ? Math.max(0, count) : 0;
+}
+
+function getLastReadAt(entry: MemoryEntry): string | null {
+    const value = entry.metadata?.lastReadAt;
+    return typeof value === "string" && value.trim() ? value : null;
+}
+
+export function computeMemoryRecencyScore(
+    entry: MemoryEntry,
+    now: number = Date.now(),
+    options?: { halfLifeHours?: number; readBoost?: number }
+): number {
+    const config = loadMemoryConfig();
+    const halfLifeHours = options?.halfLifeHours ?? config.recallHalfLifeHours ?? 24;
+    const readBoost = options?.readBoost ?? config.recallReadBoost ?? 0.7;
+    const lastReadAt = getLastReadAt(entry) ?? entry.updatedAt ?? entry.createdAt;
+    const lastReadMs = new Date(lastReadAt).getTime();
+    if (!Number.isFinite(lastReadMs)) {
+        return 0;
+    }
+    const ageHours = Math.max(0, (now - lastReadMs) / 3600000);
+    const decay = Math.exp(-(Math.log(2) / Math.max(halfLifeHours, 1)) * ageHours);
+    const readCountBoost = 1 + readBoost * getReadCount(entry);
+    return Math.max(0, Math.min(1, decay * readCountBoost));
+}
+
+export function scoreMemoryEntry(
+    entry: MemoryEntry,
+    semanticScore: number,
+    now: number = Date.now()
+): number {
+    const config = loadMemoryConfig();
+    const vectorWeight = Number.isFinite(config.recallAlpha) ? config.recallAlpha : 0.55;
+    const importanceWeight = Number.isFinite(config.recallBeta) ? config.recallBeta : 0.25;
+    const recencyWeight = Number.isFinite(config.recallGamma) ? config.recallGamma : 0.20;
+
+    const normalizedSemantic = Math.max(0, Math.min(1, statusAwareSemanticScore(entry, semanticScore)));
+    const normalizedImportance = normalizeImportance(entry.importance);
+    const recencyScore = computeMemoryRecencyScore(entry, now);
+
+    return vectorWeight * normalizedSemantic
+        + importanceWeight * normalizedImportance
+        + recencyWeight * recencyScore;
+}
+
 // ── Search ──
 
 export async function searchMemories(
@@ -109,24 +181,44 @@ export async function searchMemories(
 ): Promise<MemorySearchResult[]> {
     if (memories.length === 0) return [];
 
+    const activeMemories = memories.filter(entry => getMemoryStatus(entry) !== "archived");
+    if (activeMemories.length === 0) return [];
+
+    const now = Date.now();
+    const semanticMap = new Map<string, number>();
+
     // Try vector search if the config resolves to an embedding model
     if (apiConfig && resolveEmbeddingModel(apiConfig)) {
         const queryEmbedding = await generateEmbedding(query, apiConfig);
         if (queryEmbedding) {
-            const withEmbeddings = memories.filter(m => m.embedding && m.embedding.length > 0);
+            const withEmbeddings = activeMemories.filter(m => m.embedding && m.embedding.length > 0);
             if (withEmbeddings.length > 0) {
-                const scored = withEmbeddings.map(entry => ({
-                    entry,
-                    score: cosineSimilarity(queryEmbedding, entry.embedding!),
-                }));
-                scored.sort((a, b) => b.score - a.score);
-                return scored.slice(0, topK);
+                for (const entry of withEmbeddings) {
+                    semanticMap.set(entry.id, cosineSimilarity(queryEmbedding, entry.embedding!));
+                }
             }
         }
     }
 
-    // Fallback: keyword search
-    return keywordSearch(query, memories, topK);
+    if (semanticMap.size === 0) {
+        const keywordResults = keywordSearch(query, activeMemories, topK);
+        return keywordResults.map(result => ({
+            entry: result.entry,
+            score: scoreMemoryEntry(result.entry, result.score, now),
+        }));
+    }
+
+    const scored = activeMemories.map(entry => ({
+        entry,
+        score: scoreMemoryEntry(entry, semanticMap.get(entry.id) ?? 0, now),
+    }));
+
+    scored.sort((a, b) => b.score - a.score);
+    const topResults = scored.slice(0, topK);
+    for (const result of topResults) {
+        void touchMemoryReadState(result.entry.id);
+    }
+    return topResults;
 }
 
 // ── Keyword fallback ──
