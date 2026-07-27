@@ -259,20 +259,72 @@ function readPngTextChunk(u8: Uint8Array, keyword: string): string | null {
   return null;
 }
 
+function decodeBase64Utf8(value: string): string {
+  // Tavern cards store UTF-8 JSON as base64. TextDecoder avoids the old
+  // escape/atob combination truncating non-ASCII character names and text.
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/").replace(/\s/g, "");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function parseTavernCharacterJson(text: string): CharacterImportData | null {
+  try {
+    const root = JSON.parse(text) as Record<string, unknown>;
+    // SillyTavern character card v2 wraps the payload in `data`; v1 keeps
+    // these fields at the top level.
+    const src = root.data && typeof root.data === "object"
+      ? root.data as Record<string, unknown>
+      : root;
+
+    const name = typeof src.name === "string" ? src.name.trim() : "";
+    const description = typeof src.description === "string" ? src.description : "";
+    const personality = typeof src.personality === "string" ? src.personality : "";
+    const tags = Array.isArray(src.tags) ? src.tags.map(String).filter(Boolean) : [];
+    if (!name && !description && !personality) return null;
+
+    return {
+      name,
+      persona: description,
+      personality: personality || undefined,
+      avatar: null,
+      tags,
+      timeZone: undefined,
+      wechatID: undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function parseCharacterFromPng(
   buffer: ArrayBuffer
 ): CharacterImportData | null {
   const u8 = new Uint8Array(buffer);
-  const charaBase64 = readPngTextChunk(u8, "ai_phone_character");
-  if (!charaBase64) return null;
-
-  try {
-    const jsonStr = decodeURIComponent(escape(atob(charaBase64)));
-    return parseCharacterFromJson(jsonStr);
-  } catch (e) {
-    if (e instanceof Error && e.message === CHAR_BLOCKED_FIELDS) throw e;
-    return null;
+  const ownCard = readPngTextChunk(u8, "ai_phone_character");
+  if (ownCard) {
+    try {
+      return parseCharacterFromJson(decodeBase64Utf8(ownCard));
+    } catch (e) {
+      if (e instanceof Error && e.message === CHAR_BLOCKED_FIELDS) throw e;
+    }
   }
+
+  // Tavern/SillyTavern cards use `chara` (v1 and most v2 exporters) or
+  // `ccv2` (some newer exporters) as a base64-encoded PNG text chunk.
+  for (const keyword of ["chara", "ccv2"]) {
+    const tavernCard = readPngTextChunk(u8, keyword);
+    if (!tavernCard) continue;
+    try {
+      const parsed = parseTavernCharacterJson(decodeBase64Utf8(tavernCard));
+      if (parsed) return parsed;
+    } catch {
+      // Keep checking the other supported metadata key.
+    }
+  }
+
+  return null;
 }
 
 // ── CRC32 ────────────────────────────────────────────
