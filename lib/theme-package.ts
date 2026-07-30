@@ -1,7 +1,9 @@
 import { DOCK_DEFAULT, type DesktopIconId, type IconPosition } from "@/lib/desktop-config";
 import {
+  appendMissingCustomAppIcons,
   createDefaultDesktopIconLayout,
   getDesktopIconLayoutItems,
+  loadDockLayout,
   normalizeDesktopIconLayout,
   writeDesktopIconLayout,
   writeDockLayout,
@@ -448,7 +450,10 @@ export async function installThemePackageFile(file: File): Promise<InstalledThem
   const themeProfile = writeThemeProfile(manifest.themeProfile);
   saveDIYTemplates(manifest.desktop.diyTemplates);
   saveWidgets(manifest.desktop.widgets);
-  const iconLayout = writeDesktopIconLayout(manifest.desktop.iconLayout);
+  // 主题包布局不含本机安装的自定义 app 图标，补回空位，避免导入后 app 从桌面消失
+  const iconLayout = writeDesktopIconLayout(
+    appendMissingCustomAppIcons(manifest.desktop.iconLayout, manifest.desktop.widgets, loadDockLayout())
+  );
 
   return {
     themeProfile,
@@ -471,9 +476,12 @@ export async function resetThemePackageState(): Promise<InstalledThemePackage> {
     wallpaperLibrary: previousProfile.wallpaperLibrary
   });
   const widgets = createDefaultWidgets();
-  const iconLayout = writeDesktopIconLayout(createDefaultDesktopIconLayout(widgets));
   // dock 一并恢复出厂，否则被拖出 dock 的默认图标（如设置）会在重置后彻底丢失
   const dock = writeDockLayout([...DOCK_DEFAULT]);
+  // 出厂布局只含内置图标，把已安装的自定义 app 图标补回空位，避免重置后 app 从桌面消失
+  const iconLayout = writeDesktopIconLayout(
+    appendMissingCustomAppIcons(createDefaultDesktopIconLayout(widgets), widgets, dock)
+  );
   saveDIYTemplates(previousTemplates);
   saveWidgets(widgets);
 

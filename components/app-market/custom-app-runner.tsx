@@ -61,6 +61,8 @@ import {
   readCustomAppVoiceProfiles,
   readCustomAppWorld,
   recognizeCustomAppSpeech,
+  recordCustomAppSpeech,
+  stopCustomAppRecording,
   requestCustomAppReply,
   runCustomAppAiChat,
   runCustomAppAiClassify,
@@ -282,6 +284,8 @@ html, body { min-height: 100%; }
       readProfiles: function(payload){ return request('voice.readProfiles', payload || {}); },
       tts: function(payload){ return request('voice.tts', payload || {}); },
       stt: function(payload){ return request('voice.stt', payload || {}); },
+      record: function(payload){ return request('voice.record', payload || {}); },
+      stopRecord: function(payload){ return request('voice.stopRecord', payload || {}); },
       clone: function(payload){ return request('voice.clone', payload || {}); },
       play: function(payload){ return request('voice.play', payload || {}); },
       stopPlayback: function(payload){ return request('voice.stopPlayback', payload || {}); },
@@ -938,7 +942,7 @@ export function CustomAppRunner({
           ai: ["generate", "chat", "embed", "classify"],
           user: ["getProfile", "getPersona", "getPreferences"],
           network: ["fetch"],
-          voice: ["readProfiles", "tts", "stt", "clone", "play", "stopPlayback", "pausePlayback", "resumePlayback"],
+          voice: ["readProfiles", "tts", "stt", "record", "stopRecord", "clone", "play", "stopPlayback", "pausePlayback", "resumePlayback"],
           calendar: ["read", "list", "write", "create", "update", "delete", "replaceWeek"],
           world: ["read", "list", "get", "write", "create", "update", "delete", "activate"],
           media: ["pick", "save", "put", "get", "revoke", "delete"],
@@ -1370,6 +1374,16 @@ export function CustomAppRunner({
     if (action === "voice.stt") {
       requirePermission("voice.stt");
       return recognizeCustomAppSpeech(app, record);
+    }
+    // 录一段麦克风音频回传给 APP。沿用 voice.stt 权限:两者都是「听麦克风」,
+    // 装应用时那一条授权说明已经覆盖了麦克风采集。
+    if (action === "voice.record") {
+      requirePermission("voice.stt");
+      return recordCustomAppSpeech(record);
+    }
+    if (action === "voice.stopRecord") {
+      requirePermission("voice.stt");
+      return stopCustomAppRecording();
     }
     if (action === "voice.clone") {
       requirePermission("voice.clone");

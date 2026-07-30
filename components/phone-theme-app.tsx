@@ -253,7 +253,7 @@ export function PhoneThemeApp({
       await onApply(result.themeProfile);
       onDraftChange(result.themeProfile);
       setConfirmThemeReset(false);
-      onNotice("已恢复默认外观，壁纸库和自定义组件已保留。");
+      onNotice("已恢复默认外观，壁纸库、自定义组件和自定义 App 已保留。");
     } catch (error) {
       console.error(error);
       onNotice(error instanceof Error ? error.message : "恢复默认失败");
@@ -492,7 +492,7 @@ export function PhoneThemeApp({
       {confirmThemeReset && (
         <ConfirmDialog
           title="恢复默认外观？"
-          message="将恢复默认主题色、当前壁纸、图标、桌面组件和桌面位置；已导入的壁纸库和自定义组件会保留，但不会继续应用在桌面上。"
+          message="将恢复默认主题色、当前壁纸、图标、桌面组件和桌面位置；已导入的壁纸库和自定义组件会保留，但不会继续应用在桌面上。已安装的自定义 App 图标会自动排回桌面空位。"
           icon={AlertCircle}
           variant="danger"
           confirmLabel={themeTransferBusy ? "恢复中" : "恢复默认"}

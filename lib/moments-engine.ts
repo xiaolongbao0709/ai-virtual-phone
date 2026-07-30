@@ -23,6 +23,7 @@ import {
     addPendingReaction,
     removePendingReaction,
     loadMomentsConfig,
+    updateMomentPost,
 } from "./moments-storage";
 import type { MomentPost, MomentComment, PendingReaction } from "./moments-types";
 import {
@@ -344,24 +345,24 @@ async function triggerAIPost(characterId: string): Promise<void> {
 
         const contacts = loadChatContacts();
         const visibility = contacts.map(c => c.characterId);
-        const photoUrl = parsed.photoDescription
-            ? await generateMomentPhotoUrl(parsed.photoDescription, characterId, parsed.photoUseReferenceImage === true)
-            : undefined;
 
+        // 先入库再生图：帖子立即可见，生图慢/超时/页面被杀都不会丢帖
         const post = addMomentPost({
             authorType: "character",
             authorId: characterId,
             content: parsed.content,
             photoDescription: parsed.photoDescription,
             photoUseReferenceImage: parsed.photoUseReferenceImage === true,
-            photoGenerationStatus: parsed.photoDescription ? (photoUrl ? "generated" : "failed") : undefined,
-            photoGenerationError: parsed.photoDescription && !photoUrl ? "生图配置未启用或生成失败" : undefined,
-            photoUrl,
+            photoGenerationStatus: parsed.photoDescription ? "pending" : undefined,
             visibility,
         });
         if (!post) {
             console.warn(`[Moments] SKIP duplicate AI post from ${character.name}`);
             return;
+        }
+
+        if (parsed.photoDescription) {
+            attachMomentPhotoInBackground(post.id, parsed.photoDescription, characterId, parsed.photoUseReferenceImage === true);
         }
 
         // Increment event counter for auto-summarization (native data read at summarization time)
@@ -1171,6 +1172,32 @@ export function parseMomentPostResponse(rawText: string): {
 }
 
 // ── Helpers ──
+
+/**
+ * 生图后台任务：帖子已先入库（photoGenerationStatus: "pending"），图片生成完再补挂。
+ * 失败/超时/中断只把状态标为 failed（卡片上可手动重试），绝不影响帖子本身。
+ */
+export function attachMomentPhotoInBackground(
+    postId: string,
+    description: string,
+    characterId: string,
+    useReferenceImage: boolean,
+    signal?: AbortSignal,
+): void {
+    void (async () => {
+        let photoUrl: string | undefined;
+        let errorMessage: string | undefined;
+        try {
+            photoUrl = await generateMomentPhotoUrl(description, characterId, useReferenceImage, signal);
+        } catch (error) {
+            errorMessage = error instanceof Error ? error.message : String(error);
+        }
+        updateMomentPost(postId, photoUrl
+            ? { photoUrl, photoGenerationStatus: "generated", photoGenerationError: undefined }
+            : { photoGenerationStatus: "failed", photoGenerationError: errorMessage || "生图配置未启用或生成失败" });
+        dispatchMomentsUpdated();
+    })();
+}
 
 export async function generateMomentPhotoUrl(
     description: string,

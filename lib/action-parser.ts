@@ -18,7 +18,7 @@ import { loadCharacters } from "./character-storage";
 import { clearRequestsForCharacter, dispatchFriendRequestUpdated } from "./friend-request-storage";
 import { sendBrowserNotification } from "./browser-notification";
 import type { MomentPost, MomentComment } from "./moments-types";
-import { generateMomentPhotoUrl, parseMomentPostResponse } from "./moments-engine";
+import { attachMomentPhotoInBackground, parseMomentPostResponse } from "./moments-engine";
 import { isAbortError, throwIfAborted } from "./abort-utils";
 
 // ── Types ──
@@ -308,25 +308,24 @@ async function dispatchMomentsPost(action: ActionTag, context: ActionContext): P
 
     const contacts = loadChatContacts();
     const visibility = contacts.map(c => c.characterId);
-    const photoUrl = parsed.photoDescription
-        ? await generateMomentPhotoUrl(parsed.photoDescription, context.characterId, parsed.photoUseReferenceImage === true, context.signal)
-        : undefined;
-    throwIfAborted(context.signal);
 
+    // 先入库再生图：帖子立即可见，生图慢/超时/页面被杀都不会丢帖
     const post = addMomentPost({
         authorType: "character",
         authorId: context.characterId,
         content: parsed.content,
         photoDescription: parsed.photoDescription,
         photoUseReferenceImage: parsed.photoUseReferenceImage === true,
-        photoGenerationStatus: parsed.photoDescription ? (photoUrl ? "generated" : "failed") : undefined,
-        photoGenerationError: parsed.photoDescription && !photoUrl ? "生图配置未启用或生成失败" : undefined,
-        photoUrl,
+        photoGenerationStatus: parsed.photoDescription ? "pending" : undefined,
         visibility,
     });
     if (!post) {
         console.warn(`[ActionParser] SKIP duplicate moments post from ${context.sourceEngine} engine`);
         return;
+    }
+
+    if (parsed.photoDescription) {
+        attachMomentPhotoInBackground(post.id, parsed.photoDescription, context.characterId, parsed.photoUseReferenceImage === true, context.signal);
     }
 
     console.log(`[ActionParser] Created moments post from ${context.sourceEngine} engine`);

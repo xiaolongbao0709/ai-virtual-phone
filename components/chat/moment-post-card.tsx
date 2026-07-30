@@ -367,6 +367,12 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                                 )}
                             </div>
                         </div>
+                        {post.photoGenerationStatus === "pending" && (
+                            <div className="ts-12 text-[var(--c-icon)] opacity-80">图片生成中…</div>
+                        )}
+                        {post.photoGenerationStatus === "failed" && post.photoGenerationError && !photoRetryError && (
+                            <div className="feed-post-photo-retry-error">生成失败：{post.photoGenerationError}</div>
+                        )}
                     </div>
                 )}
                 {photoRetryError && <div className="feed-post-photo-retry-error">生成失败：{photoRetryError}</div>}

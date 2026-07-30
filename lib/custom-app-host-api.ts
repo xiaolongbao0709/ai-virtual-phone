@@ -1067,6 +1067,81 @@ export function recognizeCustomAppSpeech(app: InstalledCustomApp, record: Record
   });
 }
 
+/**
+ * voice.record —— 在宿主页录一段麦克风音频,回传 dataUrl。
+ *
+ * 为什么不在 APP 的 iframe 里直接 getUserMedia:那个 iframe 是
+ * sandbox="allow-scripts"(空源)且 allow 里没有 microphone,权限策略会直接拒绝。
+ * 宿主页本来就持有麦克风权限(STT 走的就是这条路),所以录音也放在这里。
+ *
+ * 与 voice.stt 互不影响:两者可以并行——识别拿文字给 AI 读,录音拿音频给别人听。
+ */
+let activeCustomAppRecorder: { stop: () => void } | null = null;
+
+export function recordCustomAppSpeech(record: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const maxMs = Math.max(1000, Math.min(60_000, Number(record.maxMs ?? 20_000) || 20_000));
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      reject(new Error("当前环境不支持录音。"));
+      return;
+    }
+    if (activeCustomAppRecorder) {
+      reject(new Error("已有录音在进行中。"));
+      return;
+    }
+    let settled = false;
+    let stream: MediaStream | null = null;
+    let recorder: MediaRecorder | null = null;
+    let timer = 0;
+    const startedAt = Date.now();
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      activeCustomAppRecorder = null;
+      try { stream?.getTracks().forEach(track => track.stop()); } catch { /* ignore */ }
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(got => {
+      stream = got;
+      // 优先 opus:同样时长体积最小,分片传输时省带宽
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+        .find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
+      recorder = mime ? new MediaRecorder(got, { mimeType: mime, audioBitsPerSecond: 24_000 })
+                      : new MediaRecorder(got);
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = event => { if (event.data && event.data.size) chunks.push(event.data); };
+      recorder.onerror = () => fail(new Error("录音失败。"));
+      recorder.onstop = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        const blob = new Blob(chunks, { type: recorder?.mimeType || "audio/webm" });
+        if (!blob.size) { reject(new Error("没有录到声音。")); return; }
+        blobToDataUrl(blob).then(dataUrl => resolve({
+          ok: true,
+          dataUrl,
+          mimeType: blob.type,
+          size: blob.size,
+          ms: Date.now() - startedAt,
+        })).catch(() => reject(new Error("录音编码失败。")));
+      };
+      activeCustomAppRecorder = { stop: () => { try { recorder?.stop(); } catch { /* ignore */ } } };
+      recorder.start();
+      timer = window.setTimeout(() => { try { recorder?.stop(); } catch { /* ignore */ } }, maxMs);
+    }).catch(() => fail(new Error("麦克风权限被拒绝或不可用。")));
+  });
+}
+
+export function stopCustomAppRecording(): Record<string, unknown> {
+  if (!activeCustomAppRecorder) return { ok: false, reason: "no-active-recording" };
+  activeCustomAppRecorder.stop();
+  return { ok: true };
+}
+
 export async function cloneCustomAppVoice(app: InstalledCustomApp, record: Record<string, unknown>): Promise<Record<string, unknown>> {
   const config = resolveCustomAppVoiceConfig(app, record);
   if (!config) throw new Error("未找到可用语音配置。");
