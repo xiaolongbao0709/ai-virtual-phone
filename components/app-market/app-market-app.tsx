@@ -31,6 +31,7 @@ import { customAppGlyphPath } from "@/components/icon-glyph";
 
 import { CUSTOM_APP_CREATOR_GUIDE_MD } from "@/lib/custom-app-creator-guide";
 import { permissionLabelWithContext } from "@/lib/custom-app-permission-labels";
+import { submitContentReport } from "@/lib/moderation-client";
 import {
   fetchCustomAppMarketItems,
   fetchMyCustomAppMarketItems,
@@ -344,6 +345,10 @@ export function AppMarketApp({ onClose, onOpenCustomApp, onInstallToDesktop, onN
   const [manualExistingLoading, setManualExistingLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [marketBusy, setMarketBusy] = useState(false);
+  const [reportTarget, setReportTarget] = useState<CustomAppMarketItem | null>(null);
+  const [reportReason, setReportReason] = useState("");
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportedMarketAppIds, setReportedMarketAppIds] = useState<Record<string, boolean>>({});
   const [marketRefreshing, setMarketRefreshing] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [updatingInstalledId, setUpdatingInstalledId] = useState<string | null>(null);
@@ -837,6 +842,29 @@ export function AppMarketApp({ onClose, onOpenCustomApp, onInstallToDesktop, onN
     }
   }
 
+  async function submitMarketAppReport() {
+    if (!reportTarget || reportSubmitting) return;
+    setReportSubmitting(true);
+    try {
+      await submitContentReport({
+        contentType: "market_app",
+        contentId: reportTarget.id,
+        reason: reportReason.trim().slice(0, 200),
+        preview: `${reportTarget.name} — ${reportTarget.description || ""}`.slice(0, 200),
+        ownerId: reportTarget.authorId || "",
+        ownerName: reportTarget.authorName || "",
+      });
+      setReportedMarketAppIds(current => ({ ...current, [reportTarget.id]: true }));
+      setReportTarget(null);
+      setReportReason("");
+      onNotice?.("已举报，管理员会尽快处理");
+    } catch (err) {
+      onNotice?.(err instanceof Error ? err.message : "举报失败");
+    } finally {
+      setReportSubmitting(false);
+    }
+  }
+
   async function installMarketApp(item: CustomAppMarketItem) {
     setMarketBusy(true);
     setMarketError("");
@@ -1324,7 +1352,7 @@ export function AppMarketApp({ onClose, onOpenCustomApp, onInstallToDesktop, onN
                   </ul>
                 )}
               </div>
-              <div className="app-market-sheet-actions">
+              <div className="app-market-sheet-actions with-report">
                 <button type="button" className="app-market-secondary" onClick={() => setSelectedMarketApp(null)}>关闭</button>
                 {installedForMarketItem(selectedMarketApp) ? (
                   <button type="button" className="app-market-primary" onClick={() => onOpenCustomApp(installedForMarketItem(selectedMarketApp)!.id)}>
@@ -1337,6 +1365,52 @@ export function AppMarketApp({ onClose, onOpenCustomApp, onInstallToDesktop, onN
                     <span>{marketBusy ? "安装中" : "安装"}</span>
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="app-market-danger app-market-report-btn"
+                  disabled={!!reportedMarketAppIds[selectedMarketApp.id]}
+                  onClick={() => {
+                    setReportReason("");
+                    setReportTarget(selectedMarketApp);
+                  }}
+                >
+                  {reportedMarketAppIds[selectedMarketApp.id] ? "已举报" : "举报"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {reportTarget ? (
+        <div
+          className="app-market-overlay app-market-drawer-overlay"
+          role="presentation"
+          onClick={() => { if (!reportSubmitting) setReportTarget(null); }}
+        >
+          <div className="app-market-sheet app-market-report-sheet" role="dialog" aria-modal="true" aria-label="举报 APP" onClick={event => event.stopPropagation()}>
+            <div className="app-market-sheet-head">
+              <strong>举报「{reportTarget.name}」</strong>
+              <button type="button" onClick={() => setReportTarget(null)} aria-label="关闭" disabled={reportSubmitting}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="app-market-sheet-body">
+              <label className="am-form-field">
+                <span>举报理由（选填，最多 200 字）</span>
+                <textarea
+                  value={reportReason}
+                  onChange={event => setReportReason(event.target.value.slice(0, 200))}
+                  placeholder="说明这个 APP 存在的问题，帮助管理员更快处理"
+                  rows={4}
+                />
+              </label>
+              <div className="app-market-sheet-actions">
+                <button type="button" className="app-market-secondary" onClick={() => setReportTarget(null)} disabled={reportSubmitting}>取消</button>
+                <button type="button" className="app-market-danger" onClick={() => void submitMarketAppReport()} disabled={reportSubmitting}>
+                  {reportSubmitting ? <LoaderCircle className="am-spin" size={18} /> : null}
+                  <span>{reportSubmitting ? "提交中" : "提交举报"}</span>
+                </button>
               </div>
             </div>
           </div>

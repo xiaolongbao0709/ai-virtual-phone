@@ -153,6 +153,8 @@ function WidgetContent({
       return <FreestyleFrame88Widget config={config} widgetId={widgetId} onConfigChange={onConfigChange} preview={preview} />;
     case "freestyleFrame90":
       return <FreestyleFrame90Widget config={config} widgetId={widgetId} onConfigChange={onConfigChange} preview={preview} />;
+    case "profileCard":
+      return <ProfileCardWidget config={config} widgetId={widgetId} onConfigChange={onConfigChange} preview={preview} />;
     default:
       return null;
   }
@@ -557,6 +559,153 @@ function FreestyleFrame90Widget({ config, widgetId, onConfigChange, preview }: a
           alt="Frame 90"
         />
       </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------
+//   Profile Card Widget (Freestyle 3x4 主页名片)
+// ----------------------------------------------------
+const PROFILE_CARD_DEFAULTS = {
+  name: "こはる",
+  handle: "SLOW DAYS",
+  motto: "のんびり いこうね",
+  location: "雲の上",
+};
+
+function ProfileCardWidget({ config, widgetId, onConfigChange, preview }: any) {
+  const coverUrl = typeof config?.coverUrl === "string" ? config.coverUrl : "";
+  const cardUrl = typeof config?.cardUrl === "string" ? config.cardUrl : "";
+  const avatarUrl = typeof config?.avatarUrl === "string" ? config.avatarUrl : "";
+  const name = typeof config?.name === "string" ? config.name : PROFILE_CARD_DEFAULTS.name;
+  const handle = typeof config?.handle === "string" ? config.handle : PROFILE_CARD_DEFAULTS.handle;
+  const motto = typeof config?.motto === "string" ? config.motto : PROFILE_CARD_DEFAULTS.motto;
+  const location = typeof config?.location === "string" ? config.location : PROFILE_CARD_DEFAULTS.location;
+
+  const coverUp = useImageUpload(widgetId, "coverUrl", onConfigChange);
+  const cardUp = useImageUpload(widgetId, "cardUrl", onConfigChange);
+  const avatarUp = useImageUpload(widgetId, "avatarUrl", onConfigChange);
+
+  const [showEdit, setShowEdit] = useState(false);
+  const [draft, setDraft] = useState({ name, handle, motto, location });
+
+  function openEdit(e: React.MouseEvent) {
+    if (preview) return;
+    e.stopPropagation();
+    setDraft({ name, handle, motto, location });
+    setShowEdit(true);
+  }
+
+  function handleSave() {
+    onConfigChange?.(widgetId, {
+      name: draft.name.trim() || PROFILE_CARD_DEFAULTS.name,
+      handle: draft.handle.trim(),
+      motto: draft.motto.trim(),
+      location: draft.location.trim(),
+    });
+    setShowEdit(false);
+  }
+
+  const editFieldLabel = {
+    fontSize: "calc(13px*var(--app-text-scale,1))",
+    color: "var(--c-text)",
+    margin: "10px 0 4px",
+    display: "block",
+  } as React.CSSProperties;
+
+  return (
+    <div className="wg-profile-card">
+      {coverUp.input}
+      {cardUp.input}
+      {avatarUp.input}
+      <div
+        className="wg-pc-cover"
+        style={coverUrl ? { backgroundImage: `url(${coverUrl})` } : undefined}
+        onClick={preview ? undefined : () => coverUp.triggerUpload()}
+        title="点击更换上方背景图"
+      />
+      <div
+        className="wg-pc-body"
+        style={cardUrl ? { backgroundImage: `url(${cardUrl})` } : undefined}
+        onClick={preview ? undefined : () => cardUp.triggerUpload()}
+        title="点击更换下方背景图"
+      >
+        <div
+          className="wg-pc-texts"
+          onClick={openEdit}
+          role={preview ? undefined : "button"}
+          tabIndex={preview ? undefined : 0}
+          title="点击编辑文字"
+        >
+          <div className="wg-pc-name">{name}</div>
+          {handle && <div className="wg-pc-handle">{handle}</div>}
+          {motto && <div className="wg-pc-motto">{motto}</div>}
+          {location && (
+            <div className="wg-pc-location">
+              <svg viewBox="0 0 24 24" width="11" height="11" className="wg-pc-pin" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M12 2c-3.9 0-7 3.1-7 7 0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"
+                />
+              </svg>
+              <span>{location}</span>
+            </div>
+          )}
+        </div>
+      </div>
+      <div
+        className="wg-pc-avatar"
+        onClick={preview ? undefined : (e) => { e.stopPropagation(); avatarUp.triggerUpload(); }}
+        role={preview ? undefined : "button"}
+        tabIndex={preview ? undefined : 0}
+        title="点击更换头像"
+      >
+        {avatarUrl
+          ? <img src={avatarUrl} alt="" className="wg-pc-avatar-img" />
+          : <div className="wg-pc-avatar-mock"><span className="wg-upload-hint">头像</span></div>}
+      </div>
+
+      {showEdit && !preview && createPortal(
+        <ContentDialog
+          title="编辑名片文字"
+          onConfirm={handleSave}
+          onCancel={() => setShowEdit(false)}
+        >
+          <label style={{ ...editFieldLabel, marginTop: 0 }}>名字</label>
+          <input
+            className="ui-input"
+            value={draft.name}
+            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            placeholder={PROFILE_CARD_DEFAULTS.name}
+            style={{ width: "100%" }}
+          />
+          <label style={editFieldLabel}>小标题（留空隐藏）</label>
+          <input
+            className="ui-input"
+            value={draft.handle}
+            onChange={(e) => setDraft({ ...draft, handle: e.target.value })}
+            placeholder={PROFILE_CARD_DEFAULTS.handle}
+            style={{ width: "100%" }}
+          />
+          <label style={editFieldLabel}>签名（留空隐藏）</label>
+          <input
+            className="ui-input"
+            value={draft.motto}
+            onChange={(e) => setDraft({ ...draft, motto: e.target.value })}
+            placeholder={PROFILE_CARD_DEFAULTS.motto}
+            style={{ width: "100%" }}
+          />
+          <label style={editFieldLabel}>位置（留空隐藏）</label>
+          <input
+            className="ui-input"
+            value={draft.location}
+            onChange={(e) => setDraft({ ...draft, location: e.target.value })}
+            placeholder={PROFILE_CARD_DEFAULTS.location}
+            style={{ width: "100%" }}
+          />
+        </ContentDialog>,
+        document.querySelector(".phone-shell") ?? document.body
+      )}
     </div>
   );
 }

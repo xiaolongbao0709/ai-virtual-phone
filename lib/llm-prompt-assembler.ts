@@ -735,9 +735,6 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
 
         const userPersonaText = buildUserPersonaText(userIdentity, resolvedUserName);
         const processingOrder = buildProcessingOrder(preset!);
-        const hasCalendarScheduleMarker = processingOrder.some(p => p.identifier === "calendarSchedule");
-        const hasMemoryCoreMarker = processingOrder.some(p => p.identifier === "memoryCore");
-        const hasMemoryLongTermMarker = processingOrder.some(p => p.identifier === "memoryLongTerm");
 
         // Classify WB entries for marker placement
         const wbBeforeEntries = activatedWBEntries.filter(e => isWBBeforePosition(e));
@@ -749,37 +746,17 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
         let afterOrderIdx = 0;
         const beforeHistoryDepth = resolveBeforeHistoryDepth(history.length, input.unifiedRecentItems?.length);
         const absoluteEntries: { prompt: Prompt; content: string; promptIndex: number }[] = [];
-        let insertedFallbackSchedule = false;
-        let insertedFallbackCore = false;
-
-        const pushScheduleFallbackBlock = () => {
-            if (!scheduleSummary?.trim() || insertedFallbackSchedule) return;
-            const xmlText = wrapXml("calendarSchedule", scheduleSummary.trim());
-            blocks.push({
-                text: xmlText,
-                role: "system",
-                depth: afterChatHistory ? 0 : beforeHistoryDepth,
-                order: afterChatHistory ? 10 + afterOrderIdx++ : orderIdx++,
-                marker: "calendarSchedule",
-            });
-            insertedFallbackSchedule = true;
-        };
-
-        const pushCoreFallbackBlock = () => {
-            if (!coreMemories?.trim() || insertedFallbackCore) return;
-            const xmlText = wrapXml("memoryCore", coreMemories.trim());
-            blocks.push({
-                text: xmlText,
-                role: "system",
-                depth: afterChatHistory ? 0 : beforeHistoryDepth,
-                order: afterChatHistory ? 10 + afterOrderIdx++ : orderIdx++,
-                marker: "memoryCore",
-            });
-            insertedFallbackCore = true;
-        };
 
         for (let promptIndex = 0; promptIndex < processingOrder.length; promptIndex += 1) {
             const p = processingOrder[promptIndex];
+
+            // shortTermMemory (or legacy chatHistory) marker: entries after this go to depth 0.
+            // 分界作用不受开关影响（关掉也不改变其余条目的排序）；开关只控制历史/短期记忆是否注入，见 CHAT HISTORY 段。
+            if (p.marker && (p.identifier === "shortTermMemory" || p.identifier === "chatHistory")) {
+                afterChatHistory = true;
+                continue;
+            }
+
             if (!isPromptEnabled(p, preset!.prompt_order)) continue;
 
             // Tag-based filtering: entry's tags must ALL be present in activeTags
@@ -789,32 +766,6 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
             }
 
             if (p.marker) {
-                // shortTermMemory (or legacy chatHistory) marker: entries after this go to depth 0
-                if (p.identifier === "shortTermMemory" || p.identifier === "chatHistory") {
-                    if (!hasCalendarScheduleMarker) {
-                        pushScheduleFallbackBlock();
-                    }
-                    if (!hasMemoryCoreMarker && !hasMemoryLongTermMarker) {
-                        pushCoreFallbackBlock();
-                    }
-                    afterChatHistory = true;
-                    continue;
-                }
-
-                if (!hasCalendarScheduleMarker && scheduleSummary?.trim()) {
-                    if (
-                        (p.identifier === "memoryCore" && !insertedFallbackSchedule)
-                        || (!hasMemoryCoreMarker && p.identifier === "memoryLongTerm" && !insertedFallbackSchedule)
-                    ) {
-                        pushScheduleFallbackBlock();
-                    }
-                }
-
-                if (!hasMemoryCoreMarker && coreMemories?.trim()) {
-                    if (p.identifier === "memoryLongTerm" && !insertedFallbackCore) {
-                        pushCoreFallbackBlock();
-                    }
-                }
 
                 let markerContent = getMarkerContent(
                     p.identifier, character, userPersonaText,
@@ -886,13 +837,6 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
                 // ABSOLUTE: will be injected at specific chat depth
                 absoluteEntries.push({ prompt: p, content, promptIndex });
             }
-        }
-
-        if (!hasCalendarScheduleMarker) {
-            pushScheduleFallbackBlock();
-        }
-        if (!hasMemoryCoreMarker) {
-            pushCoreFallbackBlock();
         }
 
         // Sort and inject ABSOLUTE entries
@@ -1120,6 +1064,15 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
     }
 
     // --- CHAT HISTORY / SHORT-TERM MEMORY ---
+    // shortTermMemory/chatHistory 标记条目被关闭时，跳过聊天历史与短期记忆注入
+    // （标记的分界作用不受开关影响，见 prompt_order 循环）
+    const historyMarkerPrompt = preset
+        ? preset.prompts.find(p => p.marker && (p.identifier === "shortTermMemory" || p.identifier === "chatHistory"))
+        : undefined;
+    // 条目存在且开启才注入；条目被关闭或预设中没有该条目都不注入（没有就没有）。
+    // 仅在完全未选择预设时保持注入兜底。
+    const historyInjectionEnabled = !preset
+        || (historyMarkerPrompt ? isPromptEnabled(historyMarkerPrompt, preset.prompt_order) : false);
     const useChronologicalShortTerm = Boolean(input.unifiedRecentItems && input.unifiedRecentItems.length > 0);
     if (!hasPromptOrder) {
         blocks.push({
@@ -1131,7 +1084,9 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
         });
     }
 
-    if (useChronologicalShortTerm) {
+    if (!historyInjectionEnabled) {
+        // 历史注入被关闭：不输出 <shortTermMemory>、近期动态与聊天记录
+    } else if (useChronologicalShortTerm) {
         pushChronologicalShortTermBlocks({
             blocks,
             items: input.unifiedRecentItems!,
@@ -1200,7 +1155,7 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
     }
 
     // --- History Messages ---
-    if (!useChronologicalShortTerm) {
+    if (historyInjectionEnabled && !useChronologicalShortTerm) {
         const historyLen = history.length;
         const visionEnabled = input.enableVision === true;
         const nativeResultIds = new Set(history
@@ -2063,9 +2018,6 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
 
     // 2. Per-member <member> blocks — preset-driven marker iteration
     const processingOrder = hasPromptOrder ? buildProcessingOrder(preset!) : [];
-    const hasMemberCalendarScheduleMarker = processingOrder.some(p => p.identifier === "calendarSchedule");
-    const hasMemberMemoryCoreMarker = processingOrder.some(p => p.identifier === "memoryCore");
-    const hasMemberMemoryLongTermMarker = processingOrder.some(p => p.identifier === "memoryLongTerm");
 
     for (const m of members) {
         const char = m.character;
@@ -2118,20 +2070,6 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
 
         // Build member content by iterating preset markers in order
         const sections: string[] = [];
-        let insertedFallbackSchedule = false;
-        let insertedFallbackCore = false;
-
-        const pushMemberScheduleFallback = () => {
-            if (!m.scheduleSummary?.trim() || insertedFallbackSchedule) return;
-            sections.push(m.scheduleSummary.trim());
-            insertedFallbackSchedule = true;
-        };
-
-        const pushMemberCoreFallback = () => {
-            if (!m.coreMemories?.trim() || insertedFallbackCore) return;
-            sections.push(m.coreMemories.trim());
-            insertedFallbackCore = true;
-        };
 
         if (hasPromptOrder) {
             for (const p of processingOrder) {
@@ -2143,26 +2081,7 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
 
                 // shortTermMemory marker: append per-member short-term blocks, then stop
                 if (p.identifier === "shortTermMemory" || p.identifier === "chatHistory") {
-                    if (!hasMemberCalendarScheduleMarker) {
-                        pushMemberScheduleFallback();
-                    }
-                    if (!hasMemberMemoryCoreMarker && !hasMemberMemoryLongTermMarker) {
-                        pushMemberCoreFallback();
-                    }
                     break; // markers after divider are feature prompts, not member data
-                }
-
-                if (!hasMemberCalendarScheduleMarker) {
-                    if (
-                        p.identifier === "memoryCore"
-                        || (!hasMemberMemoryCoreMarker && p.identifier === "memoryLongTerm")
-                    ) {
-                        pushMemberScheduleFallback();
-                    }
-                }
-
-                if (!hasMemberMemoryCoreMarker && p.identifier === "memoryLongTerm") {
-                    pushMemberCoreFallback();
                 }
 
                 // Get content for this marker using per-member data
@@ -2182,12 +2101,6 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
                         sections.push(markerContent);
                     }
                 }
-            }
-            if (!hasMemberCalendarScheduleMarker) {
-                pushMemberScheduleFallback();
-            }
-            if (!hasMemberMemoryCoreMarker) {
-                pushMemberCoreFallback();
             }
         } else {
             // Legacy fallback: hardcoded order
@@ -2283,16 +2196,19 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
 
         for (let promptIndex = 0; promptIndex < processingOrder.length; promptIndex += 1) {
             const p = processingOrder[promptIndex];
+
+            // 分界作用不受开关影响；开关只控制历史/短期记忆是否注入，见下方 Short-term memory 段
+            if (p.marker && (p.identifier === "shortTermMemory" || p.identifier === "chatHistory")) {
+                afterChatHistory = true;
+                continue;
+            }
+
             if (!isPromptEnabled(p, preset!.prompt_order)) continue;
 
             const gcTags = getPromptTags(p);
             if (gcTags && !gcTags.every(t => activeTags.includes(t))) continue;
 
             if (p.marker) {
-                if (p.identifier === "shortTermMemory" || p.identifier === "chatHistory") {
-                    afterChatHistory = true;
-                    continue;
-                }
                 // Skip markers (handled in <member> blocks or at group level)
                 continue;
             }
@@ -2335,9 +2251,19 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
     }
 
     const useChronologicalShortTerm = Boolean(unifiedRecentItems && unifiedRecentItems.length > 0);
+    // shortTermMemory/chatHistory 标记条目被关闭时，跳过聊天历史与短期记忆注入
+    const groupHistoryMarkerPrompt = preset
+        ? preset.prompts.find(p => p.marker && (p.identifier === "shortTermMemory" || p.identifier === "chatHistory"))
+        : undefined;
+    // 条目存在且开启才注入；条目被关闭或预设中没有该条目都不注入（没有就没有）。
+    // 仅在完全未选择预设时保持注入兜底。
+    const historyInjectionEnabled = !preset
+        || (groupHistoryMarkerPrompt ? isPromptEnabled(groupHistoryMarkerPrompt, preset.prompt_order) : false);
 
     // 4. Short-term memory / chat history
-    if (useChronologicalShortTerm) {
+    if (!historyInjectionEnabled) {
+        // 历史注入被关闭：不输出 <shortTermMemory>、近期动态与聊天记录
+    } else if (useChronologicalShortTerm) {
         pushGroupChronologicalShortTermBlocks({
             blocks,
             items: unifiedRecentItems!,

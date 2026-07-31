@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 
 import { getCurrentAccount } from "@/lib/server/account-auth";
 import { formatSupabaseRestError, getSupabaseServerConfig } from "@/lib/server/supabase-rest";
@@ -51,6 +52,8 @@ export async function POST(request: Request) {
     const ownerPath = safeFilename(account.id);
     const baseName = safeFilename(cleanText(file.name, 120));
     const path = `${ownerPath}/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${baseName}`;
+    const bytes = await file.arrayBuffer();
+    const hash = createHash("sha256").update(Buffer.from(bytes)).digest("hex");
     const upload = await fetch(`${config.url}/storage/v1/object/${CUSTOM_APP_PACKAGE_BUCKET}/${path}`, {
       method: "POST",
       headers: {
@@ -59,7 +62,7 @@ export async function POST(request: Request) {
         "Content-Type": contentTypeForKind(kind),
         "x-upsert": "true",
       },
-      body: await file.arrayBuffer(),
+      body: bytes,
     });
     const text = await upload.text();
     if (!upload.ok) {
@@ -77,7 +80,7 @@ export async function POST(request: Request) {
     }
 
     const url = `${config.url}/storage/v1/object/public/${CUSTOM_APP_PACKAGE_BUCKET}/${path}`;
-    return NextResponse.json({ ok: true, url, path, kind, size: file.size });
+    return NextResponse.json({ ok: true, url, path, kind, size: file.size, hash });
   } catch (err) {
     return NextResponse.json({ ok: false, error: formatSupabaseRestError(err) }, { status: getSupabaseServerConfig() ? 400 : 503 });
   }

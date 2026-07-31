@@ -1,6 +1,6 @@
 import Dexie from "dexie";
 import { CHECKPHONE_APP_SPECS, type CheckPhoneAppId, type CheckPhoneManifest, type CheckPhoneSnapshot } from "./checkphone-config";
-import { kvGet, kvSet, registerDynamicPrefix } from "./kv-db";
+import { kvGet, kvRemove, kvSet, registerDynamicPrefix } from "./kv-db";
 import { formatPromptTimestamp } from "./prompt-time";
 
 type CheckPhoneManifestRow = CheckPhoneManifest;
@@ -205,6 +205,24 @@ export async function clearPhoneSnapshot(characterId: string, appId: CheckPhoneA
   } catch (error) {
     console.warn("[CheckPhoneStorage] clear snapshot error:", error);
   }
+}
+
+/** 清除某角色查手机（查岗）写入短期记忆的全部记录。 */
+export function clearCheckPhoneProjectionEntries(characterId: string): void {
+  if (typeof window === "undefined") return;
+  kvRemove(projectionStorageKey(characterId));
+}
+
+/** 删除某角色查手机记录中的一条。 */
+export function removeCheckPhoneProjectionEntry(characterId: string, entryId: string): void {
+  if (typeof window === "undefined") return;
+  const key = projectionStorageKey(characterId);
+  const remaining = loadProjectionEventsByKey(key).filter(entry => entry.id !== entryId);
+  if (remaining.length === 0) {
+    kvRemove(key);
+    return;
+  }
+  saveProjectionEventsByKey(key, remaining);
 }
 
 export function loadCheckPhoneProjectionEntries(

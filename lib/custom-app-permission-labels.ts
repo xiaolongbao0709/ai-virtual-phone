@@ -46,6 +46,8 @@ export const PERMISSION_LABELS: Record<string, string> = {
   "memory.suggest": "提交记忆建议",
   "media.pick": "选择本地图片或文件",
   "media.save": "保存文件到本地",
+  "geo.read": "获取你的当前位置",
+  "geo.watch": "在 APP 打开期间持续获取你的位置",
   "notifications.read": "读取本 APP 通知",
   "notifications.write": "写入通知和桌面红点",
   "tasks.schedule": "创建后台定时任务",
@@ -55,6 +57,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
   "ui.call": "触发通话界面",
   "wallet.read": "读取钱包余额",
   "wallet.pay": "从钱包付款",
+  "online.play": "多人联机（与其他玩家实时互通，你的昵称会展示给同房间玩家）",
 };
 
 export function permissionLabel(permission: string): string {

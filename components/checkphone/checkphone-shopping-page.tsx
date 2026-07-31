@@ -539,7 +539,7 @@ export function CheckPhoneShoppingPage({ character, onBack }: CheckPhoneShopping
         )}
 
         {payload && selectedProduct && (
-          <div style={{ position: "absolute", inset: 0, zIndex: 20, background: "#fff", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+          <div className="cp-scroll-guard" style={{ position: "absolute", inset: 0, zIndex: 20, background: "#fff", display: "flex", flexDirection: "column", overflowY: "auto" }}>
             <header style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--cp-appbar-safe-top) 24px 12px", background: "#fff" }}>
               <button type="button" onClick={() => {
                 setTranslationPreview(null);
@@ -602,7 +602,7 @@ export function CheckPhoneShoppingPage({ character, onBack }: CheckPhoneShopping
                <div style={{ width: "40px" }} />
             </header>
 
-            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+            <div className="cp-scroll-guard" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
                <div style={{ background: "#fff", borderRadius: "20px", padding: "20px", boxShadow: "0 4px 20px rgba(0,0,0,0.02)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
                     <span style={{ fontSize: "calc(12px*var(--app-text-scale,1))", color: "#999" }}>Order Status</span>

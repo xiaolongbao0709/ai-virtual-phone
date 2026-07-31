@@ -921,6 +921,7 @@ export function CheckPhoneDouyinPage({
           </div>
 
           <div
+            className="cp-scroll-guard"
             style={{
               flex: 1,
               minHeight: 0,

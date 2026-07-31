@@ -18,6 +18,8 @@ export type CustomAppMarketItem = {
   permissions: CustomAppPermission[];
   manifest: CustomAppManifest;
   packageUrl: string;
+  /** 包内容 SHA-256（服务端计算，用于防原样重传倒卖；旧数据可能为空） */
+  packageHash?: string;
   packagePath: string;
   packageKind: CustomAppPackageKind;
   packageSize: number;

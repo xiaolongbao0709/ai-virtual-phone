@@ -66,6 +66,31 @@ alter table public.custom_app_market_apps
 alter table public.custom_app_market_apps
   add column if not exists like_count integer not null default 0 check (like_count >= 0);
 
+-- 包内容 SHA-256（服务端在发布/更新时计算），用于拒绝「原样重传倒卖」他人应用包
+alter table public.custom_app_market_apps
+  add column if not exists package_hash text not null default '';
+
+create index if not exists custom_app_market_apps_package_hash_idx
+  on public.custom_app_market_apps (package_hash)
+  where deleted_at is null and package_hash <> '';
+
+-- 应用包下载留痕：限频依据 + 异常爬取排查（谁、何时、下了哪个包）
+create table if not exists public.custom_app_package_downloads (
+  id text primary key,
+  app_row_id text not null,
+  account_id text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists custom_app_package_downloads_account_idx
+  on public.custom_app_package_downloads (account_id, created_at desc);
+
+create index if not exists custom_app_package_downloads_app_idx
+  on public.custom_app_package_downloads (app_row_id, created_at desc);
+
+-- 留痕表只由服务端(service key)读写:开 RLS 且不配策略 = 默认拒绝一切前端直连
+alter table public.custom_app_package_downloads enable row level security;
+
 create index if not exists custom_app_market_apps_review_idx
   on public.custom_app_market_apps (review_status, updated_at desc)
   where deleted_at is null;
@@ -85,11 +110,14 @@ create unique index if not exists custom_app_market_apps_name_unique_idx
   on public.custom_app_market_apps (lower(name))
   where deleted_at is null;
 
+-- 应用包存储桶：私有。下载一律经服务端 /api/app-market/download 校验后
+-- 换发短时签名 URL（登录 + 每小时限频 + 留痕），防匿名批量爬取创作者的包。
+-- 存量对象无需搬迁：翻私有只改桶标志位，文件路径原地不动，service key 照常可读。
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
   'custom-app-market-packages',
   'custom-app-market-packages',
-  true,
+  false,
   5242880,
   array['application/zip', 'application/octet-stream', 'text/html']
 )
@@ -101,14 +129,11 @@ set
 
 alter table public.custom_app_market_apps enable row level security;
 
-grant select on public.custom_app_market_apps to anon;
+-- 收回 anon 直读：package_url 直链等列不能绕过服务端 API 被批量拉走。
+-- （站内所有市场读写都走 Next API + service key，本无 anon 直连依赖。）
+revoke select on public.custom_app_market_apps from anon;
 
 drop policy if exists "custom_app_market_apps_public_read" on public.custom_app_market_apps;
-create policy "custom_app_market_apps_public_read"
-  on public.custom_app_market_apps
-  for select
-  to anon
-  using (deleted_at is null and review_status = 'approved');
 
 alter table public.custom_app_market_apps replica identity full;
 

@@ -600,13 +600,23 @@ type Props = {
     userName: string;
 };
 
+// 每批渲染的簇数：全部一次性渲染会在重数据账号上把 DOM 撑爆
+const CLUSTER_PAGE_SIZE = 30;
+
 export function MemoryTimeline({ events, userName }: Props) {
     const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null);
+    const [visibleCount, setVisibleCount] = useState(CLUSTER_PAGE_SIZE);
 
     const clusters = useMemo(() => {
         const parsed = events.map(e => parseEntry(e, userName)).filter((e): e is ParsedEntry => e !== null);
         return clusterByTimeGap(parsed);
     }, [events, userName]);
+
+    // 切换角色/标签页时回到首屏
+    useEffect(() => {
+        setVisibleCount(CLUSTER_PAGE_SIZE);
+        setExpandedClusterId(null);
+    }, [events]);
 
     if (clusters.length === 0) {
         return (
@@ -619,7 +629,7 @@ export function MemoryTimeline({ events, userName }: Props) {
     return (
         <>
             <div className="mem-tl mem-tl-cards">
-                {clusters.map((cluster) => {
+                {clusters.slice(0, visibleCount).map((cluster) => {
                     const expanded = expandedClusterId === cluster.id;
                     return (
                         <div
@@ -656,6 +666,15 @@ export function MemoryTimeline({ events, userName }: Props) {
                     );
                 })}
             </div>
+            {clusters.length > visibleCount ? (
+                <button
+                    type="button"
+                    className="mem-tl-load-more"
+                    onClick={() => setVisibleCount(count => count + CLUSTER_PAGE_SIZE)}
+                >
+                    加载更早的记录（还有 {clusters.length - visibleCount} 段）
+                </button>
+            ) : null}
         </>
     );
 }

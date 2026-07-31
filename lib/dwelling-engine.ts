@@ -1,4 +1,4 @@
-import type { DwellingLayout, DwellingPosition, DwellingFurnitureItem } from "./dwelling-storage";
+import type { DwellingFurniture, DwellingLayout, DwellingMarker, DwellingPosition } from "./dwelling-storage";
 import { loadDwellingLayout } from "./dwelling-storage";
 import type { ApiConfig, PresetConfig, RegexConfig, WorldBookConfig } from "./settings-types";
 import { loadCharacters } from "./character-storage";
@@ -109,6 +109,52 @@ function deduplicatePositions(rooms: DwellingLayout["rooms"]): void {
                 if (free) f.position = free;
             }
             used.add(f.position);
+        }
+    }
+}
+
+// ── Marker sanitize + position fallback ───────
+
+/** 标注点安全范围：避开顶部玻璃栏区和底部引言区 */
+const MARKER_X_MIN = 0.08, MARKER_X_MAX = 0.92;
+const MARKER_Y_MIN = 0.24, MARKER_Y_MAX = 0.82;
+
+const POSITION_MARKERS: Record<DwellingPosition, DwellingMarker> = {
+    "top-left": { x: 0.26, y: 0.3 }, "top-center": { x: 0.5, y: 0.26 }, "top-right": { x: 0.74, y: 0.3 },
+    "center-left": { x: 0.24, y: 0.5 }, "center": { x: 0.5, y: 0.48 }, "center-right": { x: 0.76, y: 0.5 },
+    "bottom-left": { x: 0.27, y: 0.7 }, "bottom-center": { x: 0.5, y: 0.72 }, "bottom-right": { x: 0.73, y: 0.7 },
+};
+
+function clampMarker(m: DwellingMarker): DwellingMarker {
+    return {
+        x: Math.min(MARKER_X_MAX, Math.max(MARKER_X_MIN, m.x)),
+        y: Math.min(MARKER_Y_MAX, Math.max(MARKER_Y_MIN, m.y)),
+    };
+}
+
+/** 取家具标注点：优先 LLM 输出的 marker，旧数据/缺失时按九宫格 position 兜底 */
+export function resolveFurnitureMarker(f: DwellingFurniture): DwellingMarker {
+    const m = f.marker;
+    if (m && Number.isFinite(m.x) && Number.isFinite(m.y)) return clampMarker(m);
+    return POSITION_MARKERS[f.position] ?? POSITION_MARKERS.center;
+}
+
+function sanitizeLayoutExtras(rooms: DwellingLayout["rooms"]): void {
+    for (const room of rooms) {
+        if (typeof room.en === "string") room.en = room.en.trim().toUpperCase().slice(0, 24) || undefined;
+        else room.en = undefined;
+        if (typeof room.imagePrompt === "string") room.imagePrompt = room.imagePrompt.trim() || undefined;
+        else room.imagePrompt = undefined;
+        for (const f of room.furniture) {
+            if (typeof f.en === "string") f.en = f.en.trim().toUpperCase().slice(0, 24) || undefined;
+            else f.en = undefined;
+            const m = f.marker as unknown;
+            if (m && typeof m === "object"
+                && Number.isFinite((m as DwellingMarker).x) && Number.isFinite((m as DwellingMarker).y)) {
+                f.marker = clampMarker(m as DwellingMarker);
+            } else {
+                f.marker = undefined;
+            }
         }
     }
 }
@@ -240,6 +286,7 @@ export async function generateDwellingLayout(
         }
 
         deduplicatePositions(layout.rooms);
+        sanitizeLayoutExtras(layout.rooms);
 
         return { layout };
     } catch (e) {
@@ -268,7 +315,6 @@ export async function generateItemHtml(
             undefined,
             { dwellingRoom: roomName, dwellingFurniture: furnitureLabel, dwellingItem: itemName, dwellingItemPreview: itemPreview },
         );
-
         const rawOutput = await sendLLMRequest(apiConfig, preset, llmMessages, regexes, {
             characterName: loadCharacters().find(c => c.id === characterId)?.name,
         }, {

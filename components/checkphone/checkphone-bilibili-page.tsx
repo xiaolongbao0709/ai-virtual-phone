@@ -314,7 +314,7 @@ export function CheckPhoneBilibiliPage({ character, onBack }: CheckPhoneBilibili
         )}
 
         {payload && activeEntry && (
-          <div style={{ position: "absolute", inset: 0, zIndex: 20, background: "#fff", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+          <div className="cp-scroll-guard" style={{ position: "absolute", inset: 0, zIndex: 20, background: "#fff", display: "flex", flexDirection: "column", overflowY: "auto" }}>
             <div style={{ paddingTop: "var(--cp-appbar-safe-top)", background: "#000" }}>
               <div style={{ position: "relative", width: "100%", aspectRatio: "16/9", background: "linear-gradient(135deg, #252a31 0%, #0d0f14 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: "30px 42px", color: "rgba(255,255,255,0.78)", fontSize: "calc(15px*var(--app-text-scale,1))", fontStyle: "italic", lineHeight: 1.65, textAlign: "center" }}>
                 <div style={{ maxWidth: "82%" }}><CheckPhoneBilingualText text={activeEntry.visualDescription} tone="light" /></div>

@@ -27,7 +27,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ ok: false, error: "图片不存在（可能已审核删除）。" }, { status: 404 });
     }
 
-    const file = await fetch(`${config.url}/storage/v1/object/${VERIFY_BUCKET}/${imagePath}`, {
+    const file = await fetch(`${config.url}/storage/v1/object/authenticated/${VERIFY_BUCKET}/${imagePath}`, {
       headers: { apikey: config.key, Authorization: `Bearer ${config.key}` },
       cache: "no-store",
     });

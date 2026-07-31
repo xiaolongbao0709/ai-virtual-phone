@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { loadStickerPacksForCharacters, resolvePackStickerMap, type StickerPack } from "@/lib/custom-sticker-storage";
+import { BUILTIN_SCREEN_EFFECTS, loadBuiltinScreenEffectSettings } from "@/lib/chat-screen-effects";
 
 // ── Emoji categories ─────────────────────────────
 
@@ -63,14 +64,31 @@ const EMOJI_CATEGORIES: { name: string; emojis: string[] }[] = [
 
 interface EmojiPanelProps {
     onSelect: (emoji: string) => void;
+    /** 点击「特效」栏的特效表情：以该文本为消息内容直接发送并播放全屏特效 */
+    onEffectSend?: (text: string) => void;
 }
 
-export function EmojiPanel({ onSelect }: EmojiPanelProps) {
+export function EmojiPanel({ onSelect, onEffectSend }: EmojiPanelProps) {
     const [emojiCategory, setEmojiCategory] = useState(0);
+    // 特效栏只显示启用中的内置特效；面板挂载时读取一次即可
+    const [enabledEffects] = useState(() => {
+        if (!onEffectSend) return [];
+        const settings = loadBuiltinScreenEffectSettings();
+        return BUILTIN_SCREEN_EFFECTS.filter(effect => settings[effect.type].enabled);
+    });
+    const effectCategoryIndex = EMOJI_CATEGORIES.length;
+    const showEffectTab = enabledEffects.length > 0;
 
     return (
         <div className="h-[220px] flex flex-col">
             <div className="flex gap-0.5 px-2 py-1 overflow-x-auto shrink-0 hide-scrollbar">
+                {showEffectTab && (
+                    <button
+                        onClick={() => setEmojiCategory(effectCategoryIndex)}
+                        className="emoji-category-pill"
+                        {...(emojiCategory === effectCategoryIndex ? { "data-active": "" } : {})}
+                    >特效</button>
+                )}
                 {EMOJI_CATEGORIES.map((cat, i) => (
                     <button
                         key={i}
@@ -80,15 +98,31 @@ export function EmojiPanel({ onSelect }: EmojiPanelProps) {
                     >{cat.name}</button>
                 ))}
             </div>
-            <div className="flex-1 overflow-auto px-2 py-1 grid grid-cols-8 gap-0.5 content-start hide-scrollbar">
-                {EMOJI_CATEGORIES[emojiCategory].emojis.map((emoji, i) => (
-                    <button
-                        key={i}
-                        onClick={() => onSelect(emoji)}
-                        className="border-none bg-transparent ts-18 cursor-pointer p-0.5 rounded-lg flex items-center justify-center aspect-square"
-                    >{emoji}</button>
-                ))}
-            </div>
+            {emojiCategory === effectCategoryIndex && showEffectTab ? (
+                <div className="flex-1 overflow-auto px-2 py-1 grid grid-cols-4 gap-1.5 content-start hide-scrollbar">
+                    {enabledEffects.map(effect => (
+                        <button
+                            key={effect.type}
+                            onClick={() => onEffectSend?.(effect.icon)}
+                            className="emoji-effect-tile"
+                            title={effect.name}
+                        >
+                            <span className="emoji-effect-tile-icon">{effect.icon}</span>
+                            <span className="emoji-effect-tile-name">{effect.name}</span>
+                        </button>
+                    ))}
+                </div>
+            ) : (
+                <div className="flex-1 overflow-auto px-2 py-1 grid grid-cols-8 gap-0.5 content-start hide-scrollbar">
+                    {EMOJI_CATEGORIES[emojiCategory].emojis.map((emoji, i) => (
+                        <button
+                            key={i}
+                            onClick={() => onSelect(emoji)}
+                            className="border-none bg-transparent ts-18 cursor-pointer p-0.5 rounded-lg flex items-center justify-center aspect-square"
+                        >{emoji}</button>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }

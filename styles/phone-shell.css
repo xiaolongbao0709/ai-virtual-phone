@@ -278,6 +278,13 @@
   user-select: none;
   -webkit-touch-callout: none;
 }
+/* 仅桌面态外扩吃掉壳的 12px 内边距：图标/组件的投影原本渗入内边距区、
+   在工作区 overflow 裁剪边上被生硬截断，形成一条纵向"背景接缝"。外扩后
+   裁剪边与屏幕边重合，阴影自然淡出；网格列仍按屏幕居中，位置不变。
+   App 打开时（.app-open）必须保持原始宽度，否则所有 App 页面会被拓宽。 */
+.phone-workspace:not(.app-open) {
+  margin-inline: -12px;
+}
 .phone-workspace img {
   -webkit-user-drag: none;
   user-drag: none;
@@ -309,11 +316,13 @@
   flex: 0 0 100%;
   width: 100%;
   -webkit-touch-callout: none;
-  --slot-size: 66px;
+  /* 窄视口（系统显示大小调大，CSS 视口 330~370px）下格子收缩；
+     视口 ≥374px 算出值 ≥66 被钳回 66px——正常手机零变化。dock 用同一公式保持上下对齐。 */
+  --slot-size: clamp(56px, calc((100vw - 108px) / 4), 66px);
   --slot-gap-x: 20px;
   --slot-gap-y: var(--home-row-gap-y);
-  --slot-icon-width: 62px;
-  --slot-icon-height: 62px;
+  --slot-icon-width: min(62px, var(--slot-size));
+  --slot-icon-height: min(62px, var(--slot-size));
   --slot-row-step: calc(var(--slot-icon-height) + var(--slot-gap-y));
   --slot-icon-offset-x: calc((var(--slot-size) - var(--slot-icon-width)) / 2);
   margin-top: 2px;
@@ -327,14 +336,16 @@
   padding: 0 0 var(--home-grid-bottom-trim);
 }
 
+/* 三种网格模式统一使用 --home-grid-bottom-trim：此前这里硬编码 1px，
+   把变量在首页/组件页架空，导致底部留白只对纯图标翻页生效。 */
 .icon-grid-page1 {
-  padding-bottom: 1px;
+  padding-bottom: var(--home-grid-bottom-trim);
 }
 
 
 /* Explicit grid mode (used when widgets present) */
 .icon-grid-explicit {
-  padding-bottom: 1px;
+  padding-bottom: var(--home-grid-bottom-trim);
 }
 
 .icon-grid .widget-glass {
@@ -440,8 +451,9 @@
 }
 
 .icon-glyph-box {
-  width: 58px;
-  height: 58px;
+  /* 跟随格子收缩（无 --slot-size 上下文时回退 58px 原值） */
+  width: min(58px, var(--slot-size, 58px));
+  height: min(58px, var(--slot-size, 58px));
   border-radius: 16px;
   border: none;
   display: grid;
@@ -453,18 +465,19 @@
 }
 
 /* Base Effects overrides for icon-glyph-box */
+/* 立体打光整体减淡：斜光层次保留，各层高光强度降约四成，凸面感变弱 */
 .phone-shell[data-icon-effect="glass"] .icon-glyph-box {
   background:
     linear-gradient(135deg,
-      rgba(255, 255, 255, 0.26),
+      rgba(255, 255, 255, 0.17),
       color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 6%, transparent),
-      rgba(255, 255, 255, 0.1)),
+      rgba(255, 255, 255, 0.07)),
     color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 38%, transparent);
   backdrop-filter: blur(22px) saturate(140%);
   -webkit-backdrop-filter: blur(22px) saturate(140%);
   box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.4),
-    inset 0 -1px 1px rgba(255, 255, 255, 0.06),
+    inset 0 1px 2px rgba(255, 255, 255, 0.28),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.05),
     0 8px 32px rgb(0 0 0 / calc(0.15 * var(--desktop-shadow-strength, 0))),
     0 0 18px color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 8%, transparent);
   isolation: isolate;
@@ -481,8 +494,8 @@
   z-index: 1;
   background:
     linear-gradient(135deg,
-      rgba(255, 255, 255, 0.35) 0%,
-      rgba(255, 255, 255, 0.1) 42%,
+      rgba(255, 255, 255, 0.2) 0%,
+      rgba(255, 255, 255, 0.06) 42%,
       transparent 72%);
   mix-blend-mode: screen;
 }
@@ -497,10 +510,10 @@
   z-index: 3;
   background:
     linear-gradient(135deg,
-      rgba(255, 255, 255, 0.7),
-      rgba(255, 255, 255, 0.15) 40%,
+      rgba(255, 255, 255, 0.48),
+      rgba(255, 255, 255, 0.14) 40%,
       rgba(255, 255, 255, 0.12) 62%,
-      rgba(255, 255, 255, 0.2));
+      rgba(255, 255, 255, 0.18));
   -webkit-mask:
     linear-gradient(#fff 0 0) content-box,
     linear-gradient(#fff 0 0);
@@ -569,6 +582,7 @@
 
 .icon-label {
   font-size: calc(9.9px*var(--app-text-scale,1));
+  font-weight: 500;
   text-align: center;
   color: var(--c-home-label);
   text-shadow: none;
@@ -599,6 +613,26 @@
 }
 .edit-mode .icon-item.dragging,
 .edit-mode .widget-drag-wrap.dragging .widget-glass {
+  opacity: 0.25;
+  animation: none;
+}
+/* 编辑态下 DIY code 组件的 iframe 放弃指针事件：否则按在 iframe 上的
+   pointerdown 进不了宿主的拖拽处理，组件拖不动 */
+.edit-mode .widget-glass iframe {
+  pointer-events: none;
+}
+/* Dock icons jiggle & drag just like grid icons in edit mode. */
+.dock.edit-mode .dock-item {
+  animation: jiggle 0.22s ease-in-out infinite;
+}
+.dock.edit-mode .dock-item[data-flip-active] {
+  animation: none;
+}
+.dock.edit-mode .dock-item:nth-child(even) {
+  animation-delay: -0.11s;
+  animation-duration: 0.26s;
+}
+.dock.edit-mode .dock-item.dragging {
   opacity: 0.25;
   animation: none;
 }
@@ -761,19 +795,26 @@
 /* ── Dock ── */
 
 .dock {
-  --slot-size: 66px;
+  /* 宽度随图标数量自适应：只有 3 个时 dock 就窄一格，不再留空位。
+     --dock-count 由 JS 按当前 dock 图标数注入（缺省 4，保证首帧/SSR 观感不变）。 */
+  --dock-count: 4;
+  --slot-size: clamp(56px, calc((100vw - 108px) / 4), 66px);
   --slot-gap-x: 20px;
   margin-top: 8px;
   margin-bottom: var(--home-dock-lift);
   margin-inline: auto;
-  width: calc((4 * var(--slot-size)) + (3 * var(--slot-gap-x)) + 30px);
-  border-radius: var(--dock-radius, 9999px);
+  width: min(calc((var(--dock-count) * var(--slot-size)) + ((var(--dock-count) - 1) * var(--slot-gap-x)) + 30px), calc(100% - 8px));
+  /* 默认圆角：9999px(全胶囊)显得太圆，收到 32px 圆角矩形；主题仍可用 --dock-radius 覆盖 */
+  border-radius: var(--dock-radius, 32px);
   border: var(--dock-border, none);
   background: var(--c-home-glass);
-  min-height: 78px;
-  padding: 10px 0 5px;
+  /* 底板高度：图标(58px)在此高度内垂直居中，上下留白 = (高度-58)/2。
+     78→92 让上下各约 10px 增至约 17px，不再挤。可由主题 --dock-height 覆盖。 */
+  min-height: var(--dock-height, 92px);
+  /* 上下 0 内边距 + 网格居中：图标在胶囊内几何对称（旧值 10px/5px 造成图标偏下） */
+  padding: 0;
   display: grid;
-  grid-template-columns: repeat(4, var(--slot-size));
+  grid-template-columns: repeat(var(--dock-count), var(--slot-size));
   column-gap: var(--slot-gap-x);
   row-gap: 0;
   justify-content: center;
@@ -795,19 +836,20 @@
   -webkit-backdrop-filter: blur(calc(var(--ui-blur-heavy) + 0.01px)) saturate(var(--ui-saturate));
 }
 
+/* 立体打光整体减淡：与图标同步降约四成 */
 .phone-shell[data-icon-effect="glass"] .dock:not([data-skinned]) {
   background:
     linear-gradient(135deg,
-      rgba(255, 255, 255, 0.22),
+      rgba(255, 255, 255, 0.14),
       color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 5%, transparent),
-      rgba(255, 255, 255, 0.08)),
+      rgba(255, 255, 255, 0.05)),
     color-mix(in srgb, var(--c-home-glass, rgba(255, 255, 255, 0.3)) 55%, transparent);
   border: none;
   backdrop-filter: blur(24px) saturate(140%);
   -webkit-backdrop-filter: blur(24px) saturate(140%);
   box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.38),
-    inset 0 -1px 1px rgba(255, 255, 255, 0.05),
+    inset 0 1px 2px rgba(255, 255, 255, 0.26),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.04),
     0 8px 32px rgb(0 0 0 / calc(0.14 * var(--desktop-shadow-strength, 0))),
     0 0 22px color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 8%, transparent);
   isolation: isolate;
@@ -822,11 +864,11 @@
   background:
     linear-gradient(90deg,
       transparent 8%,
-      rgba(255, 255, 255, 0.5) 50%,
+      rgba(255, 255, 255, 0.32) 50%,
       transparent 92%) top 0 left 8% / 84% 2px no-repeat,
     linear-gradient(135deg,
-      rgba(255, 255, 255, 0.25) 0%,
-      rgba(255, 255, 255, 0.08) 42%,
+      rgba(255, 255, 255, 0.14) 0%,
+      rgba(255, 255, 255, 0.05) 42%,
       transparent 74%);
   mix-blend-mode: screen;
 }
@@ -841,10 +883,10 @@
   z-index: 1;
   background:
     linear-gradient(135deg,
-      rgba(255, 255, 255, 0.65),
-      rgba(255, 255, 255, 0.12) 40%,
+      rgba(255, 255, 255, 0.45),
+      rgba(255, 255, 255, 0.11) 40%,
       rgba(255, 255, 255, 0.10) 62%,
-      rgba(255, 255, 255, 0.18));
+      rgba(255, 255, 255, 0.16));
   -webkit-mask:
     linear-gradient(#fff 0 0) content-box,
     linear-gradient(#fff 0 0);
@@ -888,7 +930,6 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  transform: translateY(-2px);
   position: relative;
   z-index: 2;
 }
@@ -980,6 +1021,32 @@
   width: min(980px, 94vw);
   margin: 0 auto;
   padding: 20px 0 36px;
+}
+
+/* 更窄视口（≤373px）：按 390px 设计稿整体等比缩放（格 66→16.92vw、
+   距 20→5.13vw、图标 58→14.87vw、dock 354→90.77vw），窄屏呈现与正常
+   手机完全相同的比例观感，无多余留白；网格/dock 同源，天然对齐。
+   ≥374px 不受影响。 */
+@media (max-width: 373px) and (hover: none) and (pointer: coarse) {
+  .icon-grid,
+  .dock {
+    --slot-size: 16.92vw;
+    --slot-gap-x: 5.13vw;
+    --slot-icon-width: 15.9vw;
+    --slot-icon-height: 15.9vw;
+  }
+  .icon-glyph-box {
+    width: 14.87vw;
+    height: 14.87vw;
+  }
+  .dock {
+    /* 同样按数量自适应；count=4 时等于原 90.77vw。 */
+    width: min(calc((var(--dock-count) * var(--slot-size)) + ((var(--dock-count) - 1) * var(--slot-gap-x)) + 30px), calc(100% - 8px));
+  }
+  .dock .dock-glyph-box {
+    width: 14.87vw;
+    height: 14.87vw;
+  }
 }
 
 /* ── Mobile responsive ── */

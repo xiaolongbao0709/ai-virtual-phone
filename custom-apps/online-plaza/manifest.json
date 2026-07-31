@@ -1,0 +1,24 @@
+{
+  "sdkVersion": "1.0",
+  "id": "online.plaza",
+  "name": "联机广场",
+  "version": "1.1.0",
+  "author": "Float 官方",
+  "description": "联机能力官方示例：和其他真实用户开房间实时聊天，还能把自己的角色带进房间让TA参与聊天（角色由主人的设备驱动，人设不出门）；或者把心事装进漂流瓶扔向大海、捞起陌生人的瓶子。也是创作者学习 room.* / cloud.* 联机 API 与「带角色上桌」模式的活教材，源码即教程。",
+  "icon": "icon.png",
+  "entry": "index.html",
+  "permissions": [
+    "online.play",
+    "ai.generate",
+    "characters.read",
+    "ui.toast"
+  ],
+  "extensions": {
+    "events": [
+      "room.message",
+      "room.players",
+      "room.state",
+      "room.closed"
+    ]
+  }
+}

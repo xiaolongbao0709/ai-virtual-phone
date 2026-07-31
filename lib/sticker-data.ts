@@ -5,6 +5,8 @@
  * packaged image assets when a pack provides dedicated files.
  */
 
+import { loadCustomStickers } from "./custom-sticker-storage";
+
 export interface StickerItem {
     name: string;
     emoji: string;     // fallback emoji display
@@ -99,4 +101,19 @@ export function findStickerByName(name: string): StickerItem | undefined {
         if (found) return found;
     }
     return undefined;
+}
+
+/**
+ * 校验表情包名称是否可用：内置表情或任一给定角色的自定义表情包中存在该名称。
+ * 用于「丢弃角色输出的无效表情包」开关。
+ */
+export function isKnownStickerLabel(label: string, characterIds: (string | undefined)[]): boolean {
+    const name = (label || "").trim();
+    if (!name) return false;
+    if (findStickerByName(name)) return true;
+    for (const cid of characterIds) {
+        if (!cid) continue;
+        if (loadCustomStickers(cid).some(s => (s.name || "").trim() === name)) return true;
+    }
+    return false;
 }

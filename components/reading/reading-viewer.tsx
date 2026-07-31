@@ -1113,7 +1113,7 @@ export function ReadingViewer({ book, onBack }: Props) {
                 const { reply, actions } = parseReadingDiscussResponse(rawReply);
                 // Parse like chat: split into parts, extract inner monologue, state values, media
                 if (reply) {
-                    const { parts, statusPanel, innerMonologue, stateValues } = parseAIResponse(reply, []);
+                    const { parts, statusPanel, innerMonologue, stateValues, freshStateValues } = parseAIResponse(reply, []);
                     const newMsgs: ChatMessage[] = [];
                     const saveParts: typeof parts = parts.length > 0 || !(statusPanel || innerMonologue) ? parts : [{ content: "" }];
                     for (let i = 0; i < saveParts.length; i++) {
@@ -1127,6 +1127,7 @@ export function ReadingViewer({ book, onBack }: Props) {
                             statusPanel: i === 0 && statusPanel ? statusPanel : undefined,
                             innerMonologue: i === 0 && innerMonologue ? innerMonologue : undefined,
                             stateValues: i === 0 && stateValues.length > 0 ? stateValues : undefined,
+                            freshStateValues: i === 0 ? freshStateValues : undefined,
                         });
                         newMsgs.push(msg);
                     }

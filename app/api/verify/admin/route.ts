@@ -45,7 +45,7 @@ export async function GET(request: Request) {
 
 async function pickAvailableActivationCode(): Promise<{ code?: string; error?: string }> {
   const candidates = await supabaseRestFetch<ActivationCodeRow[]>(
-    "activation_codes?status=eq.active&used_count=eq.0&select=code,expires_at&order=created_at.asc&limit=100",
+    "activation_codes?status=eq.active&used_count=eq.0&select=code,expires_at&order=created_at.asc&limit=1000",
   );
   if (!candidates.ok) return { error: formatSupabaseRestError(candidates.error) };
 

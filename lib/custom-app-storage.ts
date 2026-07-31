@@ -256,6 +256,8 @@ function normalizePermission(value: unknown): CustomAppPermission | null {
     "memory.suggest",
     "media.pick",
     "media.save",
+    "geo.read",
+    "geo.watch",
     "notifications.read",
     "notifications.write",
     "tasks.schedule",
@@ -265,6 +267,7 @@ function normalizePermission(value: unknown): CustomAppPermission | null {
     "ui.call",
     "wallet.read",
     "wallet.pay",
+    "online.play",
   ]);
   return allowed.has(text as CustomAppPermission) ? text as CustomAppPermission : null;
 }

@@ -14,7 +14,7 @@ import type { LlmToolDefinition } from "./llm-provider-adapter";
 import type { ToolCall, ToolResult } from "./tool-executor";
 import type { MascotPageContext } from "./mascot-context";
 import type { Prompt } from "./settings-types";
-import { CHARACTER_CARD_PROMPT, WORLDBOOK_PROMPT, PRESET_PROMPT, GENERAL_PRESET_PROMPT, REGEX_PROMPT, CSS_PROMPT } from "./mascot-prompts";
+import { CHARACTER_CARD_PROMPT, WORLDBOOK_PROMPT, PRESET_PROMPT, GENERAL_PRESET_PROMPT, REGEX_PROMPT, CSS_PROMPT, WIDGET_PROMPT } from "./mascot-prompts";
 import {
     buildCssAssetNineSliceCss,
     calibrateCssAssetNineSlice,
@@ -499,6 +499,78 @@ const UPDATE_REGEX_RULE_SCHEMA = {
     additionalProperties: false,
 };
 
+// ── 桌面组件工具 ──
+const WIDGET_SIZE_ENUM = ["1x1", "1x2", "1x4", "2x1", "2x2", "2x3", "2x4", "3x2", "3x3", "3x4", "4x2", "4x3", "4x4", "5x4", "6x4"];
+
+const LIST_WIDGET_CATALOG_SCHEMA = {
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+};
+
+const READ_DESKTOP_LAYOUT_SCHEMA = {
+    type: "object",
+    properties: {
+        page: { type: "number", description: "桌面页码（1 起），默认 1" },
+    },
+    additionalProperties: false,
+};
+
+const CREATE_DIY_WIDGET_SCHEMA = {
+    type: "object",
+    properties: {
+        name: { type: "string", description: "组件名（显示在组件挑选器里）" },
+        size: { type: "string", enum: WIDGET_SIZE_ENUM, description: "尺寸，行x列" },
+        htmlString: { type: "string", description: "完整自包含 HTML 文档（内联全部 CSS/JS）" },
+        autoPlace: { type: "boolean", description: "创建后自动摆上桌面空位，默认 true" },
+        page: { type: "number", description: "自动摆放的目标页码（1 起），默认 1" },
+    },
+    required: ["name", "size", "htmlString"],
+    additionalProperties: false,
+};
+
+const UPDATE_DIY_WIDGET_SCHEMA = {
+    type: "object",
+    properties: {
+        templateId: { type: "string", description: "DIY 模板 id（diy- 开头）" },
+        name: { type: "string", description: "新组件名" },
+        size: { type: "string", enum: WIDGET_SIZE_ENUM, description: "新尺寸；桌面实例位置放不下新尺寸时该实例会被移下桌面" },
+        htmlString: { type: "string", description: "新的完整 HTML 文档；桌面实例会实时热更新" },
+    },
+    required: ["templateId"],
+    additionalProperties: false,
+};
+
+const PREVIEW_DIY_WIDGET_SCHEMA = {
+    type: "object",
+    properties: {
+        templateId: { type: "string", description: "要预览的 DIY 模板 id" },
+    },
+    required: ["templateId"],
+    additionalProperties: false,
+};
+
+const PLACE_WIDGET_SCHEMA = {
+    type: "object",
+    properties: {
+        type: { type: "string", description: "组件类型：DIY 模板 id（diy- 开头）或内置组件类型名（见组件目录）" },
+        page: { type: "number", description: "目标页码（1 起），默认 1" },
+        row: { type: "number", description: "起始行（1-6）；和 col 一起传则精确摆放，否则自动找空位" },
+        col: { type: "number", description: "起始列（1-4）" },
+    },
+    required: ["type"],
+    additionalProperties: false,
+};
+
+const REMOVE_DIY_WIDGET_SCHEMA = {
+    type: "object",
+    properties: {
+        widgetId: { type: "string", description: "要移下桌面的组件实例 id（查看桌面布局可得；仅限 DIY 实例）" },
+        templateId: { type: "string", description: "要删除的 DIY 模板 id；会连同它的所有桌面实例一起移除" },
+    },
+    additionalProperties: false,
+};
+
 // ── 导航工具 ──
 const NAVIGATE_SCHEMA = {
     type: "object",
@@ -610,6 +682,21 @@ export const MASCOT_TOOL_PACKAGES: MascotToolPackage[] = [
             { name: "更新正则规则", description: "修改某规则的字段（updates 里传部分字段即可）。", parameterSchema: UPDATE_REGEX_RULE_SCHEMA },
         ],
         usageGuide: REGEX_PROMPT,
+    },
+    {
+        id: "widget_pack",
+        label: "桌面组件套件",
+        description: "创建 / 更新 / 预览 / 摆放 DIY 桌面组件（自包含 HTML，沙箱渲染）。更新后桌面实时热更新，适合小步迭代。",
+        subTools: [
+            { name: "列出组件目录", description: "列出内置组件与 DIY 组件模板（含 templateId、尺寸、模式）。", parameterSchema: LIST_WIDGET_CATALOG_SCHEMA },
+            { name: "查看桌面布局", description: "查看某一页 6x4 网格的占用情况和该页组件实例列表（含实例 id）。", parameterSchema: READ_DESKTOP_LAYOUT_SCHEMA },
+            { name: "创建DIY组件", description: "用完整 HTML 新建 DIY 组件模板，默认自动摆上桌面空位。", parameterSchema: CREATE_DIY_WIDGET_SCHEMA },
+            { name: "更新DIY组件", description: "修改 DIY 模板的名称/尺寸/HTML；桌面上的实例实时热更新。", parameterSchema: UPDATE_DIY_WIDGET_SCHEMA },
+            { name: "预览DIY组件", description: "在对话里弹窗预览某个 DIY 模板的当前效果，不离开聊天。", parameterSchema: PREVIEW_DIY_WIDGET_SCHEMA },
+            { name: "摆放组件", description: "把 DIY 模板或内置组件摆上桌面；不传行列时自动找空位。", parameterSchema: PLACE_WIDGET_SCHEMA },
+            { name: "移除DIY组件", description: "把 DIY 实例移下桌面，或删除 DIY 模板（连同其所有桌面实例）。", parameterSchema: REMOVE_DIY_WIDGET_SCHEMA },
+        ],
+        usageGuide: WIDGET_PROMPT,
     },
 ];
 
@@ -747,6 +834,13 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "创建正则组": "mascot_create_regex_group",
     "添加正则规则": "mascot_add_regex_rule",
     "更新正则规则": "mascot_update_regex_rule",
+    "列出组件目录": "mascot_list_widget_catalog",
+    "查看桌面布局": "mascot_read_desktop_layout",
+    "创建DIY组件": "mascot_create_diy_widget",
+    "更新DIY组件": "mascot_update_diy_widget",
+    "预览DIY组件": "mascot_preview_diy_widget",
+    "摆放组件": "mascot_place_widget",
+    "移除DIY组件": "mascot_remove_diy_widget",
 };
 
 const MASCOT_NATIVE_LOADER_NAMES: Record<string, string> = {
@@ -756,6 +850,7 @@ const MASCOT_NATIVE_LOADER_NAMES: Record<string, string> = {
     worldbook_pack: "mascot_load_worldbook_pack",
     preset_pack: "mascot_load_preset_pack",
     regex_pack: "mascot_load_regex_pack",
+    widget_pack: "mascot_load_widget_pack",
 };
 
 export function getMascotNativeToolName(displayName: string): string {
@@ -882,6 +977,15 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "创建正则组": return await handleCreateRegexGroup(call.args);
             case "添加正则规则": return await handleAddRegexRule(call.args);
             case "更新正则规则": return await handleUpdateRegexRule(call.args);
+
+            // ─── 桌面组件 ───
+            case "列出组件目录": return await handleListWidgetCatalog();
+            case "查看桌面布局": return await handleReadDesktopLayout(call.args);
+            case "创建DIY组件": return await handleCreateDiyWidget(call.args);
+            case "更新DIY组件": return await handleUpdateDiyWidget(call.args);
+            case "预览DIY组件": return await handlePreviewDiyWidget(call.args);
+            case "摆放组件": return await handlePlaceWidget(call.args);
+            case "移除DIY组件": return await handleRemoveDiyWidget(call.args);
 
             // ─── 导航 ───
             case "导航": return await handleNavigate(call.args);
@@ -1815,6 +1919,278 @@ async function handleUpdateRegexRule(args: Record<string, unknown>): Promise<Too
     groups[idx] = group;
     saveRegexes(groups);
     return { name: "更新正则规则", success: true, data: `已更新规则 ${args.ruleId}` };
+}
+
+// ── 桌面组件 Handlers ─────────────────────────
+
+const DIY_HTML_MAX_LENGTH = 300_000;
+
+async function widgetToolDeps() {
+    const storage = await import("./widget-storage");
+    const types = await import("./widget-types");
+    const layoutStore = await import("./desktop-layout-storage");
+    const { kvGet } = await import("./kv-db");
+    const events = await import("./mascot-events");
+    return { storage, types, layoutStore, kvGet, events };
+}
+
+type WidgetToolDeps = Awaited<ReturnType<typeof widgetToolDeps>>;
+
+function readDesktopIconLayout(deps: WidgetToolDeps) {
+    try {
+        const raw = deps.kvGet(deps.layoutStore.ICON_LAYOUT_STORAGE_KEY);
+        return deps.layoutStore.normalizeDesktopIconLayout(raw ? JSON.parse(raw) : null);
+    } catch {
+        return deps.layoutStore.normalizeDesktopIconLayout(null);
+    }
+}
+
+function desktopPageIcons(deps: WidgetToolDeps, page: number) {
+    const layout = readDesktopIconLayout(deps);
+    const pageKey = deps.layoutStore.getDesktopPageKey(page);
+    return layout[pageKey] ?? [];
+}
+
+/** 在指定页为 size 找落点：给了 row/col 则校验，否则扫第一个空位 */
+function resolveWidgetSpot(
+    deps: WidgetToolDeps,
+    size: string,
+    page: number,
+    row?: number,
+    col?: number,
+): { ok: true; row: number; col: number } | { ok: false; error: string } {
+    const { GRID_ROWS, GRID_COLS } = deps.types;
+    const widgets = deps.storage.loadWidgets();
+    const grid = deps.storage.buildOccupancyGrid(desktopPageIcons(deps, page), widgets, page);
+    const sizeKey = size as keyof typeof deps.types.WIDGET_SIZE_CELLS;
+    if (typeof row === "number" && typeof col === "number") {
+        if (!deps.storage.canPlaceWidget(grid, sizeKey, row, col)) {
+            return { ok: false, error: `第 ${page} 页 行${row}列${col} 放不下 ${size}（越界或被占用）。可用「查看桌面布局」找空位。` };
+        }
+        return { ok: true, row, col };
+    }
+    for (let r = 1; r <= GRID_ROWS; r++) {
+        for (let c = 1; c <= GRID_COLS; c++) {
+            if (deps.storage.canPlaceWidget(grid, sizeKey, r, c)) return { ok: true, row: r, col: c };
+        }
+    }
+    return { ok: false, error: `第 ${page} 页没有能放下 ${size} 的空位。可换一页，或先移除/挪动一些内容。` };
+}
+
+function diyTemplateDisplay(t: { id: string; name: string; size: string; mode: string }): string {
+    return `· [DIY] ${t.name}（${t.size}，${t.mode === "code" ? "代码" : "图片"}模式）[templateId: ${t.id}]`;
+}
+
+async function handleListWidgetCatalog(): Promise<ToolResult> {
+    const deps = await widgetToolDeps();
+    const lines: string[] = [];
+    lines.push("内置组件（type → 名称/尺寸）：");
+    for (const entry of deps.types.WIDGET_CATALOG) {
+        lines.push(`· ${entry.type} — ${entry.name}（${entry.size}${entry.track === "freestyle" ? "，自由艺术" : ""}）`);
+    }
+    const templates = deps.storage.loadDIYTemplates();
+    lines.push("");
+    if (templates.length === 0) {
+        lines.push("DIY 组件模板：（暂无）");
+    } else {
+        lines.push("DIY 组件模板：");
+        for (const t of templates) lines.push(diyTemplateDisplay(t));
+    }
+    return { name: "列出组件目录", success: true, data: lines.join("\n") };
+}
+
+async function handleReadDesktopLayout(args: Record<string, unknown>): Promise<ToolResult> {
+    const deps = await widgetToolDeps();
+    const page = numberOption(args.page, 1);
+    if (page < 1 || page > 9) return { name: "查看桌面布局", success: false, error: `页码不合法：${page}` };
+    const widgets = deps.storage.loadWidgets();
+    const grid = deps.storage.buildOccupancyGrid(desktopPageIcons(deps, page), widgets, page);
+    const lines: string[] = [];
+    lines.push(`第 ${page} 页 6x4 占用（W=组件 I=图标 ·=空）：`);
+    grid.forEach((rowCells, r) => {
+        const cells = rowCells.map((cell) => (cell === null ? "·" : cell.startsWith("widget:") ? "W" : "I"));
+        lines.push(`行${r + 1}  ${cells.join(" ")}`);
+    });
+    const pageWidgets = widgets.filter((w) => w.page === page);
+    lines.push("");
+    if (pageWidgets.length === 0) {
+        lines.push("本页组件实例：（无）");
+    } else {
+        const templates = deps.storage.loadDIYTemplates();
+        lines.push("本页组件实例：");
+        for (const w of pageWidgets) {
+            const diy = templates.find((t) => t.id === w.type);
+            const builtin = deps.types.WIDGET_CATALOG.find((e) => e.type === w.type);
+            const label = diy ? `${diy.name}（DIY）` : builtin ? builtin.name : w.type;
+            lines.push(`· ${label} ${w.size} @行${w.row}列${w.col} [实例 id: ${w.id}]`);
+        }
+    }
+    const otherPages = Array.from(new Set(widgets.map((w) => w.page))).filter((p) => p !== page).sort();
+    if (otherPages.length > 0) lines.push(`（其他页也有组件：第 ${otherPages.join("、")} 页）`);
+    return { name: "查看桌面布局", success: true, data: lines.join("\n") };
+}
+
+async function handleCreateDiyWidget(args: Record<string, unknown>): Promise<ToolResult> {
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    const size = typeof args.size === "string" ? args.size : "";
+    const htmlString = typeof args.htmlString === "string" ? args.htmlString : "";
+    if (!name) return { name: "创建DIY组件", success: false, error: "name 不能为空" };
+    if (!WIDGET_SIZE_ENUM.includes(size)) return { name: "创建DIY组件", success: false, error: `尺寸不合法：${size}。可用：${WIDGET_SIZE_ENUM.join("/")}` };
+    if (!htmlString.trim()) return { name: "创建DIY组件", success: false, error: "htmlString 不能为空" };
+    if (htmlString.length > DIY_HTML_MAX_LENGTH) return { name: "创建DIY组件", success: false, error: `htmlString 过长（${htmlString.length} 字符，上限 ${DIY_HTML_MAX_LENGTH}）` };
+
+    const deps = await widgetToolDeps();
+    const templates = deps.storage.loadDIYTemplates();
+    const id = `diy-${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+    templates.push({ id, name, size: size as never, mode: "code", htmlString });
+    deps.storage.saveDIYTemplates(templates);
+
+    const autoPlace = args.autoPlace !== false;
+    let placement = "未上桌（autoPlace=false）。之后可用「摆放组件」摆上桌面。";
+    if (autoPlace) {
+        const page = numberOption(args.page, 1);
+        const spot = resolveWidgetSpot(deps, size, page);
+        if (spot.ok) {
+            const widgets = deps.storage.placeWidget(deps.storage.loadWidgets(), {
+                type: id, size: size as never, page, row: spot.row, col: spot.col,
+            });
+            deps.storage.saveWidgets(widgets);
+            placement = `已自动摆到第 ${page} 页 行${spot.row}列${spot.col}，桌面已刷新。`;
+        } else {
+            placement = `模板已创建，但${spot.error}`;
+        }
+    }
+    deps.events.notifyDesktopWidgetsChanged();
+    return { name: "创建DIY组件", success: true, data: `DIY 组件「${name}」已创建 [templateId: ${id}]。${placement}` };
+}
+
+async function handleUpdateDiyWidget(args: Record<string, unknown>): Promise<ToolResult> {
+    const templateId = typeof args.templateId === "string" ? args.templateId : "";
+    if (!templateId) return { name: "更新DIY组件", success: false, error: "缺少 templateId" };
+    const deps = await widgetToolDeps();
+    const templates = deps.storage.loadDIYTemplates();
+    const idx = templates.findIndex((t) => t.id === templateId);
+    if (idx < 0) return { name: "更新DIY组件", success: false, error: `找不到模板：${templateId}。用「列出组件目录」确认 id。` };
+
+    const target = { ...templates[idx] };
+    const changed: string[] = [];
+    if (typeof args.name === "string" && args.name.trim()) { target.name = args.name.trim(); changed.push("名称"); }
+    if (typeof args.htmlString === "string" && args.htmlString.trim()) {
+        if (args.htmlString.length > DIY_HTML_MAX_LENGTH) return { name: "更新DIY组件", success: false, error: `htmlString 过长（上限 ${DIY_HTML_MAX_LENGTH}）` };
+        target.htmlString = args.htmlString;
+        changed.push("HTML");
+    }
+    const newSize = typeof args.size === "string" ? args.size : "";
+    const sizeChanged = Boolean(newSize && newSize !== target.size);
+    if (newSize && !WIDGET_SIZE_ENUM.includes(newSize)) return { name: "更新DIY组件", success: false, error: `尺寸不合法：${newSize}` };
+    if (sizeChanged) { target.size = newSize as never; changed.push("尺寸"); }
+    if (changed.length === 0) return { name: "更新DIY组件", success: false, error: "没有可更新的字段（name/size/htmlString 至少传一个）" };
+
+    templates[idx] = target;
+    deps.storage.saveDIYTemplates(templates);
+
+    let instanceNote = "";
+    if (sizeChanged) {
+        const widgets = deps.storage.loadWidgets();
+        const kept: typeof widgets = [];
+        let dropped = 0;
+        for (const w of widgets) {
+            if (w.type !== templateId) { kept.push(w); continue; }
+            const others = widgets.filter((o) => o.id !== w.id);
+            const grid = deps.storage.buildOccupancyGrid(desktopPageIcons(deps, w.page), others, w.page);
+            if (deps.storage.canPlaceWidget(grid, newSize as never, w.row, w.col)) {
+                kept.push({ ...w, size: newSize as never });
+            } else {
+                dropped += 1;
+            }
+        }
+        deps.storage.saveWidgets(kept);
+        instanceNote = dropped > 0
+            ? ` 有 ${dropped} 个桌面实例原位置放不下新尺寸，已移下桌面（模板还在，可用「摆放组件」重新摆）。`
+            : " 桌面实例已按新尺寸原位更新。";
+    }
+    deps.events.notifyDesktopWidgetsChanged();
+    return { name: "更新DIY组件", success: true, data: `模板「${target.name}」已更新（${changed.join("/")}），桌面实时生效。${instanceNote}` };
+}
+
+async function handlePreviewDiyWidget(args: Record<string, unknown>): Promise<ToolResult> {
+    const templateId = typeof args.templateId === "string" ? args.templateId : "";
+    if (!templateId) return { name: "预览DIY组件", success: false, error: "缺少 templateId" };
+    const deps = await widgetToolDeps();
+    const template = deps.storage.loadDIYTemplates().find((t) => t.id === templateId);
+    if (!template) return { name: "预览DIY组件", success: false, error: `找不到模板：${templateId}` };
+    if (template.mode !== "code" || !template.htmlString) return { name: "预览DIY组件", success: false, error: "该模板不是代码模式，暂不支持弹窗预览" };
+    const handled = deps.events.requestDiyWidgetPreview({
+        templateId: template.id,
+        name: template.name,
+        size: template.size,
+        htmlString: template.htmlString,
+    });
+    if (!handled) return { name: "预览DIY组件", success: false, error: "预览弹窗当前不可用（桌宠界面未挂载）" };
+    return { name: "预览DIY组件", success: true, data: `已弹出「${template.name}」的预览，用户可直接查看效果。` };
+}
+
+async function handlePlaceWidget(args: Record<string, unknown>): Promise<ToolResult> {
+    const type = typeof args.type === "string" ? args.type.trim() : "";
+    if (!type) return { name: "摆放组件", success: false, error: "缺少 type" };
+    const deps = await widgetToolDeps();
+
+    let size: string | null = null;
+    let label = type;
+    if (type.startsWith("diy-")) {
+        const template = deps.storage.loadDIYTemplates().find((t) => t.id === type);
+        if (!template) return { name: "摆放组件", success: false, error: `找不到 DIY 模板：${type}` };
+        size = template.size;
+        label = template.name;
+    } else {
+        const entry = deps.types.WIDGET_CATALOG.find((e) => e.type === type);
+        if (!entry) return { name: "摆放组件", success: false, error: `未知组件类型：${type}。用「列出组件目录」查看可用类型。` };
+        size = entry.size;
+        label = entry.name;
+    }
+
+    const page = numberOption(args.page, 1);
+    const row = typeof args.row === "number" ? args.row : undefined;
+    const col = typeof args.col === "number" ? args.col : undefined;
+    const spot = resolveWidgetSpot(deps, size, page, row, col);
+    if (!spot.ok) return { name: "摆放组件", success: false, error: spot.error };
+
+    const widgets = deps.storage.placeWidget(deps.storage.loadWidgets(), {
+        type, size: size as never, page, row: spot.row, col: spot.col,
+    });
+    deps.storage.saveWidgets(widgets);
+    deps.events.notifyDesktopWidgetsChanged();
+    return { name: "摆放组件", success: true, data: `「${label}」已摆到第 ${page} 页 行${spot.row}列${spot.col}，桌面已刷新。` };
+}
+
+async function handleRemoveDiyWidget(args: Record<string, unknown>): Promise<ToolResult> {
+    const widgetId = typeof args.widgetId === "string" ? args.widgetId.trim() : "";
+    const templateId = typeof args.templateId === "string" ? args.templateId.trim() : "";
+    if (!widgetId && !templateId) return { name: "移除DIY组件", success: false, error: "widgetId 和 templateId 至少传一个" };
+    const deps = await widgetToolDeps();
+
+    if (widgetId) {
+        const widgets = deps.storage.loadWidgets();
+        const target = widgets.find((w) => w.id === widgetId);
+        if (!target) return { name: "移除DIY组件", success: false, error: `找不到组件实例：${widgetId}` };
+        if (!target.type.startsWith("diy-")) return { name: "移除DIY组件", success: false, error: "只允许移除 DIY 组件实例；内置组件请让用户自己长按整理。" };
+        deps.storage.saveWidgets(deps.storage.removeWidget(widgets, widgetId));
+        deps.events.notifyDesktopWidgetsChanged();
+        return { name: "移除DIY组件", success: true, data: `实例 ${widgetId} 已移下桌面（模板保留）。` };
+    }
+
+    if (!templateId.startsWith("diy-")) return { name: "移除DIY组件", success: false, error: "templateId 必须是 diy- 开头的 DIY 模板 id" };
+    const templates = deps.storage.loadDIYTemplates();
+    const idx = templates.findIndex((t) => t.id === templateId);
+    if (idx < 0) return { name: "移除DIY组件", success: false, error: `找不到模板：${templateId}` };
+    const [removed] = templates.splice(idx, 1);
+    deps.storage.saveDIYTemplates(templates);
+    const widgets = deps.storage.loadWidgets();
+    const remaining = widgets.filter((w) => w.type !== templateId);
+    const removedInstances = widgets.length - remaining.length;
+    deps.storage.saveWidgets(remaining);
+    deps.events.notifyDesktopWidgetsChanged();
+    return { name: "移除DIY组件", success: true, data: `模板「${removed.name}」已删除，同时移除了 ${removedInstances} 个桌面实例。` };
 }
 
 // ── Navigation ────────────────────────────────

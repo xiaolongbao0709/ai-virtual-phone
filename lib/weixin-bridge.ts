@@ -943,7 +943,7 @@ async function handleIncomingMessage(
     // 3. 用 parseAIResponse 解析（和 follow-up-service / chat-room 一致）
     const previousState = getLatestCharacterStateValues(bot.characterId);
 
-    const { parts, stateValues, statusPanel, innerMonologue } = parseAIResponse(rawReply, previousState);
+    const { parts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(rawReply, previousState);
 
     // 解析角色名
     const sessions = loadChatSessions();
@@ -978,6 +978,7 @@ async function handleIncomingMessage(
         pushChatMessage({
             sessionId: session.id, role: "assistant", content: "",
             statusPanel, innerMonologue, stateValues: stateValues.length > 0 ? stateValues : undefined,
+            freshStateValues,
         });
     } else {
         for (let i = 0; i < visibleParts.length; i++) {
@@ -990,6 +991,7 @@ async function handleIncomingMessage(
                 statusPanel: i === 0 && statusPanel ? statusPanel : undefined,
                 innerMonologue: i === 0 && innerMonologue ? innerMonologue : undefined,
                 stateValues: i === 0 && stateValues.length > 0 ? stateValues : undefined,
+                freshStateValues: i === 0 ? freshStateValues : undefined,
             });
         }
     }

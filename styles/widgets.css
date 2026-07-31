@@ -37,6 +37,7 @@
 
 .widget-label {
   font-size: calc(11.7px*var(--app-text-scale,1));
+  font-weight: 500;
   color: var(--c-home-label);
   text-align: center;
   line-height: 1.1;
@@ -3388,3 +3389,164 @@
 /* Extra spots 3 and 4 */
 .wg-f90-s3 { top: 62.5%; right: 23.2%; width: 45%; height: 30%; }
 .wg-f90-s4 { top: 63.8%; right: 2.5%; width: 20%; height: 30%; }
+
+/* ----------------------------------------------------
+   Profile Card Widget (Freestyle 4x4 主页名片)
+   上层背景图与下层白卡各占一半、通宽平齐，头像圆环骑缝悬浮；
+   阴影跟随 --desktop-shadow-strength 主题开关，字号跟随 --app-text-scale。
+---------------------------------------------------- */
+/* 占位仍按 4x4 整行，但卡片本体压到约 3.5 行高（整四行太高），
+   第四行剩余半行留白；比 4x4 公式多一个类名权重以覆盖通用高度 */
+.icon-grid .widget-glass[data-widget-type="profileCard"] {
+  height: calc(var(--slot-icon-height) + (2.5 * var(--slot-row-step)));
+}
+
+.widget-preview-mode[data-widget-type="profileCard"] {
+  height: 307px;
+}
+.wg-profile-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 24px;
+  overflow: hidden;
+  background-color: #eceae8;
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.45),
+    0 8px 24px rgb(0 0 0 / calc(0.12 * var(--desktop-shadow-strength, 0)));
+}
+
+.wg-pc-cover {
+  position: absolute;
+  inset: 0;
+  background-color: #eceae8;
+  background-image: linear-gradient(160deg, #f4f2f0 0%, #e3e1e2 55%, #d8d7da 100%);
+  background-size: cover;
+  background-position: center;
+  cursor: pointer;
+}
+
+.wg-pc-body {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 50%;
+  /* 通宽铺到组件底边，与上层背景同宽；底部两角由容器 24px 圆角裁剪 */
+  border-radius: 18px 18px 0 0;
+  /* 半透明毛玻璃：透出上层背景图并模糊，白度保底文字可读性 */
+  background-color: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(14px) saturate(130%);
+  -webkit-backdrop-filter: blur(14px) saturate(130%);
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 -4px 14px rgb(0 0 0 / calc(0.08 * var(--desktop-shadow-strength, 0)));
+  cursor: pointer;
+}
+
+.wg-pc-texts {
+  width: 100%;
+  height: 100%;
+  padding: 44px 16px 10px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  overflow: hidden;
+  cursor: pointer;
+  /* 日系圆体（复用游戏大厅字体资产），中文缺字时回退全局字体 */
+  font-family: "Game Hall Zen Maru Gothic", var(--app-font-family);
+}
+
+.wg-pc-name {
+  font-size: calc(15.5px*var(--app-text-scale,1));
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #2f2f31;
+  line-height: 1.2;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wg-pc-handle {
+  margin-top: 5px;
+  font-size: calc(9.5px*var(--app-text-scale,1));
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #a9a9ae;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wg-pc-motto {
+  margin-top: 8px;
+  font-size: calc(11px*var(--app-text-scale,1));
+  line-height: 1.5;
+  color: #55555a;
+  max-width: 100%;
+  /* 空间不足时先收缩签名（最多两行），位置行永远钉在卡底不被挤出 */
+  flex: 0 1 auto;
+  min-height: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wg-pc-location {
+  margin-top: auto;
+  padding-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: calc(10.5px*var(--app-text-scale,1));
+  color: #8e8e93;
+  max-width: 100%;
+}
+
+.wg-pc-location span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wg-pc-pin {
+  flex: 0 0 auto;
+}
+
+.wg-pc-avatar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 3px solid #ffffff;
+  background-color: #f2f1f3;
+  box-shadow: 0 4px 12px rgb(0 0 0 / calc(0.12 * var(--desktop-shadow-strength, 0)));
+  cursor: pointer;
+  z-index: 2;
+}
+
+.wg-pc-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.wg-pc-avatar-mock {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

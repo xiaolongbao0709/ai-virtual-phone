@@ -57,7 +57,11 @@ export async function maybeRunSummarization(
 export async function runSummarizationPipeline(
     characterId: string,
     characterName: string,
-    options?: { force?: boolean }
+    options?: {
+        force?: boolean;
+        /** 手动指定总结起点（覆盖进度水位线）；force 为真时忽略 */
+        sinceTimestamp?: string;
+    }
 ): Promise<{ success: boolean; error?: string }> {
     const config = loadMemoryConfig();
 
@@ -68,7 +72,9 @@ export async function runSummarizationPipeline(
     }
 
     // Read native app data (chat messages, moments) directly — no separate event log
-    const afterTimestamp = options?.force ? undefined : (getLastSummarizedTimestamp(characterId) ?? undefined);
+    const afterTimestamp = options?.force
+        ? undefined
+        : options?.sinceTimestamp ?? (getLastSummarizedTimestamp(characterId) ?? undefined);
     const allEntries = loadNativeTimeline(characterId, afterTimestamp ? { afterTimestamp } : undefined);
 
     if (allEntries.length < 4) {

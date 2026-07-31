@@ -35,7 +35,8 @@ import {
   Pause,
   Heart,
   ChevronRight,
-  Languages
+  Languages,
+  History
 } from "lucide-react";
 import { PageShell } from "@/components/ui/page-shell";
 import { ConfirmDialog, Toggle } from "@/components/ui";
@@ -72,7 +73,17 @@ import {
   type CheckPhoneManifest,
 } from "@/lib/checkphone-config";
 import { generateCheckPhoneManifest } from "@/lib/checkphone-engine";
-import { clearPhoneManifest, loadPhoneManifest, savePhoneManifest, hydrateCheckPhoneStorage, readPhoneManifestCache } from "@/lib/checkphone-storage";
+import {
+  clearPhoneManifest,
+  loadPhoneManifest,
+  savePhoneManifest,
+  hydrateCheckPhoneStorage,
+  readPhoneManifestCache,
+  loadCheckPhoneProjectionEntries,
+  removeCheckPhoneProjectionEntry,
+  clearCheckPhoneProjectionEntries,
+  type CheckPhoneProjectionEntry,
+} from "@/lib/checkphone-storage";
 import {
   loadCheckPhoneSettings,
   saveCheckPhoneSettings,
@@ -330,6 +341,9 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
   };
   const [selectedAppId, setSelectedAppId] = useState<CheckPhoneAppId | null>(null);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyGroups, setHistoryGroups] = useState<{ characterId: string; name: string; entries: CheckPhoneProjectionEntry[] }[]>([]);
+  const [confirmClearHistoryCharId, setConfirmClearHistoryCharId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(DEFAULT_CHECKPHONE_BILINGUAL_PROMPT);
@@ -948,11 +962,54 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
   }
 
   // STAGE 1: ARCHIVE ROSTER
+  const refreshHistoryGroups = () => {
+    setHistoryGroups(
+      loadCharacters()
+        .map(character => ({
+          characterId: character.id,
+          name: character.name || "未知角色",
+          entries: loadCheckPhoneProjectionEntries(character.id),
+        }))
+        .filter(group => group.entries.length > 0),
+    );
+  };
+
+  const openHistory = () => {
+    refreshHistoryGroups();
+    setHistoryOpen(true);
+  };
+
+  const handleDeleteHistoryEntry = (characterId: string, entryId: string) => {
+    removeCheckPhoneProjectionEntry(characterId, entryId);
+    refreshHistoryGroups();
+  };
+
+  const handleClearHistoryForChar = () => {
+    if (confirmClearHistoryCharId) {
+      clearCheckPhoneProjectionEntries(confirmClearHistoryCharId);
+    }
+    setConfirmClearHistoryCharId(null);
+    refreshHistoryGroups();
+  };
+
+  const formatHistoryContent = (content: string, characterName: string) =>
+    content.replace(/\{\{user\}\}/g, "你").replace(/\{\{char\}\}/g, characterName);
+
   return (
     <PageShell
       title="Access Control"
       onBack={handleBack}
       className="cp-page-override cp-roster-page"
+      rightAction={
+        <button
+          type="button"
+          className="cp-history-btn"
+          aria-label="查手机记录"
+          onClick={openHistory}
+        >
+          <History size={18} strokeWidth={1.8} />
+        </button>
+      }
     >
       <div className="cp-app-wrapper">
         <div className="cp-roster-view">
@@ -1036,6 +1093,83 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
             })}
           </div>
         </div>
+
+        {/* Access log: 查手机记录（注入短期记忆的条目，可逐条删除） */}
+        {historyOpen && (
+          <div
+            className="cp-history-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="查手机记录"
+            onClick={() => setHistoryOpen(false)}
+          >
+            <div className="cp-history-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="cp-history-head">
+                <div>
+                  <div className="cp-history-title-bar">
+                    <span>ACCESS LOG</span>
+                    <span className="cp-terminal-pulse-dot" />
+                  </div>
+                  <div className="cp-history-subtitle">查手机记录 · 会注入对应角色的短期记忆</div>
+                </div>
+                <button
+                  type="button"
+                  className="cp-history-close"
+                  aria-label="关闭"
+                  onClick={() => setHistoryOpen(false)}
+                >
+                  <X size={16} strokeWidth={2} />
+                </button>
+              </div>
+              <div className="cp-history-body">
+                {historyGroups.length === 0 && (
+                  <div className="cp-history-empty">NO ACCESS RECORDS</div>
+                )}
+                {historyGroups.map((group) => (
+                  <div key={group.characterId} className="cp-history-group">
+                    <div className="cp-history-group-head">
+                      <span className="cp-history-group-name">{group.name}</span>
+                      <span className="cp-history-group-count">{group.entries.length} 条</span>
+                      <button
+                        type="button"
+                        className="cp-history-clear-btn"
+                        onClick={() => setConfirmClearHistoryCharId(group.characterId)}
+                      >
+                        清空
+                      </button>
+                    </div>
+                    {[...group.entries].reverse().map((entry) => (
+                      <div key={entry.id} className="cp-history-entry">
+                        <span className="cp-history-entry-text">
+                          {formatHistoryContent(entry.content, group.name)}
+                        </span>
+                        <button
+                          type="button"
+                          className="cp-history-entry-delete"
+                          aria-label="删除该记录"
+                          onClick={() => handleDeleteHistoryEntry(group.characterId, entry.id)}
+                        >
+                          <Trash2 size={14} strokeWidth={1.8} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        {confirmClearHistoryCharId && (
+          <ConfirmDialog
+            title="清空该角色的查手机记录？"
+            message="清空后这些记录将不再注入该角色的短期记忆，无法恢复。是否继续？"
+            variant="danger"
+            confirmLabel="清空"
+            cancelLabel="取消"
+            onConfirm={handleClearHistoryForChar}
+            onCancel={() => setConfirmClearHistoryCharId(null)}
+          />
+        )}
       </div>
     </PageShell>
   );

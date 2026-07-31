@@ -13,7 +13,8 @@ import {
   deactivateMascot,
 } from "@/lib/mascot-state";
 import { getMascotContext, subscribeMascotContext } from "@/lib/mascot-context";
-import { mascotNavigate } from "@/lib/mascot-events";
+import { mascotNavigate, DIY_WIDGET_PREVIEW_EVENT, type DiyWidgetPreviewEventDetail, type DiyWidgetPreviewRequest } from "@/lib/mascot-events";
+import { DIY_WIDGET_GUARD_STYLE } from "@/components/widgets/diy-widget-renderer";
 import {
   clearMascotToolHistoryMessages,
   deleteMascotMessageWithLinkedTools,
@@ -130,6 +131,58 @@ type NineSliceSliderKey =
   | "paddingLeft";
 
 type NineSliceStep = 1 | 2 | 3;
+
+/** DIY 组件预览尺寸（与组件挑选器 preview 像素一致） */
+const DIY_PREVIEW_SIZE_PX: Record<string, [number, number]> = {
+  "1x1": [70, 62], "1x2": [148, 62], "1x4": [320, 58],
+  "2x1": [70, 160], "2x2": [148, 160], "2x3": [234, 160], "2x4": [320, 160],
+  "3x2": [148, 258], "3x3": [234, 258], "3x4": [320, 258],
+  "4x2": [148, 356], "4x3": [234, 356], "4x4": [320, 356],
+  "5x4": [320, 454], "6x4": [320, 552],
+};
+
+function DiyWidgetPreviewDialog({ request, onClose }: { request: DiyWidgetPreviewRequest; onClose: () => void }) {
+  const [w, h] = DIY_PREVIEW_SIZE_PX[request.size] || [320, 258];
+  const scale = Math.min(1, 300 / w, 430 / h);
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(10,10,14,0.55)", display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={onClose}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <div
+        style={{ background: "#1c1d24", borderRadius: 18, padding: "14px 16px 16px", maxWidth: "88vw", boxShadow: "0 18px 48px rgba(0,0,0,0.45)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 12 }}>
+          <span style={{ color: "#f2f2f5", fontSize: "calc(13px*var(--app-text-scale,1))", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            组件预览 · {request.name}（{request.size}）
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ border: 0, background: "rgba(255,255,255,0.12)", color: "#fff", borderRadius: 10, padding: "4px 12px", fontSize: "calc(12px*var(--app-text-scale,1))", cursor: "pointer", flex: "0 0 auto" }}
+          >
+            关闭
+          </button>
+        </div>
+        <div style={{ width: w * scale, height: h * scale, margin: "0 auto", borderRadius: 18, overflow: "hidden", background: "rgba(255,255,255,0.06)" }}>
+          <div style={{ width: w, height: h, transform: `scale(${scale})`, transformOrigin: "top left" }}>
+            <iframe
+              srcDoc={DIY_WIDGET_GUARD_STYLE + request.htmlString}
+              sandbox="allow-scripts"
+              style={{ width: "100%", height: "100%", border: "none", display: "block", background: "transparent" }}
+              title="DIY 组件预览"
+            />
+          </div>
+        </div>
+        <div style={{ color: "rgba(255,255,255,0.45)", fontSize: "calc(10.5px*var(--app-text-scale,1))", textAlign: "center", marginTop: 8 }}>
+          预览为沙箱渲染，配置不会保存
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function NineSliceCalibrationDialog({
   detail,
@@ -561,6 +614,7 @@ export function MascotFloat() {
   // ref → blob object URL 缓存，渲染预览用
   const [imagePreviewCache, setImagePreviewCache] = useState<Record<string, string>>({});
   const [nineSliceCalibration, setNineSliceCalibration] = useState<NineSliceCalibrationEventDetail | null>(null);
+  const [diyWidgetPreview, setDiyWidgetPreview] = useState<DiyWidgetPreviewRequest | null>(null);
   const [activeMascotMessageIndex, setActiveMascotMessageIndex] = useState<number | null>(null);
   const msgLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const msgLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -694,6 +748,17 @@ export function MascotFloat() {
     };
     window.addEventListener(NINE_SLICE_CALIBRATION_EVENT, handler);
     return () => window.removeEventListener(NINE_SLICE_CALIBRATION_EVENT, handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<DiyWidgetPreviewEventDetail>).detail;
+      if (!detail?.request) return;
+      detail.handled = true;
+      setDiyWidgetPreview(detail.request);
+    };
+    window.addEventListener(DIY_WIDGET_PREVIEW_EVENT, handler);
+    return () => window.removeEventListener(DIY_WIDGET_PREVIEW_EVENT, handler);
   }, []);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -2033,6 +2098,13 @@ export function MascotFloat() {
         <NineSliceCalibrationDialog
           detail={nineSliceCalibration}
           onClose={() => setNineSliceCalibration(null)}
+        />
+      )}
+
+      {diyWidgetPreview && (
+        <DiyWidgetPreviewDialog
+          request={diyWidgetPreview}
+          onClose={() => setDiyWidgetPreview(null)}
         />
       )}
 

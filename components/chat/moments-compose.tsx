@@ -176,7 +176,9 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
             location: location || undefined,
         });
 
-        try { onUserPost(post); } catch (e) { console.warn("[Compose] onUserPost error:", e); }
+        if (post) {
+            try { onUserPost(post); } catch (e) { console.warn("[Compose] onUserPost error:", e); }
+        }
         onPublished();
     };
 

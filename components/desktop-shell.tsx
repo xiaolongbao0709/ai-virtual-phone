@@ -47,6 +47,7 @@ import {
   ICONS,
   PAGE_1_DEFAULT,
   PAGE_2_DEFAULT,
+  PAGE_3_DEFAULT,
   type DesktopIconId,
   type IconId,
   type IconPosition
@@ -95,6 +96,11 @@ import {
   getDesktopPageKey,
   getDesktopPageKeys,
   getDesktopPageNumber,
+  loadDockLayout,
+  normalizeDock,
+  writeDockLayout,
+  DOCK_LAYOUT_STORAGE_KEY,
+  DOCK_MAX,
   type DesktopIconLayout,
   type DesktopPageKey,
 } from "@/lib/desktop-layout-storage";
@@ -110,6 +116,7 @@ import { parseAIResponse } from "@/lib/rich-message-parser";
 import { requestBackgroundChatReply, scheduleFollowUp } from "@/lib/follow-up-service";
 import { CHAT_MESSAGE_NOTICE_EVENT, CHAT_OPEN_SESSION_EVENT, type ChatMessageNoticeDetail } from "@/lib/chat-notification-events";
 import { setMascotContext } from "@/lib/mascot-context";
+import { DESKTOP_WIDGETS_CHANGED_EVENT } from "@/lib/mascot-events";
 import { useWeixinBridge } from "@/lib/use-weixin-bridge";
 import { startWeixinCloudRealtimeSync } from "@/lib/weixin-cloud-sync";
 import { sendBrowserNotification } from "@/lib/browser-notification";
@@ -121,6 +128,11 @@ const EMOJI_FONTS = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", 
 
 const ICON_LAYOUT_STORAGE_KEY = "ai_phone_icon_layout_v2";
 const ICON_LAYOUT_STORAGE_KEY_V1 = "ai_phone_icon_layout_v1";
+// Sentinel "page" used by the drag engine to mean "the dock". getDesktopPageNumber
+// returns 0 for it and getDesktopPageKeys filters it out, so page iteration never
+// treats the dock as a real page.
+const DOCK_PAGE_KEY = "dock" as const;
+type DragPageKey = DesktopPageKey | typeof DOCK_PAGE_KEY;
 const SWIPE_THRESHOLD_RATIO = 0.2;
 const SWIPE_MIN_THRESHOLD = 60;
 
@@ -453,7 +465,7 @@ function migratePageV1(raw: unknown, defaults: IconId[], pageWidgets: WidgetInst
   return result;
 }
 
-function normalizeLayout(raw: unknown, widgets: WidgetInstance[]): DesktopLayout {
+function normalizeLayout(raw: unknown, widgets: WidgetInstance[], dockIds: Set<DesktopIconId> = new Set()): DesktopLayout {
   if (!raw || typeof raw !== "object") return createDefaultDesktopIconLayout(widgets);
   const candidate = raw as Record<string, unknown>;
   const maxPage = Math.max(
@@ -464,16 +476,21 @@ function normalizeLayout(raw: unknown, widgets: WidgetInstance[]): DesktopLayout
   const layout = {} as DesktopLayout;
   for (let page = 1; page <= maxPage; page += 1) {
     const pageKey = getDesktopPageKey(page);
-    layout[pageKey] = normalizePageV2(candidate[pageKey], widgets.filter(w => w.page === page));
+    // Icons that live in the dock must never also appear on a page.
+    layout[pageKey] = normalizePageV2(candidate[pageKey], widgets.filter(w => w.page === page))
+      .filter((ic) => !dockIds.has(ic.id));
   }
 
-  // Ensure all default icons exist somewhere across desktop pages
+  // Ensure all default icons exist somewhere across desktop pages (but not ones
+  // the user has moved into the dock). DOCK_DEFAULT 也纳入兜底：若某默认 dock
+  // 图标（如设置）既不在任何页面也不在 dock（如恢复默认/导入主题后 dock 未含它），
+  // 就近放回页面，防止图标彻底丢失。
   const allPlaced = new Set<DesktopIconId>(getDesktopIconLayoutItems(layout).map(ic => ic.id));
-  const allDefaults = [...PAGE_1_DEFAULT, ...PAGE_2_DEFAULT];
+  const allDefaults = [...PAGE_1_DEFAULT, ...PAGE_2_DEFAULT, ...PAGE_3_DEFAULT, ...DOCK_DEFAULT];
 
   for (const id of allDefaults) {
-    if (allPlaced.has(id)) continue;
-    const primaryPage = PAGE_1_DEFAULT.includes(id) ? 1 : 2;
+    if (allPlaced.has(id) || dockIds.has(id)) continue;
+    const primaryPage = PAGE_1_DEFAULT.includes(id) ? 1 : PAGE_2_DEFAULT.includes(id) ? 2 : PAGE_3_DEFAULT.includes(id) ? 3 : 1;
     const fallbackPages = getDesktopPageKeysForState(layout, widgets)
       .map(getDesktopPageNumber)
       .filter((page) => page !== primaryPage);
@@ -650,12 +667,14 @@ function pointerToGridCell(
   const colWidth = colWidths[0] || 66;
   const colGap = parseFloat(computed.columnGap) || 20;
   const rowGap = parseFloat(computed.rowGap) || 0;
+  /* rect 高度是 border-box（含 padding），网格行轨道只占内容盒。 */
+  const padY = (parseFloat(computed.paddingTop) || 0) + (parseFloat(computed.paddingBottom) || 0);
   const contentWidth = colWidths.length * colWidth + (colWidths.length - 1) * colGap;
   const originX = rect.left + (rect.width - contentWidth) / 2;
-  const originY = rect.top;
+  const originY = rect.top + (parseFloat(computed.paddingTop) || 0);
   const colStep = colWidth + colGap;
   const totalRowGap = (GRID_ROWS - 1) * rowGap;
-  const rowHeight = (rect.height - totalRowGap) / GRID_ROWS;
+  const rowHeight = (rect.height - padY - totalRowGap) / GRID_ROWS;
   const rowStep = rowHeight + rowGap;
   const col = Math.floor((px - originX) / colStep);
   const row = Math.floor((py - originY) / rowStep);
@@ -926,6 +945,8 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   useAndroidCaretKeyboardLift();
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [layout, setLayout] = useState<DesktopLayout>(DEFAULT_LAYOUT);
+  // Dock is an ordered icon-id list (max DOCK_MAX), kept disjoint from `layout`.
+  const [dock, setDock] = useState<DesktopIconId[]>(DOCK_DEFAULT);
   const [desktopReady, setDesktopReady] = useState(false);
   const [glassPaintPass, setGlassPaintPass] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1050,7 +1071,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   const [dragItem, setDragItem] = useState<{
     type: "icon" | "widget";
     id: string;
-    sourcePage: DesktopPageKey;
+    sourcePage: DragPageKey;
   } | null>(null);
   const [dropTarget, setDropTarget] = useState<{
     page: DesktopPageKey;
@@ -1059,6 +1080,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   } | null>(null);
   const ghostRef = useRef<HTMLDivElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const dockElRef = useRef<HTMLElement | null>(null);
   const gridRefs = useRef<Record<string, HTMLElement | null>>({ page1: null, page2: null });
 
   // ── FLIP：编辑/拖拽中，图标与组件"让位"时平滑滑动到新格（grid 行列本身不可过渡）──
@@ -1134,7 +1156,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     startY: number;
     itemType: "icon" | "widget";
     itemId: string;
-    page: DesktopPageKey;
+    page: DragPageKey;
     element: HTMLElement;
   } | null>(null);
   const editDragRef = useRef<{
@@ -1142,7 +1164,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     pending: boolean;
     itemType: "icon" | "widget";
     itemId: string;
-    sourcePage: DesktopPageKey;
+    sourcePage: DragPageKey;
     pointerId: number;
     startX: number;
     startY: number;
@@ -1151,9 +1173,11 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     edgeTimer: ReturnType<typeof setTimeout> | null;
     lastTargetKey: string;
     // Drop target (stored in ref so commitDrop always reads the latest value)
-    targetPage: DesktopPageKey | null;
+    targetPage: DragPageKey | null;
     targetRow: number; // 1-based
     targetCol: number; // 1-based
+    // Insertion index within the dock when targetPage === DOCK_PAGE_KEY
+    targetDockIndex: number;
     // For widgets: grab offset in grid cells (so pointer cell → widget top-left)
     grabCellRow: number;
     grabCellCol: number;
@@ -1166,6 +1190,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     shellTop: number;
     initialLayout: DesktopLayout;
     initialWidgets: WidgetInstance[];
+    initialDock: DesktopIconId[];
   } | null>(null);
   const editTapRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   // Refs to latest state for use in stable callbacks
@@ -1175,6 +1200,8 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   widgetsRef.current = widgets;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  const dockRef = useRef(dock);
+  dockRef.current = dock;
 
   const activeIconSkins = useMemo(() => resolveActiveIconSkins(draftTheme), [draftTheme]);
   const themeAssetKey = useMemo(() => collectThemeAssetIds(draftTheme).sort().join("|"), [draftTheme]);
@@ -1309,9 +1336,13 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       // Reload widgets + layout after hydration
       const hydratedWidgets = loadWidgets();
       setWidgets(hydratedWidgets);
+      // Dock loads first so page normalization can keep the two disjoint.
+      const hydratedDock = loadDockLayout();
+      setDock(hydratedDock);
+      const dockIds = new Set<DesktopIconId>(hydratedDock);
       const rawV2 = kvGet(ICON_LAYOUT_STORAGE_KEY);
       if (rawV2) {
-        try { setLayout(normalizeLayout(JSON.parse(rawV2), hydratedWidgets)); setDesktopReady(true); return; } catch {}
+        try { setLayout(normalizeLayout(JSON.parse(rawV2), hydratedWidgets, dockIds)); setDesktopReady(true); return; } catch {}
       }
       const rawV1 = kvGet(ICON_LAYOUT_STORAGE_KEY_V1);
       if (rawV1) {
@@ -1320,8 +1351,8 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
           const w1 = hydratedWidgets.filter(w => w.page === 1);
           const w2 = hydratedWidgets.filter(w => w.page === 2);
           setLayout({
-            page1: migratePageV1(parsed.page1, PAGE_1_DEFAULT, w1),
-            page2: migratePageV1(parsed.page2, PAGE_2_DEFAULT, w2),
+            page1: migratePageV1(parsed.page1, PAGE_1_DEFAULT, w1).filter(ic => !dockIds.has(ic.id)),
+            page2: migratePageV1(parsed.page2, PAGE_2_DEFAULT, w2).filter(ic => !dockIds.has(ic.id)),
           } as DesktopLayout);
           kvRemove(ICON_LAYOUT_STORAGE_KEY_V1);
           setDesktopReady(true);
@@ -1337,8 +1368,17 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     const refreshCustomApps = () => {
       const installed = loadInstalledCustomApps();
       setCustomApps(installed);
+      // Drop any dock icons whose custom app was uninstalled, then keep the
+      // paged layout disjoint from whatever remains in the dock.
+      const nextDock = normalizeDock(dockRef.current);
+      if (nextDock.length !== dockRef.current.length || nextDock.some((id, i) => id !== dockRef.current[i])) {
+        dockRef.current = nextDock;
+        setDock(nextDock);
+        writeDockLayout(nextDock);
+      }
+      const dockIds = new Set<DesktopIconId>(nextDock);
       setLayout(prev => {
-        const next = normalizeLayout(prev, widgetsRef.current);
+        const next = normalizeLayout(prev, widgetsRef.current, dockIds);
         kvSet(ICON_LAYOUT_STORAGE_KEY, JSON.stringify(next));
         return next;
       });
@@ -1966,7 +2006,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     setLayout(prev => {
       const widgets = widgetsRef.current;
       const next = cloneDesktopLayout(prev, widgets);
-      if (getDesktopIconLayoutItems(next).some(icon => icon.id === iconId)) {
+      if (getDesktopIconLayoutItems(next).some(icon => icon.id === iconId) || dockRef.current.includes(iconId)) {
         return next;
       }
       const pageNumbers = getDesktopPageKeysForState(next, widgets).map(getDesktopPageNumber);
@@ -2216,8 +2256,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     editDragRef.current = null;
     editTapRef.current = null;
     if (ghostRef.current) ghostRef.current.style.display = "none";
-    // Save layout and widgets once on exit
+    // Save layout, dock and widgets once on exit
     kvSet(ICON_LAYOUT_STORAGE_KEY, JSON.stringify(layoutRef.current));
+    kvSet(DOCK_LAYOUT_STORAGE_KEY, JSON.stringify(dockRef.current));
     saveWidgets(widgetsRef.current);
   }
 
@@ -2227,21 +2268,23 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     clientY: number,
     itemType: "icon" | "widget",
     itemId: string,
-    page: DesktopPageKey,
+    page: DragPageKey,
     element: HTMLElement
   ) {
     const rect = element.getBoundingClientRect();
     // For widgets: compute grab offset in grid cells
     let grabCellRow = 0;
     let grabCellCol = 0;
-    if (itemType === "widget") {
+    if (itemType === "widget" && page !== DOCK_PAGE_KEY) {
       const gridEl = gridRefs.current[page];
       if (gridEl) {
         const cs = getComputedStyle(gridEl);
         const colW = parseFloat(cs.gridTemplateColumns.split(/\s+/)[0] || "66");
         const colGap = parseFloat(cs.columnGap) || 20;
         const rowGap = parseFloat(cs.rowGap) || 0;
-        const rowH = (gridEl.getBoundingClientRect().height - (GRID_ROWS - 1) * rowGap) / GRID_ROWS;
+        /* rect 高度是 border-box（含 padding），网格行轨道只占内容盒。 */
+        const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+        const rowH = (gridEl.getBoundingClientRect().height - padY - (GRID_ROWS - 1) * rowGap) / GRID_ROWS;
         grabCellCol = Math.floor((clientX - rect.left) / (colW + colGap));
         grabCellRow = Math.floor((clientY - rect.top) / (rowH + rowGap));
       }
@@ -2262,6 +2305,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       targetPage: null,
       targetRow: 0,
       targetCol: 0,
+      targetDockIndex: 0,
       grabCellRow,
       grabCellCol,
       element,
@@ -2271,6 +2315,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       shellTop: 0,
       initialLayout: layoutRef.current,
       initialWidgets: widgetsRef.current,
+      initialDock: dockRef.current,
     };
     // Kill swipe tracking for this pointer
     swipeRef.current.pointerId = null;
@@ -2331,9 +2376,61 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     ghostRef.current.style.transform = `translate3d(${x - drag.offsetX - drag.shellLeft}px, ${y - drag.offsetY - drag.shellTop}px, 0)`;
   }
 
+  /** True when the pointer is within (a slightly padded) dock footer. */
+  function pointerOverDock(x: number, y: number): boolean {
+    const el = dockElRef.current;
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return x >= r.left - 8 && x <= r.right + 8 && y >= r.top - 24 && y <= r.bottom + 48;
+  }
+
+  /** Insertion index into the dock (excluding the dragged item) from pointer x. */
+  function dockDropIndexFromPointer(x: number): number {
+    const el = dockElRef.current;
+    if (!el) return 0;
+    // Skip the faded, currently-dragged item so indices map onto initialDock
+    // with the dragged icon removed — exactly what simulateDockReflow expects.
+    const items = Array.from(el.querySelectorAll<HTMLElement>(".dock-item:not(.dragging)"));
+    for (let i = 0; i < items.length; i++) {
+      const r = items[i].getBoundingClientRect();
+      if (x < r.left + r.width / 2) return i;
+    }
+    return items.length;
+  }
+
+  function resetDragPreview(drag: NonNullable<typeof editDragRef.current>) {
+    setLayout(drag.initialLayout);
+    setWidgets(drag.initialWidgets);
+    setDock(drag.initialDock);
+  }
+
   function updateDropTargetFromPointer(x: number, y: number) {
     const drag = editDragRef.current;
     if (!drag) return;
+
+    // ── Dock drop zone (icons only; widgets can't live in the dock) ──
+    if (drag.itemType === "icon" && pointerOverDock(x, y)) {
+      const fromDock = drag.sourcePage === DOCK_PAGE_KEY;
+      const baseLen = drag.initialDock.filter((id) => id !== drag.itemId).length;
+      // Dock full and the icon comes from a page → not allowed. Behave as no-target.
+      if (!fromDock && baseLen >= DOCK_MAX) {
+        if (drag.targetPage !== null) resetDragPreview(drag);
+        drag.targetPage = null;
+        drag.lastTargetKey = "";
+        setDropTarget(null);
+        return;
+      }
+      const index = Math.min(dockDropIndexFromPointer(x), baseLen);
+      const key = `dock:${index}`;
+      if (key === drag.lastTargetKey) return;
+      drag.lastTargetKey = key;
+      drag.targetPage = DOCK_PAGE_KEY;
+      drag.targetDockIndex = index;
+      setDropTarget(null);
+      simulateDockReflow(drag, index);
+      return;
+    }
+
     const pageIdx = currentPageIndexRef.current;
     const activePageKeys = getDesktopPageKeysForState(layoutRef.current, widgetsRef.current);
     const pageKey = activePageKeys[Math.min(pageIdx, activePageKeys.length - 1)] ?? "page1";
@@ -2342,11 +2439,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
     const cell = pointerToGridCell(x, y, gridEl);
     if (!cell) {
-      if (drag.targetPage !== null) {
-        setLayout(drag.initialLayout);
-        setWidgets(drag.initialWidgets);
-      }
+      if (drag.targetPage !== null) resetDragPreview(drag);
       drag.targetPage = null;
+      drag.lastTargetKey = "";
       setDropTarget(null);
       return;
     }
@@ -2384,40 +2479,82 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     }
   }
 
+  /** Live preview for dropping an icon into the dock at `index`. */
+  function simulateDockReflow(drag: NonNullable<typeof editDragRef.current>, index: number) {
+    const iconId = drag.itemId as DesktopIconId;
+    const nextDock = drag.initialDock.filter((id) => id !== iconId);
+    const clamped = Math.max(0, Math.min(index, nextDock.length));
+    nextDock.splice(clamped, 0, iconId);
+    setDock(nextDock);
+    if (drag.sourcePage === DOCK_PAGE_KEY) {
+      // Reordering within the dock — pages untouched.
+      setLayout(drag.initialLayout);
+      setWidgets(drag.initialWidgets);
+    } else {
+      // A page icon is entering the dock — drop it from its page.
+      const next = cloneDesktopLayout(drag.initialLayout, drag.initialWidgets);
+      const src = drag.sourcePage as DesktopPageKey;
+      ensureDesktopPage(next, src);
+      next[src] = next[src].filter((ic) => ic.id !== iconId);
+      setLayout(trimEmptyTrailingPages(next, drag.initialWidgets));
+      setWidgets(drag.initialWidgets);
+    }
+  }
+
   function simulateDragReflow(drag: NonNullable<typeof editDragRef.current>, tPage: DesktopPageKey, tRow: number, tCol: number) {
     const targetPageNum = getDesktopPageNumber(tPage) || 1;
 
     if (drag.itemType === "icon") {
       const iconId = drag.itemId as DesktopIconId;
+      const fromDock = drag.sourcePage === DOCK_PAGE_KEY;
       const targetPageWidgets = drag.initialWidgets.filter((w) => w.page === targetPageNum);
       const occ = buildWidgetOccupancy(targetPageWidgets);
       if (!occ[tRow - 1][tCol - 1]) {
         const next = cloneDesktopLayout(drag.initialLayout, drag.initialWidgets);
-        ensureDesktopPage(next, drag.sourcePage);
         ensureDesktopPage(next, tPage);
-        const srcArr = next[drag.sourcePage].filter(ic => ic.id !== iconId);
-        if (drag.sourcePage === tPage) {
-          const occupant = srcArr.find(ic => ic.row === tRow && ic.col === tCol);
-          const draggedOld = (drag.initialLayout[drag.sourcePage] ?? []).find(ic => ic.id === iconId);
-          if (occupant && draggedOld) {
-            next[drag.sourcePage] = srcArr.map(ic =>
-              ic.id === occupant.id ? { ...ic, row: draggedOld.row, col: draggedOld.col } : ic
-            );
-            next[drag.sourcePage].push({ id: iconId, row: tRow, col: tCol });
-          } else {
-            next[drag.sourcePage] = [...srcArr, { id: iconId, row: tRow, col: tCol }];
-          }
-        } else {
-          next[drag.sourcePage] = srcArr;
-          const tgtArr = [...(next[tPage] ?? [])];
-          const occupant = tgtArr.find(ic => ic.row === tRow && ic.col === tCol);
-          const draggedOld = (drag.initialLayout[drag.sourcePage] ?? []).find(ic => ic.id === iconId);
-          if (occupant && draggedOld) {
-            next[drag.sourcePage] = [...srcArr, { id: occupant.id, row: draggedOld.row, col: draggedOld.col }];
-            next[tPage] = tgtArr.filter(ic => ic.id !== occupant.id);
-            next[tPage].push({ id: iconId, row: tRow, col: tCol });
+
+        if (fromDock) {
+          // Coming out of the dock onto a page.
+          setDock(drag.initialDock.filter((id) => id !== iconId));
+          const tgtArr = (next[tPage] ?? []).filter((ic) => ic.id !== iconId);
+          const occupant = tgtArr.find((ic) => ic.row === tRow && ic.col === tCol);
+          if (occupant) {
+            // Target cell taken: land on the nearest free cell rather than evict.
+            const used = new Set(tgtArr.map((ic) => `${ic.row},${ic.col}`));
+            const free = findNearestFreeCell(tRow, tCol, occ, used);
+            if (!free) return;
+            next[tPage] = [...tgtArr, { id: iconId, row: free.row, col: free.col }];
           } else {
             next[tPage] = [...tgtArr, { id: iconId, row: tRow, col: tCol }];
+          }
+        } else {
+          setDock(drag.initialDock); // undo any prior dock preview
+          const sourcePage = drag.sourcePage as DesktopPageKey;
+          ensureDesktopPage(next, sourcePage);
+          const srcArr = next[sourcePage].filter(ic => ic.id !== iconId);
+          if (sourcePage === tPage) {
+            const occupant = srcArr.find(ic => ic.row === tRow && ic.col === tCol);
+            const draggedOld = (drag.initialLayout[sourcePage] ?? []).find(ic => ic.id === iconId);
+            if (occupant && draggedOld) {
+              next[sourcePage] = srcArr.map(ic =>
+                ic.id === occupant.id ? { ...ic, row: draggedOld.row, col: draggedOld.col } : ic
+              );
+              next[sourcePage].push({ id: iconId, row: tRow, col: tCol });
+            } else {
+              next[sourcePage] = [...srcArr, { id: iconId, row: tRow, col: tCol }];
+            }
+          } else {
+            next[sourcePage] = srcArr;
+            const tgtArr = [...(next[tPage] ?? [])];
+            const occupant = tgtArr.find(ic => ic.row === tRow && ic.col === tCol);
+            const draggedOld = (drag.initialLayout[sourcePage] ?? []).find(ic => ic.id === iconId);
+            if (occupant && draggedOld) {
+              next[sourcePage] = [...srcArr, { id: occupant.id, row: draggedOld.row, col: draggedOld.col }];
+              next[tPage] = tgtArr.filter(ic => ic.id !== occupant.id);
+              next[tPage].push({ id: iconId, row: tRow, col: tCol });
+            } else {
+              next[tPage] = [...tgtArr, { id: iconId, row: tRow, col: tCol }];
+            }
           }
         }
         setLayout(trimEmptyTrailingPages(next, drag.initialWidgets));
@@ -2564,6 +2701,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     if (!hasTarget) {
       setLayout(drag.initialLayout);
       setWidgets(drag.initialWidgets);
+      setDock(drag.initialDock);
     } else {
       window.setTimeout(() => {
         const trimmedLayout = trimEmptyTrailingPages(layoutRef.current, widgetsRef.current);
@@ -2616,7 +2754,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     e: React.PointerEvent,
     itemType: "icon" | "widget",
     itemId: string,
-    page: DesktopPageKey
+    page: DragPageKey
   ) {
     if (shouldBypassDesktopItemPointerCapture(e.target)) return;
 
@@ -2625,6 +2763,12 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     if (itemType === "widget") {
       const inner = el.querySelector(".widget-glass") as HTMLElement;
       if (inner) el = inner;
+    }
+    // The dock lives OUTSIDE .phone-workspace, so its pointermove/up won't reach the
+    // workspace handlers until activateDrag transfers capture. Capture to the dock
+    // button now so movement is delivered (and can activate the drag) meanwhile.
+    if (page === DOCK_PAGE_KEY) {
+      try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
     }
     if (editMode) {
       // Start drag immediately in edit mode
@@ -2697,9 +2841,16 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     setCurrentPageIndex((index) => Math.min(index, Math.max(0, trimmedPageCount - 1)));
   }
 
-  function handleThemeDesktopChange(next: { widgets: WidgetInstance[]; iconLayout: DesktopLayout }): void {
+  function handleThemeDesktopChange(next: { widgets: WidgetInstance[]; iconLayout: DesktopLayout; dock?: DesktopIconId[] }): void {
     const normalizedWidgets = sanitizeWidgetsForLayout(next.iconLayout, next.widgets);
-    const normalizedLayout = normalizeLayout(next.iconLayout, normalizedWidgets);
+    // dock：恢复默认时传入出厂 dock；主题包导入不含 dock 时保留当前。
+    // 新布局里明确摆放的图标从 dock 去重（一个图标只能存在于一处）。
+    const placedIds = new Set<DesktopIconId>(getDesktopIconLayoutItems(next.iconLayout).map(ic => ic.id));
+    const nextDock = normalizeDock(next.dock ?? dockRef.current).filter(id => !placedIds.has(id));
+    dockRef.current = nextDock;
+    setDock(nextDock);
+    writeDockLayout(nextDock);
+    const normalizedLayout = normalizeLayout(next.iconLayout, normalizedWidgets, new Set(nextDock));
     setWidgets(normalizedWidgets);
     setLayout(normalizedLayout);
     saveWidgets(normalizedWidgets);
@@ -2716,6 +2867,44 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     });
   }
 
+  // 小卷（内置助手）写入组件/DIY 模板后通知桌面重新水合，实现实时热更新。
+  // 拖拽进行中不能换底层数组（会打断 FLIP 和落点计算），先挂起，退出编辑模式后补一次。
+  const mascotWidgetsDirtyRef = useRef(false);
+  useEffect(() => {
+    const reload = () => {
+      if (editDragRef.current?.active || editDragRef.current?.pending) {
+        mascotWidgetsDirtyRef.current = true;
+        return;
+      }
+      setWidgets(loadWidgets());
+    };
+    window.addEventListener(DESKTOP_WIDGETS_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(DESKTOP_WIDGETS_CHANGED_EVENT, reload);
+  }, []);
+  useEffect(() => {
+    if (!editMode && mascotWidgetsDirtyRef.current) {
+      mascotWidgetsDirtyRef.current = false;
+      setWidgets(loadWidgets());
+    }
+  }, [editMode]);
+
+  // DIY code 组件的长按发生在沙箱 iframe 里，宿主收不到指针事件；
+  // 桥接脚本检测到长按后 postMessage，这里代为进入编辑态。
+  // 进入编辑态后 iframe 会放弃指针事件（CSS），后续拖拽走宿主正常链路。
+  useEffect(() => {
+    function handleDiyLongPress(event: MessageEvent) {
+      const data = event.data as { source?: unknown; type?: unknown; widgetId?: unknown } | null;
+      if (!data || typeof data !== "object") return;
+      if (data.source !== "ai-phone-diy-widget" || data.type !== "longPress") return;
+      if (typeof data.widgetId !== "string") return;
+      if (!widgetsRef.current.some((w) => w.id === data.widgetId)) return;
+      setEditMode(true);
+      try { navigator.vibrate?.(30); } catch { /* ignore */ }
+    }
+    window.addEventListener("message", handleDiyLongPress);
+    return () => window.removeEventListener("message", handleDiyLongPress);
+  }, []);
+
   // Build a map of icon skins (icon ID -> data URL) for the theme app preview
   const iconSkinUrls = useMemo(() => {
     const map: Record<string, string | null> = {};
@@ -2723,12 +2912,12 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       const skinId = activeIconSkins[iconPos.id];
       map[iconPos.id] = skinId ? themeAssets[skinId] ?? null : null;
     }
-    for (const iconId of DOCK_DEFAULT) {
+    for (const iconId of dock) {
       const skinId = activeIconSkins[iconId];
       map[iconId] = skinId ? themeAssets[skinId] ?? null : null;
     }
     return map;
-  }, [activeIconSkins, layout, themeAssets]);
+  }, [activeIconSkins, layout, dock, themeAssets]);
 
   useEffect(() => {
     if (activeApp) {
@@ -2766,7 +2955,13 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
       const computed = window.getComputedStyle(gridEl);
       const rowGap = Number.parseFloat(computed.rowGap || "0");
-      const gridHeight = gridEl.getBoundingClientRect().height;
+      /* rect 高度是 border-box（含 padding），网格行轨道只占内容盒；
+         padding-bottom（--home-grid-bottom-trim）不减掉会让 --slot-row-step
+         虚高 padding/6，跨行组件随之比图标行低。 */
+      const padY =
+        (Number.parseFloat(computed.paddingTop || "0") || 0) +
+        (Number.parseFloat(computed.paddingBottom || "0") || 0);
+      const gridHeight = gridEl.getBoundingClientRect().height - padY;
       const rowHeight = (gridHeight - (GRID_ROWS - 1) * rowGap) / GRID_ROWS;
       const nextRowStep = rowHeight + rowGap;
       if (nextRowStep <= 0) {
@@ -3811,40 +4006,66 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
               </div>
 
               {!activeApp ? (
-                <footer className="dock" {...(dockSkinUrl ? { "data-skinned": "" } : {})}>
+                <footer
+                  ref={dockElRef}
+                  className={editMode ? "dock edit-mode" : "dock"}
+                  {...(dockSkinUrl ? { "data-skinned": "" } : {})}
+                  style={{ "--dock-count": Math.max(1, dock.length) } as CSSProperties}
+                  onPointerMove={handleSwipeMove}
+                  onPointerUp={handleSwipeEnd}
+                  onPointerCancel={handleSwipeEnd}
+                >
                   {dockSkinUrl && (
                     <span className="dock-skin-layer" style={{ backgroundImage: `url("${dockSkinUrl}")` }} />
                   )}
-                  {DOCK_DEFAULT.map((iconId) => {
-                    const icon = ICONS[iconId];
+                  {dock.map((iconId) => {
+                    const icon = getDesktopIconMeta(iconId);
+                    if (!icon) return null;
+                    const customApp = icon.customApp;
+                    const builtinIconId = customApp ? null : (icon.id as IconId);
                     const iconSkinId = activeIconSkins[iconId];
                     const iconSkinUrl = iconSkinId ? themeAssets[iconSkinId] ?? null : null;
+                    const customIconUrl = customApp?.iconDataUrl ?? null;
+                    const iconImageUrl = iconSkinUrl || customIconUrl;
+                    const hasImageIcon = Boolean(iconImageUrl);
+                    const isDragging = dragItem?.type === "icon" && dragItem.id === iconId;
                     return (
-                      <button key={iconId} type="button" className="dock-item" onClick={() => openApp(iconId)}>
+                      <button
+                        key={iconId}
+                        type="button"
+                        data-flip-id={`icon:${iconId}`}
+                        className={isDragging ? "dock-item dragging" : "dock-item"}
+                        onClick={() => { if (!editMode) openApp(iconId); }}
+                        onPointerDown={(e) => handleItemPointerDown(e, "icon", iconId, DOCK_PAGE_KEY)}
+                      >
                         <span
                           className={
-                            iconSkinUrl
+                            hasImageIcon
                               ? "icon-glyph-box dock-glyph-box icon-glyph-box-skin"
                               : "icon-glyph-box dock-glyph-box"
                           }
-                          style={iconSkinUrl ? undefined : { "--icon-tone": icon.tone } as React.CSSProperties}
+                          style={hasImageIcon ? undefined : { "--icon-tone": icon.tone } as React.CSSProperties}
                           aria-hidden
                         >
-                          {iconSkinUrl ? (
-                            <span className="icon-skin-layer" style={{ backgroundImage: `url("${iconSkinUrl}")` }} />
+                          {iconImageUrl ? (
+                            <span className="icon-skin-layer" style={{ backgroundImage: `url("${iconImageUrl}")` }} />
                           ) : null}
-                          <IconGlyph
-                            id={icon.id}
-                            className={
-                              icon.id === "music"
-                                ? iconSkinUrl
-                                  ? "icon-glyph icon-glyph-music icon-glyph-hidden"
-                                  : "icon-glyph icon-glyph-music"
-                                : iconSkinUrl
-                                  ? "icon-glyph icon-glyph-hidden"
-                                  : "icon-glyph"
-                            }
-                          />
+                          {builtinIconId ? (
+                            <IconGlyph
+                              id={builtinIconId}
+                              className={
+                                builtinIconId === "music"
+                                  ? iconSkinUrl
+                                    ? "icon-glyph icon-glyph-music icon-glyph-hidden"
+                                    : "icon-glyph icon-glyph-music"
+                                  : iconSkinUrl
+                                    ? "icon-glyph icon-glyph-hidden"
+                                    : "icon-glyph"
+                              }
+                            />
+                          ) : customIconUrl ? null : (
+                            <CustomAppGlyph seed={customApp?.name || icon.label} className="icon-glyph" />
+                          )}
                         </span>
                         <span className="icon-label">{icon.label}</span>
                       </button>

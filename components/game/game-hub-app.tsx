@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   ChevronDown,
@@ -44,6 +44,8 @@ import {
   uploadGameHallAsset,
 } from "@/lib/game-hall-client";
 import { useAccount } from "@/lib/account-context";
+import { OnlineRoomConnection, onlineCloudApi } from "@/lib/online-room-client";
+import { submitContentReport } from "@/lib/moderation-client";
 import { buildGameRolePackage, callGameLLM } from "@/lib/game-engine";
 import {
   createDefaultGameDraft,
@@ -428,9 +430,19 @@ ${body}
       }, 45000);
     });
   }
+  var eventHandlers = {};
   window.addEventListener('message', function(event){
     var data = event.data || {};
-    if (data.source !== 'ai-phone-game-host' || data.id !== frameId || !data.requestId) return;
+    if (data.source !== 'ai-phone-game-host' || data.id !== frameId) return;
+    if (data.type === 'event' && data.event) {
+      var handlers = (eventHandlers[data.event] || []).concat(eventHandlers['*'] || []);
+      handlers.forEach(function(handler){
+        Promise.resolve().then(function(){ return handler(data.payload, data.event); })
+          .catch(function(err){ setTimeout(function(){ throw err; }, 0); });
+      });
+      return;
+    }
+    if (!data.requestId) return;
     var item = pending[data.requestId];
     if (!item) return;
     delete pending[data.requestId];
@@ -438,6 +450,40 @@ ${body}
     else item.reject(new Error(data.error || 'AiPhoneGame request failed'));
   });
   var api = {
+    on: function(eventName, handler){
+      var key = String(eventName || '').trim();
+      if (!key || typeof handler !== 'function') throw new Error('AiPhoneGame.on 需要事件名和回调函数');
+      (eventHandlers[key] = eventHandlers[key] || []).push(handler);
+      return function(){
+        eventHandlers[key] = (eventHandlers[key] || []).filter(function(item){ return item !== handler; });
+      };
+    },
+    off: function(eventName, handler){
+      var key = String(eventName || '').trim();
+      eventHandlers[key] = (eventHandlers[key] || []).filter(function(item){ return item !== handler; });
+    },
+    room: {
+      create: function(payload){ return request('room.create', payload || {}); },
+      join: function(payload){ return request('room.join', payload || {}); },
+      current: function(){ return request('room.current'); },
+      send: function(payload){ return request('room.send', { payload: payload }); },
+      setState: function(state){ return request('room.setState', { state: state }); },
+      getState: function(){ return request('room.getState'); },
+      players: function(){ return request('room.players'); },
+      kick: function(userId){ return request('room.kick', { userId: userId }); },
+      close: function(){ return request('room.close'); },
+      leave: function(){ return request('room.leave'); },
+      report: function(reason){ return request('room.report', { reason: reason }); }
+    },
+    cloud: {
+      put: function(payload){ return request('cloud.put', payload || {}); },
+      get: function(payload){ return request('cloud.get', typeof payload === 'string' ? { id: payload } : (payload || {})); },
+      list: function(payload){ return request('cloud.list', payload || {}); },
+      update: function(payload){ return request('cloud.update', payload || {}); },
+      delete: function(payload){ return request('cloud.delete', typeof payload === 'string' ? { id: payload } : (payload || {})); },
+      takeRandom: function(payload){ return request('cloud.takeRandom', payload || {}); },
+      report: function(payload){ return request('cloud.report', payload || {}); }
+    },
     listAvailableCharacters: function(){ return request('listAvailableCharacters'); },
     getRoleSlots: function(){ return request('getRoleSlots'); },
     submitRoleAssignments: function(assignments){ return request('submitRoleAssignments', assignments || {}); },
@@ -468,15 +514,31 @@ function GameIframe({
   title,
   allowExternalControl,
   onBridgeRequest,
+  registerEventSender,
 }: {
   html: string;
   title: string;
   allowExternalControl: boolean;
   onBridgeRequest: (action: string, payload: unknown) => Promise<unknown> | unknown;
+  registerEventSender?: (sender: ((event: string, payload: unknown) => void) | null) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [frameId] = useState(() => `game_frame_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
   const srcDoc = useMemo(() => createGameFrameSrcDoc(html, frameId), [frameId, html]);
+
+  useEffect(() => {
+    if (!registerEventSender) return;
+    registerEventSender((event, payload) => {
+      iframeRef.current?.contentWindow?.postMessage({
+        source: "ai-phone-game-host",
+        type: "event",
+        id: frameId,
+        event,
+        payload,
+      }, "*");
+    });
+    return () => registerEventSender(null);
+  }, [frameId, registerEventSender]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -666,6 +728,19 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
   const [commentMenu, setCommentMenu] = useState<{ template: GameTemplate; comment: GameComment; x: number; y: number } | null>(null);
   const commentPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commentPressTriggeredRef = useRef(false);
+  const gameRoomRef = useRef<OnlineRoomConnection | null>(null);
+  const gameEventSenderRef = useRef<((event: string, payload: unknown) => void) | null>(null);
+  const registerGameEventSender = useCallback((sender: ((event: string, payload: unknown) => void) | null) => {
+    gameEventSenderRef.current = sender;
+  }, []);
+  const postGameEvent = useCallback((event: string, payload: unknown) => {
+    gameEventSenderRef.current?.(event, payload);
+  }, []);
+  // 组件卸载兜底：退房（房主退房 = 关房）
+  useEffect(() => () => {
+    gameRoomRef.current?.leave();
+    gameRoomRef.current = null;
+  }, []);
   const commentPressPosRef = useRef<{ x: number; y: number } | null>(null);
   const [submittingCommentIds, setSubmittingCommentIds] = useState<Record<string, boolean>>({});
   const [deletingCommentIds, setDeletingCommentIds] = useState<Record<string, boolean>>({});
@@ -1127,6 +1202,8 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
   }
 
   function closeRuntime(): void {
+    gameRoomRef.current?.leave();
+    gameRoomRef.current = null;
     setRuntimeGame(null);
     setRuntimeStage(null);
     setAdvancedAllowed(false);
@@ -1638,6 +1715,130 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
         throw new Error("该游戏未获得高级游戏权限，不能读取角色包、调用模型或写入游戏记忆。");
       }
     };
+
+    if (action.startsWith("room.") || action.startsWith("cloud.")) {
+      const namespace = `game:${template.id}`;
+
+      if (action.startsWith("cloud.")) {
+        const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+        const cloudAction = action.slice("cloud.".length);
+        if (cloudAction === "report") {
+          const reportId = String(record.id ?? "").trim();
+          if (!reportId) throw new Error("cloud.report 缺少 id。");
+          await submitContentReport({
+            contentType: "online_doc",
+            contentId: reportId,
+            reason: String(record.reason ?? "").slice(0, 500),
+          });
+          return true;
+        }
+        if (!["put", "get", "list", "update", "delete", "takeRandom"].includes(cloudAction)) {
+          throw new Error(`未知云端动作：${action}`);
+        }
+        const response = await onlineCloudApi({
+          action: cloudAction,
+          namespace,
+          collection: record.collection,
+          id: record.id,
+          data: record.data,
+          sortKey: record.sortKey,
+          limit: record.limit,
+          mine: record.mine,
+          orderBy: record.orderBy,
+        });
+        if (cloudAction === "list") return response.docs;
+        if (cloudAction === "delete") return { deleted: response.deleted === true };
+        return response.doc ?? null;
+      }
+
+      const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+      const publicRoomInfo = (connection: OnlineRoomConnection) => ({
+        id: connection.info.id,
+        code: connection.info.code,
+        title: connection.info.title,
+        maxPlayers: connection.info.maxPlayers,
+        meta: connection.info.meta,
+        hostUserId: connection.info.hostUserId,
+        hostName: connection.info.hostName,
+        isHost: connection.info.isHost,
+        selfUserId: connection.selfUserId,
+        selfName: connection.selfName,
+        players: connection.players(),
+      });
+      const current = gameRoomRef.current && !gameRoomRef.current.isClosed ? gameRoomRef.current : null;
+
+      if (action === "room.create" || action === "room.join") {
+        if (current) {
+          current.leave();
+          gameRoomRef.current = null;
+        }
+        const events = {
+          onMessage: (message: { from: { userId: string; name: string }; payload: unknown; sentAt: number }) => {
+            postGameEvent("room.message", { from: message.from, payload: message.payload, sentAt: message.sentAt });
+          },
+          onPlayers: (players: unknown[]) => postGameEvent("room.players", { players }),
+          onState: (roomState: Record<string, unknown>) => postGameEvent("room.state", { state: roomState }),
+          onClosed: (reason: string) => {
+            gameRoomRef.current = null;
+            postGameEvent("room.closed", { reason });
+          },
+        };
+        const connection = action === "room.create"
+          ? await OnlineRoomConnection.create({
+            namespace,
+            title: typeof record.title === "string" ? record.title : template.title.slice(0, 80),
+            maxPlayers: Number(record.maxPlayers ?? 8) || 8,
+            meta: record.meta && typeof record.meta === "object" && !Array.isArray(record.meta)
+              ? record.meta as Record<string, unknown>
+              : {},
+          }, events)
+          : await OnlineRoomConnection.join({ namespace, code: String(record.code ?? "") }, events);
+        gameRoomRef.current = connection;
+        return publicRoomInfo(connection);
+      }
+
+      if (action === "room.current") {
+        return current ? { ...publicRoomInfo(current), state: current.state() } : null;
+      }
+      if (action === "room.leave") {
+        if (current) {
+          current.leave();
+          gameRoomRef.current = null;
+        }
+        return { ok: true };
+      }
+      if (!current) throw new Error("当前没有已连接的联机房间，请先 room.create 或 room.join。");
+      if (action === "room.report") {
+        await submitContentReport({
+          contentType: "online_room",
+          contentId: current.info.id,
+          reason: String(record.reason ?? "").slice(0, 500),
+        });
+        return true;
+      }
+      if (action === "room.send") {
+        await current.send(record.payload ?? null);
+        return { ok: true };
+      }
+      if (action === "room.setState") {
+        const roomState = record.state ?? record.data;
+        if (!roomState || typeof roomState !== "object" || Array.isArray(roomState)) throw new Error("room.setState 需要对象 state。");
+        await current.setState(roomState as Record<string, unknown>);
+        return { ok: true };
+      }
+      if (action === "room.getState") return current.state();
+      if (action === "room.players") return current.players();
+      if (action === "room.kick") {
+        await current.kick(String(record.userId ?? ""));
+        return { ok: true };
+      }
+      if (action === "room.close") {
+        await current.close();
+        gameRoomRef.current = null;
+        return { ok: true };
+      }
+      throw new Error(`未知联机动作：${action}`);
+    }
 
     if (action === "listAvailableCharacters") {
       return characters.map(character => ({
@@ -2224,6 +2425,26 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
               {displayTags.map(tag => <span key={tag}>#{tag}</span>)}
             </div>
           ) : null}
+          {template.source === "community" ? (
+            <button
+              type="button"
+              className="game-detail-report-link"
+              style={{ border: "none", background: "none", color: "var(--text-tertiary, #999)", fontSize: 11, alignSelf: "flex-end", padding: "2px 4px", cursor: "pointer" }}
+              onClick={() => {
+                void submitContentReport({
+                  contentType: "game",
+                  contentId: template.id,
+                  preview: `${template.title} — ${gameDisplayDescription(template) || ""}`.slice(0, 200),
+                  ownerId: template.authorId || "",
+                  ownerName: template.authorName || "",
+                })
+                  .then(() => showNotice("success", "已举报，管理员会尽快处理"))
+                  .catch(err => showNotice("error", err instanceof Error ? err.message : "举报失败"));
+              }}
+            >
+              举报该游戏
+            </button>
+          ) : null}
           {GAME_HALL_COMMENTS_ENABLED ? (
             <div className={`game-comments game-comments--modal ${commentsExpanded ? "is-open" : ""}`}>
               <div className="game-modal-subhead">
@@ -2675,19 +2896,23 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
                     </button>
                   </div>
                 </div>
-                <details className="game-advanced-details" open={advancedStudioOpen} onToggle={event => setAdvancedStudioOpen(event.currentTarget.open)}>
-                  <summary>高级设置：角色槽位与独立选择页</summary>
-                  <div className="game-studio-panel">
-                    <h3>角色槽位 JSON</h3>
-                    <p className="game-studio-hint">普通单文件游戏可以保持 []。只有需要宿主校验固定身份、最少/最多人数，或把选择页和游戏页拆开时才需要填写。</p>
-                    <textarea value={draft.roleSlotsText} rows={10} spellCheck={false} onChange={event => updateDraft("roleSlotsText", event.target.value)} />
-                  </div>
-                  <div className="game-studio-panel">
-                    <h3>独立角色选择 HTML</h3>
-                    <p className="game-studio-hint">只有上方角色槽位不为空时才会使用。普通模式不需要填写。</p>
-                    <textarea value={draft.pickerHtml} rows={12} spellCheck={false} onChange={event => updateDraft("pickerHtml", event.target.value)} />
-                  </div>
-                </details>
+                {/* 角色槽位属于旧的模板级选人通路（现行做法是游戏 HTML 内自行选人），
+                    入口不再对新草稿开放；仅在编辑已带槽位的存量作品时显示以保持兼容。 */}
+                {parseGameRoleSlots(draft.roleSlotsText).length > 0 ? (
+                  <details className="game-advanced-details" open={advancedStudioOpen} onToggle={event => setAdvancedStudioOpen(event.currentTarget.open)}>
+                    <summary>高级设置：角色槽位与独立选择页（旧版兼容）</summary>
+                    <div className="game-studio-panel">
+                      <h3>角色槽位 JSON</h3>
+                      <p className="game-studio-hint">该作品使用了旧版角色槽位机制，此处保留编辑能力。清空为 [] 后将改为游戏内自行选人。</p>
+                      <textarea value={draft.roleSlotsText} rows={10} spellCheck={false} onChange={event => updateDraft("roleSlotsText", event.target.value)} />
+                    </div>
+                    <div className="game-studio-panel">
+                      <h3>独立角色选择 HTML</h3>
+                      <p className="game-studio-hint">只有上方角色槽位不为空时才会使用。</p>
+                      <textarea value={draft.pickerHtml} rows={12} spellCheck={false} onChange={event => updateDraft("pickerHtml", event.target.value)} />
+                    </div>
+                  </details>
+                ) : null}
               </>
             ) : null}
           </section>
@@ -2858,6 +3083,26 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
                 删除
               </button>
             ) : null}
+            <button
+              type="button"
+              role="menuitem"
+              className="game-comment-menu-btn"
+              onClick={() => {
+                const { comment } = commentMenu;
+                setCommentMenu(null);
+                void submitContentReport({
+                  contentType: "game_comment",
+                  contentId: comment.id,
+                  preview: comment.content.slice(0, 200),
+                  ownerId: comment.authorId || "",
+                  ownerName: comment.authorName || "",
+                })
+                  .then(() => showNotice("success", "已举报，管理员会尽快处理"))
+                  .catch(err => showNotice("error", err instanceof Error ? err.message : "举报失败"));
+              }}
+            >
+              举报
+            </button>
           </div>
         </div>
       ) : null}
@@ -3082,6 +3327,7 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
                 html={runtimeGame.templateSnapshot.gameHtml}
                 allowExternalControl={runtimeAllowExternal}
                 onBridgeRequest={handleBridgeRequest}
+                registerEventSender={registerGameEventSender}
               />
             ) : null}
           </section>

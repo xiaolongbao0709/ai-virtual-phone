@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
+import { ChatPluginBootstrap } from "@/components/chat-plugin-bootstrap";
+import { CSSImportEnhancer } from "@/components/css-import-enhancer";
 import { PWARegistrar } from "@/components/pwa-registrar";
 import "../styles/fonts.css";
 import "./globals.css";
@@ -37,6 +39,8 @@ export default function RootLayout({
       </head>
       <body>
         <PWARegistrar />
+        <CSSImportEnhancer />
+        <ChatPluginBootstrap />
         {children}
       </body>
     </html>

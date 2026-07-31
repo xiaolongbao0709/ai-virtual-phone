@@ -519,7 +519,7 @@ var allMessages = await readSessionMessages(session.id);
 var includeSystem = Boolean(input.includeSystem);
 var filtered = allMessages.filter(function (message) {
     if (!message) return false;
-    if (!includeSystem && (message.role === "system" || message.role === "tool" || message.mediaType === "tool_result")) return false;
+    if (!includeSystem && (message.role === "system" || message.role === "tool" || message.mediaType === "tool_call" || message.mediaType === "tool_result")) return false;
     return true;
 }).sort(function (a, b) {
     var orderA = Number.isFinite(Number(a.order)) ? Number(a.order) : Number.MAX_SAFE_INTEGER;

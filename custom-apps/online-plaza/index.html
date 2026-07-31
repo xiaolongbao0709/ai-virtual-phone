@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>联机广场</title>
+<style>
+  :root {
+    --bg: #10131a; --card: #1a1f2b; --card2: #222939; --line: rgba(255,255,255,.08);
+    --ink: #eef1f7; --sub: #8b93a7; --acc: #5b8cff; --acc2: #38d39f; --warn: #ff6b6b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.6 -apple-system, "PingFang SC", sans-serif; min-height: 100vh; }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 14px 14px calc(env(safe-area-inset-bottom, 0px) + 20px); display: flex; flex-direction: column; min-height: 100vh; }
+  .tabs { display: flex; gap: 8px; background: var(--card); border-radius: 999px; padding: 4px; margin-bottom: 14px; }
+  .tabs button { flex: 1; border: 0; background: none; color: var(--sub); font-size: 14px; font-weight: 700; padding: 9px 0; border-radius: 999px; cursor: pointer; }
+  .tabs button.on { background: var(--acc); color: #fff; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin-bottom: 12px; }
+  .card h3 { font-size: 15px; margin-bottom: 8px; }
+  .hint { color: var(--sub); font-size: 12.5px; line-height: 1.7; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  input, textarea { flex: 1; min-width: 0; background: var(--card2); border: 1px solid var(--line); border-radius: 12px; color: var(--ink); padding: 10px 12px; font-size: 14px; outline: none; }
+  textarea { resize: none; font-family: inherit; }
+  button.btn { border: 0; border-radius: 12px; background: var(--acc); color: #fff; font-size: 14px; font-weight: 700; padding: 10px 16px; cursor: pointer; white-space: nowrap; }
+  button.btn.green { background: var(--acc2); color: #06281c; }
+  button.btn.ghost { background: var(--card2); color: var(--ink); border: 1px solid var(--line); }
+  button.btn.warn { background: transparent; color: var(--warn); border: 1px solid rgba(255,107,107,.4); }
+  button.btn:disabled { opacity: .45; }
+  .players { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .player { background: var(--card2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .player .host { color: #ffcf6b; }
+  .player .kick { color: var(--warn); background: none; border: 0; font-size: 12px; cursor: pointer; padding: 0; }
+  .roominfo { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .code { font-size: 24px; font-weight: 800; letter-spacing: 6px; color: var(--acc2); font-variant-numeric: tabular-nums; }
+  #chatlog { flex: 1; min-height: 200px; max-height: 46vh; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+  #chatlog > div { flex-shrink: 0; }
+  .msg { max-width: 82%; padding: 8px 12px; border-radius: 14px; background: var(--card2); font-size: 14px; word-break: break-word; }
+  .msg .who { display: block; font-size: 11px; color: var(--sub); margin-bottom: 2px; }
+  .msg.me { align-self: flex-end; background: var(--acc); }
+  .msg.me .who { color: rgba(255,255,255,.75); }
+  .msg.sys { align-self: center; background: none; color: var(--sub); font-size: 12px; }
+  .bottle { background: var(--card2); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin-top: 8px; }
+  .bottle .meta { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--sub); margin-bottom: 4px; }
+  .bottle .del { color: var(--warn); background: none; border: 0; font-size: 12px; cursor: pointer; }
+  .empty { text-align: center; color: var(--sub); font-size: 13px; padding: 22px 0; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="tabs">
+    <button id="tabRoom" class="on">聊天室</button>
+    <button id="tabBottle">漂流瓶</button>
+  </div>
+
+  <!-- ═══ 实时房间层示例：聊天室 ═══ -->
+  <section id="pageRoom">
+    <div id="roomLobby">
+      <div class="card">
+        <h3>开一个房间</h3>
+        <p class="hint">生成 4 位房号，发给朋友加入，就能实时聊天。</p>
+        <div class="row"><button class="btn green" id="btnCreate" style="flex:1">创建房间</button></div>
+      </div>
+      <div class="card">
+        <h3>加入朋友的房间</h3>
+        <div class="row">
+          <input id="joinCode" maxlength="4" placeholder="输入 4 位房号" autocapitalize="characters" />
+          <button class="btn" id="btnJoin">加入</button>
+        </div>
+      </div>
+      <p class="hint" id="lobbyHint" style="padding:0 4px">联机需要登录联机账号；房间随退出自动解散。</p>
+    </div>
+
+    <div id="roomLive" class="hidden" style="display:flex;flex-direction:column;flex:1">
+      <div class="card" style="margin-bottom:10px">
+        <div class="roominfo">
+          <span class="code" id="roomCode"></span>
+          <button class="btn warn" id="btnLeave">退出</button>
+        </div>
+        <p class="hint">把房号告诉朋友，TA 在「联机广场 → 加入」输入即可。</p>
+        <div class="players" id="playerList"></div>
+      </div>
+      <div id="chatlog"></div>
+      <div class="row">
+        <input id="chatInput" placeholder="说点什么…" />
+        <button class="btn" id="btnSend">发送</button>
+      </div>
+      <div class="row" id="charRow" style="align-items:center">
+        <select id="charSelect" style="flex:1;min-width:0;background:var(--card2);border:1px solid var(--line);border-radius:12px;color:var(--ink);padding:10px 12px;font-size:13px">
+          <option value="">带一位角色进房…</option>
+        </select>
+        <button class="btn ghost" id="btnCharSpeak" disabled>让TA发言</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 云端共享层示例：漂流瓶 ═══ -->
+  <section id="pageBottle" class="hidden">
+    <div class="card">
+      <h3>扔一个漂流瓶 🌊</h3>
+      <div class="row"><textarea id="bottleText" rows="3" maxlength="500" placeholder="写点什么，扔进大海…（500 字内）"></textarea></div>
+      <div class="row"><button class="btn" id="btnThrow" style="flex:1">扔出去</button></div>
+    </div>
+    <div class="card">
+      <h3>捞一个陌生人的瓶子</h3>
+      <p class="hint">捞走即独占——同一个瓶子不会被两个人捞到。</p>
+      <div class="row"><button class="btn green" id="btnFish" style="flex:1">捞瓶子</button></div>
+      <div id="fished"></div>
+    </div>
+    <div class="card">
+      <h3>我扔出的瓶子</h3>
+      <div id="myBottles"><div class="empty">加载中…</div></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var api = window.AiPhone;
+  var room = null;          // room.create/join 的返回（含 code / isHost / selfUserId）
+  var $ = function (id) { return document.getElementById(id); };
+  function toast(text) { api.ui.toast(text).catch(function () {}); }
+  function err(e) { toast(e && e.message ? e.message : String(e)); }
+
+  // ── 标签页 ──
+  function showTab(name) {
+    $("tabRoom").classList.toggle("on", name === "room");
+    $("tabBottle").classList.toggle("on", name === "bottle");
+    $("pageRoom").classList.toggle("hidden", name !== "room");
+    $("pageBottle").classList.toggle("hidden", name !== "bottle");
+    if (name === "bottle") loadMyBottles();
+  }
+  $("tabRoom").onclick = function () { showTab("room"); };
+  $("tabBottle").onclick = function () { showTab("bottle"); };
+
+  // ═══ 实时房间层 ═══
+  function enterLive() {
+    $("roomLobby").classList.add("hidden");
+    $("roomLive").classList.remove("hidden");
+    $("roomCode").textContent = room.code;
+    renderPlayers(room.players || []);
+    $("chatlog").innerHTML = "";
+    sysMsg(room.isHost ? "房间已创建，等朋友加入…" : "已加入房间");
+    chatHistory = [];
+    loadCharacters();
+  }
+  function exitLive() {
+    room = null;
+    $("roomLive").classList.add("hidden");
+    $("roomLobby").classList.remove("hidden");
+  }
+  function sysMsg(text) {
+    var el = document.createElement("div");
+    el.className = "msg sys";
+    el.textContent = text;
+    $("chatlog").appendChild(el);
+    $("chatlog").scrollTop = 1e9;
+  }
+  function chatMsg(who, text, mine) {
+    var el = document.createElement("div");
+    el.className = "msg" + (mine ? " me" : "");
+    var name = document.createElement("span");
+    name.className = "who";
+    name.textContent = who;
+    el.appendChild(name);
+    el.appendChild(document.createTextNode(text));
+    $("chatlog").appendChild(el);
+    $("chatlog").scrollTop = 1e9;
+  }
+  function renderPlayers(players) {
+    var box = $("playerList");
+    box.innerHTML = "";
+    players.forEach(function (p) {
+      var chip = document.createElement("span");
+      chip.className = "player";
+      chip.textContent = p.name;
+      if (p.isHost) {
+        var star = document.createElement("span");
+        star.className = "host";
+        star.textContent = "★";
+        chip.appendChild(star);
+      } else if (room && room.isHost) {
+        var kick = document.createElement("button");
+        kick.className = "kick";
+        kick.textContent = "踢出";
+        kick.onclick = function () { api.room.kick(p.userId).catch(err); };
+        chip.appendChild(kick);
+      }
+      box.appendChild(chip);
+    });
+  }
+
+  $("btnCreate").onclick = function () {
+    $("btnCreate").disabled = true;
+    api.room.create({ title: "联机广场聊天室", maxPlayers: 12 })
+      .then(function (r) { room = r; enterLive(); })
+      .catch(err)
+      .finally(function () { $("btnCreate").disabled = false; });
+  };
+  $("btnJoin").onclick = function () {
+    var code = $("joinCode").value.trim().toUpperCase();
+    if (code.length !== 4) return toast("请输入 4 位房号");
+    $("btnJoin").disabled = true;
+    api.room.join({ code: code })
+      .then(function (r) { room = r; enterLive(); })
+      .catch(err)
+      .finally(function () { $("btnJoin").disabled = false; });
+  };
+  $("btnLeave").onclick = function () {
+    api.room.leave().catch(function () {});
+    exitLive();
+  };
+  // 最近聊天上下文（给带来的角色发言用）
+  var chatHistory = [];
+  function remember(who, text) {
+    chatHistory.push(who + "：" + text);
+    if (chatHistory.length > 12) chatHistory.shift();
+  }
+  function sendChat() {
+    var text = $("chatInput").value.trim();
+    if (!text || !room) return;
+    $("chatInput").value = "";
+    chatMsg(room.selfName || "我", text, true);
+    remember(room.selfName || "我", text);
+    api.room.send({ type: "chat", text: text }).catch(err);
+  }
+
+  // ── 带角色上桌：角色由主人的客户端驱动（本地 ai.generate 后广播）──
+  var charBusy = false;
+  function loadCharacters() {
+    api.characters.list()
+      .then(function (list) {
+        var select = $("charSelect");
+        while (select.options.length > 1) select.remove(1);
+        (list || []).forEach(function (c) {
+          var opt = document.createElement("option");
+          opt.value = c.id;
+          opt.textContent = c.name;
+          select.appendChild(opt);
+        });
+      })
+      .catch(function () { $("charRow").style.display = "none"; });
+  }
+  $("charSelect").addEventListener("change", function () {
+    $("btnCharSpeak").disabled = !$("charSelect").value;
+  });
+  $("btnCharSpeak").onclick = function () {
+    var charId = $("charSelect").value;
+    var charName = $("charSelect").selectedOptions[0] ? $("charSelect").selectedOptions[0].textContent : "角色";
+    if (!charId || !room || charBusy) return;
+    charBusy = true;
+    $("btnCharSpeak").disabled = true;
+    $("btnCharSpeak").textContent = "生成中…";
+    api.ai.generate({
+      characterId: charId,
+      instruction: "你正和大家在一个联机聊天室里闲聊。最近的聊天记录：\n" + (chatHistory.join("\n") || "（还没人说话）") + "\n请以你的角色身份自然地说一句话加入聊天（60字内，只输出这句话本身，不要引号和动作描写）。",
+    })
+      .then(function (result) {
+        var text = String((result && result.text) || "").trim();
+        if (!text) throw new Error("角色没有说出话来");
+        var who = charName + "（AI）";
+        chatMsg(who, text, true);
+        remember(who, text);
+        return api.room.send({ type: "chat", text: text, as: charName });
+      })
+      .catch(err)
+      .finally(function () {
+        charBusy = false;
+        $("btnCharSpeak").disabled = !$("charSelect").value;
+        $("btnCharSpeak").textContent = "让TA发言";
+      });
+  };
+  $("btnSend").onclick = sendChat;
+  $("chatInput").addEventListener("keydown", function (e) { if (e.key === "Enter") sendChat(); });
+
+  // 房间事件（manifest extensions.events 里已声明）
+  api.on("room.message", function (msg) {
+    if (!room) return;
+    if (msg.payload && msg.payload.type === "chat") {
+      var who = msg.payload.as ? String(msg.payload.as) + "（AI）" : msg.from.name;
+      var text = String(msg.payload.text || "");
+      chatMsg(who, text, false);
+      remember(who, text);
+    }
+  });
+  api.on("room.players", function (data) {
+    if (room) renderPlayers(data.players || []);
+  });
+  api.on("room.closed", function (data) {
+    var reasons = { host_closed: "房主关闭了房间", host_left: "房主已离线，房间解散", kicked: "你被房主移出了房间" };
+    toast(reasons[data.reason] || "房间已结束");
+    exitLive();
+  });
+
+  // ═══ 云端共享层 ═══
+  $("btnThrow").onclick = function () {
+    var text = $("bottleText").value.trim();
+    if (!text) return toast("先写点什么吧");
+    $("btnThrow").disabled = true;
+    api.cloud.put({ collection: "bottles", data: { text: text } })
+      .then(function () { $("bottleText").value = ""; toast("瓶子已扔进大海 🌊"); loadMyBottles(); })
+      .catch(err)
+      .finally(function () { $("btnThrow").disabled = false; });
+  };
+  $("btnFish").onclick = function () {
+    $("btnFish").disabled = true;
+    api.cloud.takeRandom({ collection: "bottles" })
+      .then(function (doc) {
+        var box = $("fished");
+        if (!doc) { box.innerHTML = '<div class="empty">海面空空的，过会儿再来吧</div>'; return; }
+        box.innerHTML = "";
+        box.appendChild(renderBottle(doc, false));
+      })
+      .catch(err)
+      .finally(function () { $("btnFish").disabled = false; });
+  };
+  function renderBottle(doc, mine) {
+    var el = document.createElement("div");
+    el.className = "bottle";
+    var meta = document.createElement("div");
+    meta.className = "meta";
+    var left = document.createElement("span");
+    left.textContent = (mine ? (doc.takenBy ? "已被人捞走" : "还漂着") : "来自 " + (doc.ownerName || "陌生人"));
+    meta.appendChild(left);
+    if (mine) {
+      var del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "收回";
+      del.onclick = function () { api.cloud.delete(doc.id).then(loadMyBottles).catch(err); };
+      meta.appendChild(del);
+    }
+    el.appendChild(meta);
+    var body = document.createElement("div");
+    body.textContent = String((doc.data && doc.data.text) || "");
+    el.appendChild(body);
+    return el;
+  }
+  function loadMyBottles() {
+    api.cloud.list({ collection: "bottles", mine: true, limit: 20 })
+      .then(function (docs) {
+        var box = $("myBottles");
+        box.innerHTML = "";
+        if (!docs || docs.length === 0) { box.innerHTML = '<div class="empty">还没扔过瓶子</div>'; return; }
+        docs.forEach(function (doc) { box.appendChild(renderBottle(doc, true)); });
+      })
+      .catch(function (e) { $("myBottles").innerHTML = '<div class="empty">' + (e && e.message ? e.message : "加载失败") + "</div>"; });
+  }
+})();
+</script>
+</body>
+</html>

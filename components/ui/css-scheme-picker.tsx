@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { getSchemes, saveScheme, deleteScheme, type CSSScheme } from "@/lib/css-scheme-storage";
 import { Save, FolderOpen, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
+import { CSSImportButton } from "@/components/ui/css-import-button";
 
 /** Semantic color tokens for the modal — pass CSS var() references so they follow the active theme */
 type ModalVars = {
@@ -96,6 +97,7 @@ export default function CSSSchemeBar({ target, onLoad, currentCSS, btnStyle, mod
       >
         <FolderOpen size={15} />
       </button>
+      <CSSImportButton onImport={onLoad} buttonStyle={btn} />
 
       {modal && portalTarget ? createPortal(
         <div

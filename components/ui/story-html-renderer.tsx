@@ -1,7 +1,8 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { marked } from "marked";
+import { translateReasoningText } from "@/lib/reasoning-translate";
 
 /** Standard HTML tags — anything not in this set gets stripped (content kept) */
 const STANDARD_TAGS = new Set([
@@ -27,6 +28,75 @@ type Segment =
     | { type: "markdown"; content: string }
     | { type: "html-page"; content: string }
     | { type: "fold"; label: string; content: string };
+
+/** 折叠块：think/thinking（思维链）带「翻译」按钮与 中文/原文/对照 切换；其余折叠标签（summary、自定义等）不带 */
+function StoryFoldBlock({ label, content, scopeClass, children }: {
+    label: string;
+    content: string;
+    scopeClass: string;
+    children: ReactNode;
+}) {
+    const canTranslate = /^(think|thinking)$/i.test(label.trim());
+    const [translation, setTranslation] = useState<string | null>(null);
+    const [translating, setTranslating] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [viewMode, setViewMode] = useState<"both" | "zh" | "orig">("both");
+    const handleTranslate = async (e: { preventDefault(): void; stopPropagation(): void }) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (translating) return;
+        setTranslating(true);
+        setError(null);
+        try {
+            const result = await translateReasoningText(content);
+            if (result.content) { setTranslation(result.content); setViewMode("both"); }
+            else setError(result.error || "翻译失败，请重试");
+        } catch {
+            setError("翻译失败，请重试");
+        } finally {
+            setTranslating(false);
+        }
+    };
+    const pickMode = (mode: "both" | "zh" | "orig") => (e: { preventDefault(): void; stopPropagation(): void }) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setViewMode(mode);
+    };
+    return (
+        <details className="story-fold-block" data-fold-tag={label}>
+            <summary>
+                {label}
+                {canTranslate && !translation && (
+                    <button type="button" className="story-fold-translate-btn" onClick={handleTranslate}>
+                        {translating ? "翻译中…" : "翻译"}
+                    </button>
+                )}
+                {canTranslate && translation && (
+                    <span className="story-fold-view-switch">
+                        {([["zh", "中文"], ["orig", "原文"], ["both", "对照"]] as const).map(([mode, text]) => (
+                            <button
+                                key={mode}
+                                type="button"
+                                className="story-fold-translate-btn"
+                                {...(viewMode === mode ? { "data-active": "" } : {})}
+                                onClick={pickMode(mode)}
+                            >{text}</button>
+                        ))}
+                    </span>
+                )}
+            </summary>
+            <div className="story-fold-block__content">
+                {error && <div className="story-fold-translate-error">{error}</div>}
+                {translation && viewMode !== "orig" && (
+                    <div className={viewMode === "both" ? "story-fold-translation" : undefined}>
+                        <MarkdownSegment content={translation} scopeClass={scopeClass} />
+                    </div>
+                )}
+                {(viewMode !== "zh" || !translation) && children}
+            </div>
+        </details>
+    );
+}
 
 function splitContent(text: string): Segment[] {
     if (!text) return [];
@@ -165,13 +235,12 @@ function HtmlPageSegment({ html, onOptionSelect, htmlPageMode }: HtmlPageProps) 
 
     const srcDoc = useMemo(() => {
         // 高度桥接：照搬黑市剧场那套"按构造稳定"的做法——getBoundingClientRect 测真实
-        // 默认让 html/body overflow:hidden + min-height:0 贴住内容；contained 模式保留 iframe 内部滚动。
         // 内容、能缩回去；MutationObserver + 一堆事件捕捉任何变化(自定义按钮也行)；
         // body 高=内容高，父层改 iframe 高不反馈到内容 → 测出不变 → 天然不循环。
-        const overflowRule = contained
-            ? "overflow:auto!important;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;"
-            : "overflow:hidden!important;";
-        const bridge = `<style>html,body{${overflowRule}min-height:0!important}</style><script>(function(){function measure(){var d=document.documentElement;var b=document.body;if(!b)return 0;var br=b.getBoundingClientRect();var h=Math.max(br.height,b.scrollHeight||0,d?d.scrollHeight||0:0);for(var i=0;i<b.children.length;i++){var r=b.children[i].getBoundingClientRect();if(r.width||r.height)h=Math.max(h,r.bottom-br.top)}return Math.ceil(h)}function send(){window.parent.postMessage({type:"_rhr",h:measure()},"*")}function schedule(){requestAnimationFrame(function(){send();requestAnimationFrame(send)})}window.addEventListener("load",schedule);window.addEventListener("resize",schedule);document.addEventListener("click",function(e){var t=e.target&&e.target.closest&&e.target.closest("[data-action]");if(t){var a=t.getAttribute("data-action");if(a){e.preventDefault();e.stopPropagation();window.parent.postMessage({type:"_rhr_opt",text:a},"*")}}schedule()},true);document.addEventListener("toggle",schedule,true);document.addEventListener("transitionend",schedule,true);document.addEventListener("animationend",schedule,true);if(window.MutationObserver)new MutationObserver(schedule).observe(document.documentElement,{attributes:true,childList:true,subtree:true,characterData:true});if(window.ResizeObserver){var ro=new ResizeObserver(schedule);ro.observe(document.documentElement);if(document.body)ro.observe(document.body)}setTimeout(send,80);setTimeout(send,500);setTimeout(send,1600)})();<\/script>`;
+        // iframe 内部永远不滚（iOS 对 iframe 内部文档滚动的手势支持不可靠，生成页里的
+        // fixed/100vh 元素会让整页划不动）；contained 模式改由外层同文档 div 滚动。
+        // height:auto 把生成页常见的 height:100vh 压回内容高，保证测量与手势链正确。
+        const bridge = `<style>html,body{overflow:hidden!important;height:auto!important;min-height:0!important}</style><script>(function(){function measure(){var d=document.documentElement;var b=document.body;if(!b)return 0;var br=b.getBoundingClientRect();var h=Math.max(br.height,b.scrollHeight||0,d?d.scrollHeight||0:0);for(var i=0;i<b.children.length;i++){var c=b.children[i];var r=c.getBoundingClientRect();if(r.width||r.height)h=Math.max(h,r.bottom-br.top,c.scrollHeight||0)}return Math.ceil(h)}function send(){window.parent.postMessage({type:"_rhr",h:measure()},"*")}function schedule(){requestAnimationFrame(function(){send();requestAnimationFrame(send)})}window.addEventListener("load",schedule);window.addEventListener("resize",schedule);document.addEventListener("click",function(e){var t=e.target&&e.target.closest&&e.target.closest("[data-action]");if(t){var a=t.getAttribute("data-action");if(a){e.preventDefault();e.stopPropagation();window.parent.postMessage({type:"_rhr_opt",text:a},"*")}}schedule()},true);document.addEventListener("toggle",schedule,true);document.addEventListener("transitionend",schedule,true);document.addEventListener("animationend",schedule,true);if(window.MutationObserver)new MutationObserver(schedule).observe(document.documentElement,{attributes:true,childList:true,subtree:true,characterData:true});if(window.ResizeObserver){var ro=new ResizeObserver(schedule);ro.observe(document.documentElement);if(document.body)ro.observe(document.body)}setTimeout(send,80);setTimeout(send,500);setTimeout(send,1600)})();<\/script>`;
         let h = html;
         // Convert basic markdown inside hidden data divs
         h = h.replace(
@@ -193,7 +262,7 @@ function HtmlPageSegment({ html, onOptionSelect, htmlPageMode }: HtmlPageProps) 
             if (!e.data || typeof e.data !== "object") return;
             if (iframeRef.current && e.source !== iframeRef.current.contentWindow) return;
             if (e.data.type === "_rhr" && typeof e.data.h === "number") {
-                if (!contained) setHeight(Math.max(e.data.h, 50));
+                setHeight(Math.max(e.data.h, 50));
             }
             if (e.data.type === "_rhr_opt" && typeof e.data.text === "string") {
                 onOptionSelect?.(e.data.text);
@@ -201,21 +270,37 @@ function HtmlPageSegment({ html, onOptionSelect, htmlPageMode }: HtmlPageProps) 
         };
         window.addEventListener("message", handler);
         return () => window.removeEventListener("message", handler);
-    }, [onOptionSelect, contained]);
+    }, [onOptionSelect]);
 
-    return (
+    const frame = (
         <iframe
             ref={iframeRef}
             srcDoc={srcDoc}
             title="HTML content"
             style={{
                 width: "100%",
-                height: contained ? "min(68dvh, 560px)" : height,
+                height,
                 border: "none",
                 display: "block",
                 borderRadius: 12,
             }}
         />
+    );
+
+    if (!contained) return frame;
+
+    // contained：iframe 按内容全高撑开，滚动交给这个同文档的外层容器
+    // （iOS 上 iframe 内部滚动手势不可靠，同文档滚动器则始终可靠）
+    return (
+        <div style={{
+            maxHeight: "min(68dvh, 560px)",
+            overflowY: "auto",
+            WebkitOverflowScrolling: "touch",
+            overscrollBehavior: "contain",
+            borderRadius: 12,
+        }}>
+            {frame}
+        </div>
     );
 }
 
@@ -242,27 +327,21 @@ function StoryHtmlRendererInner({ content, messageId, onOptionSelect, htmlPageMo
                 }
                 if (seg.type === "fold") {
                     return (
-                        <details key={`fold-${i}`} className="story-fold-block" data-fold-tag={seg.label}>
-                            <summary>{seg.label}</summary>
-                            <div className="story-fold-block__content">
-                                {splitContent(seg.content).map((innerSeg, innerIndex) => {
-                                    if (innerSeg.type === "html-page") {
-                                        return <HtmlPageSegment key={`fold-hp-${i}-${innerIndex}`} html={innerSeg.content} onOptionSelect={onOptionSelect} htmlPageMode={htmlPageMode} />;
-                                    }
-                                    if (innerSeg.type === "fold") {
-                                        return (
-                                            <details key={`fold-inner-${i}-${innerIndex}`} className="story-fold-block" data-fold-tag={innerSeg.label}>
-                                                <summary>{innerSeg.label}</summary>
-                                                <div className="story-fold-block__content">
-                                                    <MarkdownSegment content={innerSeg.content} scopeClass={scopeClass} />
-                                                </div>
-                                            </details>
-                                        );
-                                    }
-                                    return <MarkdownSegment key={`fold-md-${i}-${innerIndex}`} content={innerSeg.content} scopeClass={scopeClass} />;
-                                })}
-                            </div>
-                        </details>
+                        <StoryFoldBlock key={`fold-${i}`} label={seg.label} content={seg.content} scopeClass={scopeClass}>
+                            {splitContent(seg.content).map((innerSeg, innerIndex) => {
+                                if (innerSeg.type === "html-page") {
+                                    return <HtmlPageSegment key={`fold-hp-${i}-${innerIndex}`} html={innerSeg.content} onOptionSelect={onOptionSelect} htmlPageMode={htmlPageMode} />;
+                                }
+                                if (innerSeg.type === "fold") {
+                                    return (
+                                        <StoryFoldBlock key={`fold-inner-${i}-${innerIndex}`} label={innerSeg.label} content={innerSeg.content} scopeClass={scopeClass}>
+                                            <MarkdownSegment content={innerSeg.content} scopeClass={scopeClass} />
+                                        </StoryFoldBlock>
+                                    );
+                                }
+                                return <MarkdownSegment key={`fold-md-${i}-${innerIndex}`} content={innerSeg.content} scopeClass={scopeClass} />;
+                            })}
+                        </StoryFoldBlock>
                     );
                 }
                 return <MarkdownSegment key={`md-${i}`} content={seg.content} scopeClass={scopeClass} />;

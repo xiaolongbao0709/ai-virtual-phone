@@ -108,8 +108,31 @@ export async function resolveCustomAppMarketItemForInstalled(appId: string): Pro
   return newestCustomAppMarketItem([...publicApps, ...ownApps], appId);
 }
 
+/** 向服务端换一个短时签名下载地址（登录 + 限频 + 留痕）；市场数据里不再对非作者下发包直链。 */
+async function requestPackageDownloadUrl(itemId: string): Promise<string> {
+  const response = await fetch("/api/app-market/download", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: itemId }),
+  });
+  const data = await response.json().catch(() => ({})) as { ok?: boolean; url?: string; error?: string };
+  if (!response.ok || data.ok !== true || !data.url) {
+    throw new Error(String(data.error ?? `应用包下载授权失败（HTTP ${response.status}）`));
+  }
+  return data.url;
+}
+
 export async function loadCustomAppMarketPackageApp(item: CustomAppMarketItem): Promise<InstalledCustomApp> {
-  const response = await fetch(item.packageUrl);
+  let url = "";
+  try {
+    url = await requestPackageDownloadUrl(item.id);
+  } catch (err) {
+    // 换签失败：作者自己的条目仍带直链可回落；其他人把授权错误（限频/未登录）如实抛给界面
+    if (!item.packageUrl) throw err instanceof Error ? err : new Error("应用包下载失败");
+  }
+  if (!url) url = item.packageUrl;
+  const response = await fetch(url);
   if (!response.ok) throw new Error(`应用包下载失败：HTTP ${response.status}`);
   const blob = await response.blob();
   const suffix = item.packageKind === "html" ? "html" : item.packageKind === "floatapp" ? "floatapp" : "zip";

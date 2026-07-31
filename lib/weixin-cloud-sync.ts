@@ -1059,7 +1059,7 @@ function shouldUploadLocalWeixinMessage(message: ChatMessage): boolean {
   if (message.role !== "user" && message.role !== "assistant") return false;
   if (message.origin && message.origin !== "chat") return false;
   if (!message.content.trim()) return false;
-  if (message.mediaType === "tool_notice" || message.mediaType === "tool_result" || message.mediaType === "memory_write_request") return false;
+  if (message.mediaType === "tool_notice" || message.mediaType === "tool_call" || message.mediaType === "tool_result" || message.mediaType === "memory_write_request") return false;
   if (message.nativeToolCalls?.length || message.nativeToolResult) return false;
   return Boolean(resolveWeixinCloudMessageTarget(message));
 }
@@ -1186,6 +1186,7 @@ function importCloudAssistantMessage(
       statusPanel: index === 0 && parsed.statusPanel ? parsed.statusPanel : undefined,
       innerMonologue: index === 0 && parsed.innerMonologue ? parsed.innerMonologue : undefined,
       stateValues: index === 0 && parsed.stateValues.length > 0 ? parsed.stateValues : undefined,
+      freshStateValues: index === 0 ? parsed.freshStateValues : undefined,
     }));
   });
 
@@ -1196,6 +1197,7 @@ function importCloudAssistantMessage(
       statusPanel: parsed.statusPanel || undefined,
       innerMonologue: parsed.innerMonologue || undefined,
       stateValues: parsed.stateValues.length > 0 ? parsed.stateValues : undefined,
+      freshStateValues: parsed.freshStateValues,
     }));
   }
   if (messages.length === 0) {

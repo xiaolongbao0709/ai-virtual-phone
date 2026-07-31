@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useContext, useCallback } from "react";
-import { Plus, BookOpen, Trash2, Upload, Download, ChevronLeft, AlertCircle, Maximize2 } from "lucide-react";
+import { Plus, BookOpen, Trash2, Upload, Download, ChevronLeft, AlertCircle, Maximize2, Replace } from "lucide-react";
 import {
     loadWorldBooks,
     saveWorldBooks,
@@ -13,7 +13,8 @@ import {
 import { loadCharacters } from "@/lib/character-storage";
 import type { WorldBookConfig, WorldBookEntry } from "@/lib/settings-types";
 import { SettingsContext } from "../phone-settings-app";
-import { ConfirmDialog, TextExpandModal } from "@/components/ui/modal";
+import { BottomSheet, ConfirmDialog, TextExpandModal } from "@/components/ui/modal";
+import { SwipeActionRow, useSwipeActions } from "@/components/ui/swipe-actions";
 import { notifyMascotPageContext } from "@/lib/mascot-events";
 
 export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {}) {
@@ -323,25 +324,136 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
 
     const visibleEntries = activeBook?.entries || [];
 
+    // ── 条目左滑操作（微信式：左滑露出「新增/删除」） ──
+    const swipe = useSwipeActions();
+
+    const makeNewEntry = (): WorldBookEntry => ({
+        uid: `wb-entry-${Date.now()}`,
+        key: "",
+        content: "",
+        comment: "",
+        use_regex: false,
+        disable: false,
+        constant: false,
+        position: 4,
+        depth: 4,
+        probability: 100,
+        useProbability: false,
+        role: 0,
+        insertion_order: 50,
+    });
+
     const addEntry = () => {
         if (!activeBook) return;
-        const newEntry: WorldBookEntry = {
-            uid: `wb-entry-${Date.now()}`,
-            key: "",
-            content: "",
-            comment: "",
-            use_regex: false,
-            disable: false,
-            constant: false,
-            position: 4,
-            depth: 4,
-            probability: 100,
-            useProbability: false,
-            role: 0,
-            insertion_order: 50,
-        };
+        const newEntry = makeNewEntry();
         updateBook(activeBook.id, { entries: [newEntry, ...(activeBook.entries || [])] });
         setEditingUid(newEntry.uid);
+    };
+
+    const insertEntryAfter = (afterUid: string) => {
+        if (!activeBook) return;
+        const newEntry = makeNewEntry();
+        const entries = [...(activeBook.entries || [])];
+        const idx = entries.findIndex(e => e.uid === afterUid);
+        if (idx >= 0) entries.splice(idx + 1, 0, newEntry);
+        else entries.push(newEntry);
+        updateBook(activeBook.id, { entries });
+        swipe.close();
+        setEditingUid(newEntry.uid);
+        window.setTimeout(() => {
+            wbContainerRef.current
+                ?.querySelector(`[data-swipe-id="${CSS.escape(newEntry.uid)}"]`)
+                ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 80);
+    };
+
+    // ── 条目级导入/导出（左滑「替换/导出」+ 底部「添加条目」菜单） ──
+    const [addEntryMenuOpen, setAddEntryMenuOpen] = useState(false);
+    const entryFileInputRef = useRef<HTMLInputElement>(null);
+    const entryImportModeRef = useRef<{ mode: "append" } | { mode: "replace"; uid: string } | null>(null);
+
+    const sanitizeEntryImport = (raw: unknown, fallbackUid: string): WorldBookEntry | null => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+        const obj = raw as Record<string, unknown>;
+        if (typeof obj.content !== "string" && typeof obj.comment !== "string" && typeof obj.key !== "string" && !Array.isArray(obj.key)) return null;
+        // 兼容酒馆世界书条目：key 可能是字符串数组
+        const key = Array.isArray(obj.key)
+            ? obj.key.filter((k): k is string => typeof k === "string").join(", ")
+            : (typeof obj.key === "string" ? obj.key : "");
+        return {
+            uid: fallbackUid,
+            key,
+            content: typeof obj.content === "string" ? obj.content : "",
+            comment: typeof obj.comment === "string" ? obj.comment : "",
+            use_regex: !!obj.use_regex,
+            disable: !!obj.disable,
+            constant: !!obj.constant,
+            position: typeof obj.position === "number" || typeof obj.position === "string"
+                ? obj.position as WorldBookEntry["position"]
+                : 4,
+            depth: typeof obj.depth === "number" ? obj.depth : 4,
+            probability: typeof obj.probability === "number" ? obj.probability : 100,
+            useProbability: !!obj.useProbability,
+            role: typeof obj.role === "number" ? obj.role : 0,
+            insertion_order: typeof obj.insertion_order === "number" ? obj.insertion_order : 50,
+        };
+    };
+
+    const appendImportedEntries = (book: WorldBookConfig, raws: unknown[]) => {
+        const base = Date.now();
+        const appended = raws
+            .map((raw, i) => sanitizeEntryImport(raw, `wb-entry-${base + i}`))
+            .filter((entry): entry is WorldBookEntry => !!entry);
+        if (appended.length === 0) {
+            setImportError("JSON 里没有可识别的条目内容。");
+            return;
+        }
+        updateBook(book.id, { entries: [...(book.entries || []), ...appended] });
+        if (appended.length === 1) setEditingUid(appended[0].uid);
+        window.setTimeout(() => {
+            wbContainerRef.current
+                ?.querySelector(`[data-swipe-id="${CSS.escape(appended[0].uid)}"]`)
+                ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 80);
+    };
+
+    const replaceImportedEntry = (book: WorldBookConfig, targetUid: string, raw: unknown) => {
+        const sanitized = sanitizeEntryImport(raw, targetUid);
+        if (!sanitized) {
+            setImportError("JSON 里没有可识别的条目内容。");
+            return;
+        }
+        // 保留原 uid，只替换内容
+        const finalEntry = { ...sanitized, uid: targetUid };
+        updateBook(book.id, { entries: (book.entries || []).map(e => e.uid === targetUid ? finalEntry : e) });
+    };
+
+    const exportEntry = async (entry: WorldBookEntry) => {
+        const { downloadFile } = await import("@/lib/download-utils");
+        const blob = new Blob([JSON.stringify(entry, null, 2)], { type: "application/json" });
+        await downloadFile(blob, `${entry.comment || entry.key || "worldbook-entry"}.json`);
+    };
+
+    const handleEntryImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        const mode = entryImportModeRef.current;
+        entryImportModeRef.current = null;
+        if (entryFileInputRef.current) entryFileInputRef.current.value = "";
+        if (!file || !mode) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const book = books.find(b => b.id === activeBookId);
+            if (!book) return;
+            try {
+                const parsed = JSON.parse(event.target?.result as string);
+                const items = Array.isArray(parsed) ? parsed : [parsed];
+                if (mode.mode === "replace") replaceImportedEntry(book, mode.uid, items[0]);
+                else appendImportedEntries(book, items);
+            } catch {
+                setImportError("无法解析条目文件，格式不正确。");
+            }
+        };
+        reader.readAsText(file);
     };
 
     const updateEntry = (uid: string, updates: Partial<WorldBookEntry>) => {
@@ -361,6 +473,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
     return (
         <div ref={wbContainerRef} className="flex flex-col gap-5 h-full">
             <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={handleImport} />
+            <input type="file" accept=".json" className="hidden" ref={entryFileInputRef} onChange={handleEntryImportFile} />
             {viewMode === "list" ? (
                 <>
                     <div className="flex items-center">
@@ -480,8 +593,63 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                         const isEditing = editingUid === entry.uid;
 
                                         return (
-                                            <div
+                                            <SwipeActionRow
                                                 key={entry.uid}
+                                                controller={swipe}
+                                                id={entry.uid}
+                                                disabled={isEditing}
+                                                actions={
+                                                    <>
+                                                        <button
+                                                            type="button"
+                                                            className="ui-swipe-action"
+                                                            data-variant="insert"
+                                                            onClick={() => insertEntryAfter(entry.uid)}
+                                                        >
+                                                            <Plus size={18} strokeWidth={2} />
+                                                            <span>新增</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="ui-swipe-action"
+                                                            data-variant="replace"
+                                                            onClick={() => {
+                                                                entryImportModeRef.current = { mode: "replace", uid: entry.uid };
+                                                                entryFileInputRef.current?.click();
+                                                                swipe.close();
+                                                            }}
+                                                        >
+                                                            <Replace size={18} strokeWidth={2} />
+                                                            <span>替换</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="ui-swipe-action"
+                                                            data-variant="export"
+                                                            onClick={() => {
+                                                                exportEntry(entry);
+                                                                swipe.close();
+                                                            }}
+                                                        >
+                                                            <Download size={18} strokeWidth={2} />
+                                                            <span>导出</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="ui-swipe-action"
+                                                            data-variant="delete"
+                                                            onClick={() => {
+                                                                setConfirmDeleteTarget({ type: 'entry', id: entry.uid });
+                                                                swipe.close();
+                                                            }}
+                                                        >
+                                                            <Trash2 size={18} strokeWidth={2} />
+                                                            <span>删除</span>
+                                                        </button>
+                                                    </>
+                                                }
+                                            >
+                                            <div
                                                 className="ui-entry-card"
                                                 data-active={isEditing ? "true" : undefined}
                                                 data-disabled={entry.disable && !isEditing ? "true" : undefined}
@@ -490,7 +658,14 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                 {/* Summary Row */}
                                                 <div className="flex justify-between items-start">
                                                     <button
-                                                        onClick={() => setEditingUid(isEditing ? null : entry.uid)}
+                                                        onClick={() => {
+                                                            if (swipe.consumeClickSuppression()) return;
+                                                            if (swipe.openId || swipe.swipingId) {
+                                                                swipe.close();
+                                                                return;
+                                                            }
+                                                            setEditingUid(isEditing ? null : entry.uid);
+                                                        }}
                                                         className="flex gap-3 flex-1 bg-none border-none text-left cursor-pointer p-0"
                                                     >
                                                         <div className="mt-0.5 ui-entry-icon">
@@ -526,13 +701,6 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                             />
                                                             <div className="ui-mini-toggle-thumb" />
                                                         </label>
-                                                        <button
-                                                            onClick={() => setConfirmDeleteTarget({ type: 'entry', id: entry.uid })}
-                                                            className="ui-link-btn"
-                                                            data-variant="danger"
-                                                        >
-                                                            <Trash2 size={18} />
-                                                        </button>
                                                     </div>
                                                 </div>
 
@@ -665,6 +833,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                     </div>
                                                 )}
                                             </div>
+                                            </SwipeActionRow>
                                         )
                                     })
                                 )}
@@ -672,7 +841,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
 
                             <button
                                 type="button"
-                                onClick={addEntry}
+                                onClick={() => setAddEntryMenuOpen(true)}
                                 className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-[20px] bg-black px-4 text-xs font-bold text-white shadow-sm transition-all hover:bg-gray-800 hover:shadow-md active:scale-95 focus:outline-none"
                             >
                                 <Plus size={15} strokeWidth={1.8} />
@@ -716,6 +885,34 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                     onConfirm={() => setImportError(null)}
                     onCancel={() => setImportError(null)}
                 />
+            )}
+
+            {addEntryMenuOpen && activeBook && (
+                <BottomSheet title="添加条目" onClose={() => setAddEntryMenuOpen(false)}>
+                    <div className="flex flex-col gap-2">
+                        <button
+                            type="button"
+                            className="ui-btn ui-btn-primary w-full"
+                            onClick={() => {
+                                setAddEntryMenuOpen(false);
+                                addEntry();
+                            }}
+                        >
+                            <Plus size={16} /> 直接创建
+                        </button>
+                        <button
+                            type="button"
+                            className="ui-btn ui-btn-outline w-full"
+                            onClick={() => {
+                                setAddEntryMenuOpen(false);
+                                entryImportModeRef.current = { mode: "append" };
+                                entryFileInputRef.current?.click();
+                            }}
+                        >
+                            <Upload size={16} /> 从 JSON 文件导入
+                        </button>
+                    </div>
+                </BottomSheet>
             )}
 
             {expandUid && (() => {

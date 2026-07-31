@@ -1292,6 +1292,19 @@
   grid-template-columns: 1fr;
 }
 
+/* 详情页操作行带举报按钮：关闭/打开等宽，举报按内容收窄靠右 */
+.app-market-sheet-actions.with-report {
+  grid-template-columns: 1fr 1fr auto;
+}
+
+.app-market-report-btn {
+  padding: 0 14px;
+}
+
+.app-market-report-sheet {
+  width: 100%;
+}
+
 /* ========================= */
 /* RESPONSIVE               */
 /* ========================= */

@@ -178,7 +178,7 @@ function rpcRecord<T>(data: unknown): T {
 
 export function mapBlackMarketCloudError(error: string): string {
   if (/black_market_wallets|black_market_purchases|black_market_wallet_transactions|black_market_purchase_theater|black_market_checkin|schema cache|does not exist|PGRST/i.test(error)) {
-    return "黑市钱包表尚未创建或函数未更新：请先在 Supabase SQL Editor 执行 docs/black-market-supabase.sql。";
+    return `黑市钱包表尚未创建或函数未更新：请先在 Supabase SQL Editor 执行 docs/black-market-supabase.sql。（原始错误：${error.slice(0, 300)}）`;
   }
   if (/already_checked_in/i.test(error)) return "今天已经签到过了。";
   if (/theater_not_found/i.test(error)) return "夜间档案不存在或已下架。";

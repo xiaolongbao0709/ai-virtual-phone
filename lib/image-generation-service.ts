@@ -346,16 +346,17 @@ async function generateImageDirect(params: {
     });
   }
 
-  // 总超时 180s,外部 signal 联动;防止上游悬挂导致界面永久转圈
+  // 总超时 360s,外部 signal 联动;防止上游悬挂导致界面永久转圈。
+  // 部分中转的按次生图（如 gpt-image 系）单张实测 3~5 分钟,180s 会在完成前掐断(钱照扣图丢失)。
   const controller = new AbortController();
   const onOuterAbort = () => controller.abort();
   if (signal) signal.addEventListener("abort", onOuterAbort, { once: true });
-  const totalTimer = setTimeout(() => controller.abort(), 180_000);
+  const totalTimer = setTimeout(() => controller.abort(), 360_000);
   try {
     return await parseImageGenerationResponse(await fetch(url, { method: "POST", headers, body, signal: controller.signal }), signal);
   } catch (error) {
     if (controller.signal.aborted && !signal?.aborted) {
-      throw new Error(proxyBaseUrl ? "生图代理超时（180 秒未返回）" : "生图请求超时（180 秒未返回）");
+      throw new Error(proxyBaseUrl ? "生图代理超时（360 秒未返回）" : "生图请求超时（360 秒未返回）");
     }
     if (error instanceof TypeError) {
       throw new Error(proxyBaseUrl ? "生图代理连接失败" : "浏览器直连失败：该 API 可能未允许跨域请求。");

@@ -23,7 +23,7 @@ import { loadStoryMessages, replaceStoryMessages, type StoryMessage } from "./st
 import type { ChatMessage } from "./chat-storage";
 import { MacroEngine } from "./macro-engine";
 
-const DEFAULT_STORY_FOLD_TAGS = "think,thinking";
+const DEFAULT_STORY_FOLD_TAGS = "think,thinking,summary";
 const DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS = "think,thinking";
 
 export type StoryGenerationResult = {

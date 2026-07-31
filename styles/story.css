@@ -771,6 +771,41 @@
           line-height: 1.8;
           font-size: calc(13px*var(--app-text-scale,1));
         }
+        .story-fold-translate-btn {
+          float: right;
+          margin-left: 8px;
+          padding: 1px 8px;
+          border: 1px solid var(--c-story-border, rgba(100, 116, 139, 0.3));
+          border-radius: 999px;
+          background: none;
+          cursor: pointer;
+          font-size: calc(10px*var(--app-text-scale,1));
+          letter-spacing: 0.05em;
+          color: var(--c-story-sub, #94a3b8);
+        }
+        .story-fold-view-switch {
+          float: right;
+          display: inline-flex;
+          gap: 4px;
+        }
+        .story-fold-view-switch .story-fold-translate-btn {
+          float: none;
+          margin-left: 0;
+        }
+        .story-fold-translate-btn[data-active] {
+          color: var(--c-story-accent, #e5484d);
+          border-color: currentColor;
+        }
+        .story-fold-translation {
+          margin-bottom: 12px;
+          padding-bottom: 12px;
+          border-bottom: 1px dashed var(--c-story-border, rgba(100, 116, 139, 0.3));
+        }
+        .story-fold-translate-error {
+          margin-bottom: 10px;
+          font-size: calc(11px*var(--app-text-scale,1));
+          color: #e5484d;
+        }
         .story-richtext details summary + * {
           margin-top: 0 !important;
           padding-top: 0 !important;
@@ -840,10 +875,22 @@
           border-bottom: 6px solid var(--ctx-menu-bg, #2c2c2c);
         }
         .story-inline-edit { display: flex; flex-direction: column; gap: 4px; width: 100%; }
-        .story-inline-edit textarea {
+        /* 纯 CSS 自适应高度：隐藏镜像 ::after 与 textarea 叠在同一格，
+           镜像随内容自然撑高。打字过程零 JS 高度写入——逐键改 style.height
+           在 iOS 上会导致光标绘制错位和"把光标卷进视野"的自动滚动。 */
+        .story-grow-wrap { display: grid; width: 100%; }
+        .story-grow-wrap::after {
+          content: attr(data-value) " ";
+          visibility: hidden; pointer-events: none;
+          grid-area: 1 / 1;
+          white-space: pre-wrap; word-break: break-word;
+          font: inherit; line-height: 1.9; min-height: 80px;
+        }
+        .story-grow-wrap textarea {
+          grid-area: 1 / 1;
           width: 100%; min-height: 80px; border: none; outline: none;
           background: transparent; color: inherit; font: inherit;
-          line-height: 1.9; resize: vertical; overflow: auto;
+          line-height: 1.9; resize: none; overflow: hidden;
           -webkit-user-select: text;
           user-select: text;
         }

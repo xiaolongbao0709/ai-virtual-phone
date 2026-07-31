@@ -924,7 +924,7 @@ function normalizeEntityName(value: string | undefined): string {
 
 function normalizeVisibleChatMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.filter((msg) => {
-    if (msg.mediaType === "tool_result" || msg.mediaType === "memory_write_request" || msg.mediaType === "tool_notice") return false;
+    if (msg.mediaType === "tool_call" || msg.mediaType === "tool_result" || msg.mediaType === "memory_write_request" || msg.mediaType === "tool_notice") return false;
     if (msg.origin === "reading_discuss" || msg.mediaType === "reading_discuss") return false;
     if (msg.role === "system") return false;
     const preview = getChatMessagePreview(msg).trim();
@@ -1102,12 +1102,11 @@ function mergeChatPayload(
   const characters = loadCharacters();
   const characterName = characters.find((item) => item.id === characterId)?.name ?? "";
   const userName = resolveUserIdentity(characterId, "checkphone")?.name ?? "用户";
-  const allCharacterNames = new Set(
-    characters
-      .map((item) => normalizeEntityName(item.name))
-      .filter(Boolean),
+  // 只拦用户名（防伪造）和角色自己的名字（防自聊）；其他角色卡不再一刀切拉黑，
+  // 否则生成的同世界配角（也是角色卡）永远进不了补充会话/动态/联系人
+  const blockedNpcOnlyNames = new Set<string>(
+    [normalizeEntityName(userName), normalizeEntityName(characterName)].filter(Boolean),
   );
-  const blockedNpcOnlyNames = new Set<string>([normalizeEntityName(userName), ...allCharacterNames]);
   const realConversationNames = new Set(realPayload.conversations.map((item) => normalizeEntityName(item.name)).filter(Boolean));
   const realGroupNames = new Set(realPayload.groups.map((item) => normalizeEntityName(item.name)).filter(Boolean));
   const mergeBy = <T extends { id: string }>(base: T[], extra: T[], keyFn?: (item: T) => string) => {

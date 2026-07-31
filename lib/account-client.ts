@@ -60,6 +60,22 @@ export async function loginAccount(input: {
   return { ok: true, account: data.account ?? null };
 }
 
+export async function changeAccountPassword(input: {
+  oldPassword: string;
+  newPassword: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const response = await fetch("/api/auth/change-password", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }).catch(() => null);
+  if (!response) return { ok: false, error: "网络异常，请稍后再试。" };
+  const data = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+  if (!response.ok || !data.ok) return { ok: false, error: data.error || "修改失败。" };
+  return { ok: true };
+}
+
 export async function logoutAccount(): Promise<void> {
   await fetch("/api/auth/logout", {
     method: "POST",

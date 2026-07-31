@@ -194,10 +194,14 @@
   --phone-case-highlight: rgba(255, 255, 255, 0.5);
   --app-font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "SF Pro Text", "Inter", "Segoe UI", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla";
   --app-text-scale: 1;
-  --home-grid-top-offset: 86px;
+  /* 主屏顶部外边距：收紧顶部留白（仅容器外边距，不影响图标/组件格子定位）。 */
+  --home-grid-top-offset: 64px;
   --home-row-gap-y: 3px;
-  --home-dock-lift: 36px;
-  --home-grid-bottom-trim: 40px;
+  /* 底部抬升：dock 有意下探安全区 14px（横条恰落在 dock 下沿留白里，视觉更贴底），
+     6px 为无安全区设备的保底，避免贴死屏幕边。 */
+  --home-dock-lift: max(calc(env(safe-area-inset-bottom, 0px) - 14px), 6px);
+  /* 网格底部留白：越大 = 六行越紧凑、第六排离 dock 越远。三种网格模式统一走这里。 */
+  --home-grid-bottom-trim: 50px;
   --safe-area-top: 48px;
   --status-bar-height: 36px;
   --phone-titlebar-safe-top: max(

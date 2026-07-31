@@ -80,6 +80,7 @@ type PhoneThemeAppProps = {
   onDesktopThemeChange: (next: {
     widgets: WidgetInstance[];
     iconLayout: DesktopIconLayout;
+    dock?: DesktopIconId[];
   }) => void;
   pageIcons: DesktopIconLayout;
   iconSkins: Record<string, string | null>;
@@ -231,7 +232,7 @@ export function PhoneThemeApp({
     setThemeTransferBusy(true);
     try {
       const result = await installThemePackageFile(file);
-      onDesktopThemeChange({ widgets: result.widgets, iconLayout: result.iconLayout });
+      onDesktopThemeChange({ widgets: result.widgets, iconLayout: result.iconLayout, dock: result.dock });
       await onApply(result.themeProfile);
       onDraftChange(result.themeProfile);
       setShowThemeTransfer(false);
@@ -248,11 +249,11 @@ export function PhoneThemeApp({
     setThemeTransferBusy(true);
     try {
       const result = await resetThemePackageState();
-      onDesktopThemeChange({ widgets: result.widgets, iconLayout: result.iconLayout });
+      onDesktopThemeChange({ widgets: result.widgets, iconLayout: result.iconLayout, dock: result.dock });
       await onApply(result.themeProfile);
       onDraftChange(result.themeProfile);
       setConfirmThemeReset(false);
-      onNotice("已恢复默认外观，壁纸库和自定义组件已保留。");
+      onNotice("已恢复默认外观，壁纸库、自定义组件和自定义 App 已保留。");
     } catch (error) {
       console.error(error);
       onNotice(error instanceof Error ? error.message : "恢复默认失败");
@@ -437,10 +438,12 @@ export function PhoneThemeApp({
             <p className="ts-14 text-[var(--c-icon)]">{"\u300C"}{SECTION_TITLES[section]}{"\u300D\u529F\u80FD\u5F00\u53D1\u4E2D\u2026"}</p>
           </div>
         )}
+      {/* 不限定 accept：.ai-theme 是自定义后缀，iOS「文件」选择器会把
+          没有注册 UTI 的类型置灰导致选不中。放开后由 installThemePackageFile
+          校验包内 manifest.json，非法文件照样会被拒。 */}
       <input
         ref={importFileRef}
         type="file"
-        accept=".ai-theme,.zip,application/zip,application/x-zip-compressed"
         className="hidden"
         onChange={handleImportFileChange}
       />
@@ -489,7 +492,7 @@ export function PhoneThemeApp({
       {confirmThemeReset && (
         <ConfirmDialog
           title="恢复默认外观？"
-          message="将恢复默认主题色、当前壁纸、图标、桌面组件和桌面位置；已导入的壁纸库和自定义组件会保留，但不会继续应用在桌面上。"
+          message="将恢复默认主题色、当前壁纸、图标、桌面组件和桌面位置；已导入的壁纸库和自定义组件会保留，但不会继续应用在桌面上。已安装的自定义 App 图标会自动排回桌面空位。"
           icon={AlertCircle}
           variant="danger"
           confirmLabel={themeTransferBusy ? "恢复中" : "恢复默认"}

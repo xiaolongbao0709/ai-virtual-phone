@@ -63,10 +63,14 @@ export function parseStoryResponse(
 ): ParsedStoryResponse {
   const trimmed = rawText.trim();
   // Strip fold-tag blocks (thinking/think) BEFORE extracting summary,
-  // so that <summary> mentioned inside thinking content isn't matched first
+  // so that <summary> mentioned inside thinking content isn't matched first.
+  // 注意跳过摘要标签本身——summary 也可以配进折叠标签（默认已包含），
+  // 若在此被剥掉，摘要就提取不到了（recent_story/记忆会断）。
+  const effectiveSummaryTag = (options?.summaryTag?.trim() || "summary").toLowerCase();
   let textForSummary = trimmed;
   if (options?.foldTags) {
     for (const tag of options.foldTags.split(",").map(t => t.trim()).filter(Boolean)) {
+      if (tag.toLowerCase() === effectiveSummaryTag) continue;
       const escaped = escapeTagName(tag);
       textForSummary = textForSummary.replace(new RegExp(`<${escaped}>[\\s\\S]*?</${escaped}>`, "gi"), "");
     }

@@ -196,6 +196,40 @@ function ensureProviderHasUserMessage(messages: LlmRequestMessage[]): LlmRequest
     return messages;
 }
 
+/**
+ * Anthropic/Gemini 的消息数组不接受 system 角色：开头连续的 system 提取为顶层
+ * system / systemInstruction；插在历史中间的 system（@Depth 注入、系统指令等）
+ * 原位转为 user 角色，保留位置语义，避免被整体挪到最前面。
+ */
+function splitLeadingSystemMessages(messages: LlmRequestMessage[]): { systemText: string; rest: LlmRequestMessage[] } {
+    let leading = 0;
+    while (leading < messages.length && messages[leading].role === "system") leading += 1;
+    const systemText = messages.slice(0, leading)
+        .map((message) => textFromContent(message.content))
+        .filter(Boolean)
+        .join("\n\n");
+    const rest = messages.slice(leading).map((message) => message.role === "system"
+        ? {
+            role: "user" as const,
+            content: message.content,
+            marker: message.marker ? `${message.marker} | protocol:user-from-system` : "protocol:user-from-system",
+        }
+        : message);
+    return { systemText, rest };
+}
+
+/** 把 multipart content 里的图片 part 压平成文本占位（图像识别未启用时使用）。 */
+function stripVisionParts(messages: LlmRequestMessage[]): LlmRequestMessage[] {
+    return messages.map((message) => {
+        if (!Array.isArray(message.content)) return message;
+        const text = message.content
+            .map((part) => part.type === "text" ? part.text : "[图片]")
+            .filter(Boolean)
+            .join("\n");
+        return { ...message, content: text };
+    });
+}
+
 export function buildProviderRequest(
     config: ApiConfig,
     preset: PresetConfig | null,
@@ -213,7 +247,10 @@ export function buildProviderRequest(
         throw new Error("当前 API 配置未启用原生工具调用。");
     }
 
-    const providerMessages = ensureProviderHasUserMessage(normalizeNativeToolMessageAdjacency(messages));
+    // 图像识别关闭时的总闸：无论哪条路径塞入了 image_url part，一律降级为
+    // "[图片]" 文本，避免不支持视觉的模型（如 DeepSeek）收到 multipart 返回 400。
+    const guardedMessages = config.enableImageRecognition === true ? messages : stripVisionParts(messages);
+    const providerMessages = ensureProviderHasUserMessage(normalizeNativeToolMessageAdjacency(guardedMessages));
 
     if (providerKind === "anthropic") {
         return buildAnthropicRequest(config, preset, baseUrl, providerMessages, options);
@@ -225,8 +262,10 @@ export function buildProviderRequest(
 }
 
 export function stripHallucinatedTimestamps(text: string): string {
+    // 括号内以完整日期时间开头的一律剥掉：兼容带秒、时区（Europe/Madrid、UTC+2）、
+    // 星期等尾巴与全角括号——prompt 给历史消息标注的时间带时区时，AI 会照格式模仿
     return text
-        .replace(/\(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\)\s*/g, "")
+        .replace(/[（(]\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?(?:\s+[^)）]*)?[)）]\s*/g, "")
         .replace(/\(system\s*time\s*[:：][^)]*\)\s*/gi, "");
 }
 
@@ -518,12 +557,8 @@ function buildAnthropicRequest(
     messages: LlmRequestMessage[],
     options: ProviderRequestOptions,
 ): LlmRequestPayload {
-    const system = messages
-        .filter((message) => message.role === "system")
-        .map((message) => textFromContent(message.content))
-        .filter(Boolean)
-        .join("\n\n");
-    const bodyMessages = compactAnthropicMessages(messages.filter((message) => message.role !== "system"));
+    const { systemText: system, rest } = splitLeadingSystemMessages(messages);
+    const bodyMessages = compactAnthropicMessages(rest);
     const body: Record<string, unknown> = {
         model: config.defaultModel,
         messages: bodyMessages,
@@ -587,15 +622,11 @@ function buildGeminiRequest(
     messages: LlmRequestMessage[],
     options: ProviderRequestOptions,
 ): LlmRequestPayload {
-    const systemText = messages
-        .filter((message) => message.role === "system")
-        .map((message) => textFromContent(message.content))
-        .filter(Boolean)
-        .join("\n\n");
+    const { systemText, rest } = splitLeadingSystemMessages(messages);
     const headers = buildRequestHeaders(config, baseUrl);
     delete headers.Authorization;
     const body: Record<string, unknown> = {
-        contents: compactGeminiContents(messages.filter((message) => message.role !== "system")),
+        contents: compactGeminiContents(rest),
         generationConfig: {
             temperature: preset?.temperature ?? 0.8,
             topP: preset?.top_p ?? 1,

@@ -7,17 +7,18 @@ import {
     addMomentPost,
     addMomentComment,
     addPendingReaction,
+    findRecentDuplicateMomentPost,
     getVisibleComments,
     getVisiblePosts,
     loadMomentsConfig,
 } from "./moments-storage";
-import { loadChatContacts, loadChatSessions, createOrGetSession, pushChatMessage, createResponseBatchId, addChatContact } from "./chat-storage";
+import { loadChatContacts, loadChatSessions, loadChatMessages, createOrGetSession, addChatContact } from "./chat-storage";
+import { parseAndSaveResponse } from "./follow-up-service";
 import { loadCharacters } from "./character-storage";
 import { clearRequestsForCharacter, dispatchFriendRequestUpdated } from "./friend-request-storage";
 import { sendBrowserNotification } from "./browser-notification";
-import { dispatchChatMessageNotice } from "./chat-notification-events";
 import type { MomentPost, MomentComment } from "./moments-types";
-import { generateMomentPhotoUrl, parseMomentPostResponse } from "./moments-engine";
+import { attachMomentPhotoInBackground, parseMomentPostResponse } from "./moments-engine";
 import { isAbortError, throwIfAborted } from "./abort-utils";
 
 // ── Types ──
@@ -40,7 +41,6 @@ export type ActionContext = {
 // ── Parser ──
 
 const ACTION_TAGS = ["朋友圈", "群消息", "评论", "回复", "消息", "私信"] as const;
-const MOMENTS_ACTION_NOTICE_GAP_MS = 800;
 
 function normalizeActionQuotes(text: string): string {
     return text.replace(/[\u201C\u201D\u2018\u2019\u300C\u300D]/g, "\"");
@@ -222,18 +222,12 @@ export async function dispatchActions(
     actions: ActionTag[],
     context: ActionContext,
 ): Promise<void> {
-    let momentsChatNoticeIndex = 0;
     for (const action of actions) {
         try {
             throwIfAborted(context.signal);
             const effectiveCtx = resolveActorContext(action, context);
             if (!effectiveCtx) { console.log("[ActionParser]", `SKIP: actor "${action.actor}" not found`); continue; }
             console.log("[ActionParser]", `dispatching: type=${action.type} charId=${effectiveCtx.characterId}`);
-            const shouldStaggerNotice = context.sourceEngine === "moments"
-                && (action.type === "消息" || action.type === "私信" || action.type === "群消息");
-            const noticeDelayMs = shouldStaggerNotice
-                ? momentsChatNoticeIndex++ * MOMENTS_ACTION_NOTICE_GAP_MS
-                : 0;
             switch (action.type) {
                 case "朋友圈":
                     await dispatchMomentsPost(action, effectiveCtx);
@@ -245,13 +239,13 @@ export async function dispatchActions(
                     dispatchMomentsReply(action, effectiveCtx);
                     break;
                 case "消息":
-                    dispatchChatMessage(action, effectiveCtx, noticeDelayMs);
+                    await dispatchChatMessage(action, effectiveCtx);
                     break;
                 case "私信":
-                    dispatchPrivateMessage(action, effectiveCtx, noticeDelayMs);
+                    await dispatchPrivateMessage(action, effectiveCtx);
                     break;
                 case "群消息":
-                    dispatchGroupChatMessage(action, effectiveCtx, noticeDelayMs);
+                    await dispatchGroupChatMessage(action, effectiveCtx);
                     break;
             }
         } catch (err) {
@@ -292,17 +286,6 @@ function resolveActionCharacterName(action: ActionTag, context: ActionContext): 
     return loadCharacters().find(c => c.id === context.characterId)?.name || action.actor || "角色";
 }
 
-function dispatchChatMessageNoticeWithDelay(
-    detail: Parameters<typeof dispatchChatMessageNotice>[0],
-    delayMs = 0,
-): void {
-    if (delayMs > 0 && typeof window !== "undefined") {
-        window.setTimeout(() => dispatchChatMessageNotice(detail), delayMs);
-        return;
-    }
-    dispatchChatMessageNotice(detail);
-}
-
 async function dispatchMomentsPost(action: ActionTag, context: ActionContext): Promise<void> {
     // Re-wrap content in [朋友圈]...[/朋友圈] so parseMomentPostResponse can parse it
     const wrapped = `[朋友圈]${action.content}[/朋友圈]`;
@@ -312,24 +295,38 @@ async function dispatchMomentsPost(action: ActionTag, context: ActionContext): P
         return;
     }
 
+    // 内容去重：生图前先判重，命中直接丢弃（同一 [朋友圈] 块被多路径重复派发时兜底）
+    if (findRecentDuplicateMomentPost({
+        authorType: "character",
+        authorId: context.characterId,
+        content: parsed.content,
+        photoDescription: parsed.photoDescription,
+    })) {
+        console.warn(`[ActionParser] SKIP duplicate moments post from ${context.sourceEngine} engine`);
+        return;
+    }
+
     const contacts = loadChatContacts();
     const visibility = contacts.map(c => c.characterId);
-    const photoUrl = parsed.photoDescription
-        ? await generateMomentPhotoUrl(parsed.photoDescription, context.characterId, parsed.photoUseReferenceImage === true, context.signal)
-        : undefined;
-    throwIfAborted(context.signal);
 
+    // 先入库再生图：帖子立即可见，生图慢/超时/页面被杀都不会丢帖
     const post = addMomentPost({
         authorType: "character",
         authorId: context.characterId,
         content: parsed.content,
         photoDescription: parsed.photoDescription,
         photoUseReferenceImage: parsed.photoUseReferenceImage === true,
-        photoGenerationStatus: parsed.photoDescription ? (photoUrl ? "generated" : "failed") : undefined,
-        photoGenerationError: parsed.photoDescription && !photoUrl ? "生图配置未启用或生成失败" : undefined,
-        photoUrl,
+        photoGenerationStatus: parsed.photoDescription ? "pending" : undefined,
         visibility,
     });
+    if (!post) {
+        console.warn(`[ActionParser] SKIP duplicate moments post from ${context.sourceEngine} engine`);
+        return;
+    }
+
+    if (parsed.photoDescription) {
+        attachMomentPhotoInBackground(post.id, parsed.photoDescription, context.characterId, parsed.photoUseReferenceImage === true, context.signal);
+    }
 
     console.log(`[ActionParser] Created moments post from ${context.sourceEngine} engine`);
     dispatchMomentsUpdated();
@@ -403,57 +400,34 @@ function dispatchMomentsReply(action: ActionTag, context: ActionContext): void {
     }
 }
 
-function dispatchChatMessage(action: ActionTag, context: ActionContext, noticeDelayMs = 0): void {
+async function dispatchChatMessage(action: ActionTag, context: ActionContext): Promise<void> {
     if (!action.content) return;
 
     ensureCharacterChatContact(context.characterId);
     const session = createOrGetSession(context.characterId);
-    const responseBatchId = createResponseBatchId();
-
-    pushChatMessage({
-        sessionId: session.id,
-        role: "assistant",
-        content: action.content,
-        responseBatchId,
-        rawResponseText: action.rawText?.trim() || action.content,
-    });
+    // 统一后台保存流程：分条、拍一拍、状态栏、生图、横幅+系统弹窗全与聊天一致
+    await parseAndSaveResponse(action.content, session.id, 0, undefined, loadChatMessages(session.id));
 
     console.log(`[ActionParser] Sent chat message from ${context.sourceEngine} engine`);
-    const charName = resolveActionCharacterName(action, context);
-    dispatchChatMessageNoticeWithDelay({ sessionId: session.id, senderName: charName, body: action.content.slice(0, 80) }, noticeDelayMs);
-    sendBrowserNotification(charName, { body: action.content.slice(0, 50) });
-
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("followup-fired", { detail: { sessionId: session.id } }));
     }
 }
 
-function dispatchPrivateMessage(action: ActionTag, context: ActionContext, noticeDelayMs = 0): void {
+async function dispatchPrivateMessage(action: ActionTag, context: ActionContext): Promise<void> {
     if (!action.content) return;
 
     ensureCharacterChatContact(context.characterId);
     const session = createOrGetSession(context.characterId);
-    const responseBatchId = createResponseBatchId();
-
-    pushChatMessage({
-        sessionId: session.id,
-        role: "assistant",
-        content: action.content,
-        responseBatchId,
-        rawResponseText: action.rawText?.trim() || action.content,
-    });
+    await parseAndSaveResponse(action.content, session.id, 0, undefined, loadChatMessages(session.id));
 
     console.log(`[ActionParser] Sent private message from "${action.actor}" via ${context.sourceEngine} engine`);
-    const pmCharName = resolveActionCharacterName(action, context);
-    dispatchChatMessageNoticeWithDelay({ sessionId: session.id, senderName: pmCharName, body: action.content.slice(0, 80) }, noticeDelayMs);
-    sendBrowserNotification(pmCharName, { body: action.content.slice(0, 50) });
-
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("followup-fired", { detail: { sessionId: session.id } }));
     }
 }
 
-function dispatchGroupChatMessage(action: ActionTag, context: ActionContext, noticeDelayMs = 0): void {
+async function dispatchGroupChatMessage(action: ActionTag, context: ActionContext): Promise<void> {
     console.log("[ActionParser]", `群消息: target="${action.target}" content="${action.content.slice(0, 60)}"`);
     if (!action.content) { console.log("[ActionParser]", "SKIP: empty content"); return; }
     if (!action.target) { console.log("[ActionParser]", "SKIP: no target group name"); return; }
@@ -470,27 +444,12 @@ function dispatchGroupChatMessage(action: ActionTag, context: ActionContext, not
     }
 
     console.log("[ActionParser]", `MATCH: "${groupSession.groupName}" id=${groupSession.id}`);
-    const responseBatchId = createResponseBatchId();
-    pushChatMessage({
-        sessionId: groupSession.id,
-        role: "assistant",
-        content: action.content,
-        responseBatchId,
-        rawResponseText: action.rawText?.trim() || action.content,
+    await parseAndSaveResponse(action.content, groupSession.id, 0, undefined, loadChatMessages(groupSession.id), {
         senderCharacterId: context.characterId,
         senderName: loadCharacters().find(c => c.id === context.characterId)?.name,
     });
 
     console.log("[ActionParser]", `OK: message saved to "${groupSession.groupName}"`);
-    const gcCharName = loadCharacters().find(c => c.id === context.characterId)?.name || "角色";
-    dispatchChatMessageNoticeWithDelay({
-        sessionId: groupSession.id,
-        senderName: groupSession.groupName || "群聊",
-        body: `${gcCharName}: ${action.content.slice(0, 80)}`,
-        isGroup: true,
-    }, noticeDelayMs);
-    sendBrowserNotification(`${groupSession.groupName || "群聊"}`, { body: `${gcCharName}: ${action.content.slice(0, 50)}` });
-
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("followup-fired", { detail: { sessionId: groupSession.id } }));
     }

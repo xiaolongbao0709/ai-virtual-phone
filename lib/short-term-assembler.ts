@@ -108,10 +108,8 @@ function isPromptHiddenChatMessage(
     msg: Pick<ChatMessage, "mediaType" | "nativeToolResult" | "nativeToolCalls">,
     options?: { includeNativeToolHistory?: boolean },
 ): boolean {
-    // 文本协议的工具往返（persistHiddenToolResult / persistHiddenAssistantToolTurn
-    // 存的纯文本 tool_result，无 nativeToolResult 字段）必须回传——它们被持久化
-    // 的目的就是 "for future LLM context"。只有原生工具轮的结构化残留才按
-    // includeNativeToolHistory 开关控制。
+    // 文本协议的 tool_call / tool_result 是正常上下文。只有原生工具轮的
+    // 结构化残留按 includeNativeToolHistory 开关控制。
     return (msg.nativeToolCalls?.length && !options?.includeNativeToolHistory)
         || (msg.mediaType === "tool_result" && !!msg.nativeToolResult && !options?.includeNativeToolHistory)
         || msg.mediaType === "tool_notice"
@@ -193,6 +191,7 @@ export function loadNativeTimeline(
 
             let sender: string;
             if (msg.role === "user") sender = userName;
+            else if (msg.role === "tool") sender = "工具";
             else if (isSystemInstructionMessage(msg)) sender = "系统指令";
             else if (msg.role === "system") continue; // skip system messages in group timeline
             else sender = msg.senderName || "未知";
@@ -319,7 +318,7 @@ export function loadNativeTimeline(
                 continue;
             }
 
-            const sender = msg.role === "user" ? userName : charName;
+            const sender = msg.role === "user" ? userName : msg.role === "tool" ? "工具" : charName;
             let content = stripStateAndInnerForPrompt(msg.content || "");
 
             // Action notifications: always override content to bracket format (stored content is natural language for UI)

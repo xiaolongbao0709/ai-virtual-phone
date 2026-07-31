@@ -320,6 +320,7 @@ function serializeVoiceConfig(config: VoiceApiConfig): Record<string, unknown> {
     model: config.model,
     sttModel: config.sttModel,
     defaultVoice: config.defaultVoice,
+    languageBoost: config.languageBoost,
     enableTTS: config.enableTTS,
     enableSTT: config.enableSTT,
     customVoices: (config.customVoices ?? []).map(voice => ({
@@ -533,17 +534,36 @@ function normalizeCustomAppGenerateMessages(record: Record<string, unknown>, ses
       ? record.messages
       : null;
   if (!raw) return null;
+  // APP 可在消息上带 image（data:image dataURL）走视觉通道；限量限大小防上下文爆炸。
+  // 用户模型不支持/关闭图像识别时，下游 provider-adapter 会自动降级为 [图片] 文本。
+  let imageCount = 0;
+  const MAX_IMAGES_PER_CALL = 4;
+  const MAX_IMAGE_DATAURL_LENGTH = 2_000_000;
   return raw.map((item, index): ChatMessage | null => {
     const entry = asRecord(item);
     const nativeToolCalls = normalizeCustomAppNativeToolCalls(entry.nativeToolCalls ?? entry.toolCalls);
     const nativeToolResult = normalizeCustomAppNativeToolResult(entry.nativeToolResult ?? entry.toolResult);
     const content = cleanUnboundedText(entry.content ?? entry.text ?? entry.message);
     const rawResponseText = cleanUnboundedText(entry.rawResponseText ?? entry.rawContent);
-    if (!content && !rawResponseText && !nativeToolCalls?.length && !nativeToolResult) return null;
+    const rawImage = entry.image ?? entry.imageDataUrl;
+    let imageUrl: string | undefined;
+    if (
+      typeof rawImage === "string"
+      && /^data:image\//.test(rawImage)
+      && rawImage.length <= MAX_IMAGE_DATAURL_LENGTH
+      && imageCount < MAX_IMAGES_PER_CALL
+    ) {
+      imageUrl = rawImage;
+      imageCount++;
+    }
+    if (!content && !imageUrl && !rawResponseText && !nativeToolCalls?.length && !nativeToolResult) return null;
     const mediaType = cleanText(entry.mediaType ?? entry.type, 80) === "tool_result" || nativeToolResult
       ? "tool_result" as const
-      : undefined;
+      : imageUrl
+        ? "image" as const
+        : undefined;
     return {
+      mediaUrl: imageUrl,
       id: cleanText(entry.id, 160) || `custom-app-history-${Date.now()}-${index}`,
       sessionId: cleanText(entry.sessionId, 160) || sessionId,
       role: normalizeCustomAppGenerateRole(entry.role, Boolean(nativeToolResult)),
@@ -1045,6 +1065,81 @@ export function recognizeCustomAppSpeech(app: InstalledCustomApp, record: Record
     }
     session.start();
   });
+}
+
+/**
+ * voice.record —— 在宿主页录一段麦克风音频,回传 dataUrl。
+ *
+ * 为什么不在 APP 的 iframe 里直接 getUserMedia:那个 iframe 是
+ * sandbox="allow-scripts"(空源)且 allow 里没有 microphone,权限策略会直接拒绝。
+ * 宿主页本来就持有麦克风权限(STT 走的就是这条路),所以录音也放在这里。
+ *
+ * 与 voice.stt 互不影响:两者可以并行——识别拿文字给 AI 读,录音拿音频给别人听。
+ */
+let activeCustomAppRecorder: { stop: () => void } | null = null;
+
+export function recordCustomAppSpeech(record: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const maxMs = Math.max(1000, Math.min(60_000, Number(record.maxMs ?? 20_000) || 20_000));
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      reject(new Error("当前环境不支持录音。"));
+      return;
+    }
+    if (activeCustomAppRecorder) {
+      reject(new Error("已有录音在进行中。"));
+      return;
+    }
+    let settled = false;
+    let stream: MediaStream | null = null;
+    let recorder: MediaRecorder | null = null;
+    let timer = 0;
+    const startedAt = Date.now();
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      activeCustomAppRecorder = null;
+      try { stream?.getTracks().forEach(track => track.stop()); } catch { /* ignore */ }
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(got => {
+      stream = got;
+      // 优先 opus:同样时长体积最小,分片传输时省带宽
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+        .find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } });
+      recorder = mime ? new MediaRecorder(got, { mimeType: mime, audioBitsPerSecond: 24_000 })
+                      : new MediaRecorder(got);
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = event => { if (event.data && event.data.size) chunks.push(event.data); };
+      recorder.onerror = () => fail(new Error("录音失败。"));
+      recorder.onstop = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        const blob = new Blob(chunks, { type: recorder?.mimeType || "audio/webm" });
+        if (!blob.size) { reject(new Error("没有录到声音。")); return; }
+        blobToDataUrl(blob).then(dataUrl => resolve({
+          ok: true,
+          dataUrl,
+          mimeType: blob.type,
+          size: blob.size,
+          ms: Date.now() - startedAt,
+        })).catch(() => reject(new Error("录音编码失败。")));
+      };
+      activeCustomAppRecorder = { stop: () => { try { recorder?.stop(); } catch { /* ignore */ } } };
+      recorder.start();
+      timer = window.setTimeout(() => { try { recorder?.stop(); } catch { /* ignore */ } }, maxMs);
+    }).catch(() => fail(new Error("麦克风权限被拒绝或不可用。")));
+  });
+}
+
+export function stopCustomAppRecording(): Record<string, unknown> {
+  if (!activeCustomAppRecorder) return { ok: false, reason: "no-active-recording" };
+  activeCustomAppRecorder.stop();
+  return { ok: true };
 }
 
 export async function cloneCustomAppVoice(app: InstalledCustomApp, record: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -1851,18 +1946,23 @@ export async function generateCustomAppText(app: InstalledCustomApp, record: Rec
   }, {
     onTextPart: (text, _senderInfo, options) => {
       const content = cleanUnboundedText(text);
-      if (!content || options?.promptHidden) return;
-      pushContextMessage({ role: "assistant", content });
+      if (!content) return;
+      pushContextMessage({
+        role: "assistant",
+        content,
+        responseBatchId: options?.responseBatchId,
+        rawResponseText: options?.rawResponseText,
+      });
     },
-    onToolAssistantTurn: (content) => {
+    onToolAssistantTurn: (content, options) => {
       const text = cleanUnboundedText(content);
       if (!text) return;
-      pushContextMessage({ role: "assistant", content: text, mediaType: "tool_result" });
+      pushContextMessage({ role: "assistant", content: text, mediaType: "tool_call", responseBatchId: options?.responseBatchId });
     },
     onToolResult: (content) => {
       const text = cleanUnboundedText(content);
       if (!text) return;
-      pushContextMessage({ role: "user", content: text, mediaType: "tool_result" });
+      pushContextMessage({ role: "tool", content: text, mediaType: "tool_result" });
     },
     onNativeToolAssistantTurn: ({ content, rawContent, reasoning, openRouterReasoningDetails, toolCalls }) => {
       const visibleText = cleanUnboundedText(content);

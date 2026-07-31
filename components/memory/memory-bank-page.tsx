@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, type CSSProperties } from "react";
+import { Component, useState, useEffect, useCallback, type CSSProperties, type ReactNode } from "react";
 import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
@@ -45,6 +45,34 @@ const MEMORY_TOKEN_BUDGET_STEP: Record<MemoryBudgetKey, number> = {
     longTermTokenBudget: 1000,
 };
 const MANUAL_MEMORY_CONTENT_LIMIT = 3000;
+
+// 详情页时间线最多解析渲染的条数：全量历史可能有几万条，
+// 一次性解析+渲染会把 iOS Safari 的单页内存顶爆（灰屏杀页）
+const MEMORY_TIMELINE_ENTRY_CAP = 2000;
+
+/** 详情页兜底：时间线渲染抛错时显示提示，而不是整页白屏 */
+class MemoryDetailBoundary extends Component<{ children?: ReactNode }, { failed: boolean }> {
+    state = { failed: false };
+    static getDerivedStateFromError() { return { failed: true }; }
+    render() {
+        if (this.state.failed) {
+            return <p className="text-center ts-14 mt-10 text-secondary">这一页加载出错了，返回上一页再试一次。</p>;
+        }
+        return this.props.children;
+    }
+}
+
+type SummarizeRange = "auto" | "all" | number;
+
+const SUMMARIZE_RANGE_OPTIONS: Array<{ value: SummarizeRange; label: string; desc?: string }> = [
+    { value: "auto", label: "接着上次总结", desc: "默认方式，从上次进度继续" },
+    { value: 1, label: "最近 1 天" },
+    { value: 3, label: "最近 3 天" },
+    { value: 7, label: "最近 7 天" },
+    { value: 14, label: "最近 14 天" },
+    { value: 30, label: "最近 30 天" },
+    { value: "all", label: "全部历史" },
+];
 
 type MemoryEditorState = {
     type: MemoryEntry["type"];
@@ -157,13 +185,14 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [entryMenuId, setEntryMenuId] = useState<string | null>(null);
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
     const [savingMemory, setSavingMemory] = useState(false);
+    const [summarizeRangeOpen, setSummarizeRangeOpen] = useState(false);
 
     // Resolve selected character object from ID
     const selectedChar = selectedCharId
         ? loadCharacters().find(c => c.id === selectedCharId) ?? null
         : null;
 
-    const loadCharacterList = useCallback(async () => {
+    const loadCharacterList = useCallback(async (isCancelled?: () => boolean) => {
         const allChars = loadCharacters();
 
         let charIdsWithMem: string[] = [];
@@ -185,22 +214,35 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                     getMemoryCountByType(id, "core"),
                 ]);
             } catch { /* ignore */ }
-            const stCount = loadNativeTimeline(id).length;
-            infos.push({ character: char, longTermCount: ltCount, coreCount, shortTermCount: stCount });
+            infos.push({ character: char, longTermCount: ltCount, coreCount, shortTermCount: 0 });
         }
 
         // Remaining characters
         for (const char of allChars) {
             if (seen.has(char.id)) continue;
-            const stCount = loadNativeTimeline(char.id).length;
-            infos.push({ character: char, longTermCount: 0, coreCount: 0, shortTermCount: stCount });
+            infos.push({ character: char, longTermCount: 0, coreCount: 0, shortTermCount: 0 });
         }
 
+        if (isCancelled?.()) return;
         setCharacters(infos);
+
+        // 短期计数逐个异步补齐：loadNativeTimeline 是全量组装，重数据账号
+        // 在循环里同步跑完会长时间卡死主线程、瞬时吃掉大量内存
+        for (const info of infos) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+            if (isCancelled?.()) return;
+            let stCount = 0;
+            try { stCount = loadNativeTimeline(info.character.id).length; } catch { /* ignore */ }
+            if (isCancelled?.()) return;
+            setCharacters(prev => prev.map(item =>
+                item.character.id === info.character.id ? { ...item, shortTermCount: stCount } : item));
+        }
     }, []);
 
     useEffect(() => {
-        loadCharacterList();
+        let cancelled = false;
+        void loadCharacterList(() => cancelled);
+        return () => { cancelled = true; };
     }, [loadCharacterList]);
 
     // Load detail data when entering detail view
@@ -218,8 +260,9 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             setCoreEntries([]);
             setLongTermEntries([]);
         }
-        // Native timeline is sync (localStorage) — no await needed
-        const timeline = loadNativeTimeline(charId);
+        // Native timeline is sync (localStorage) — no await needed.
+        // 只取最近一段（全量可能几万条），防止解析+渲染把 iOS Safari 内存顶爆
+        const timeline = loadNativeTimeline(charId).slice(-MEMORY_TIMELINE_ENTRY_CAP);
         setShortTermEvents(timeline.filter(e =>
             !(e.sourceApp === "moments" && e.postAuthorType === "user")
             && !(e.sourceApp === "interview_magazine" && e.sourceDetail === "interview_shared_issue")
@@ -273,21 +316,31 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
         onNotice?.(msg);
     };
 
-    const handleManualSummarize = async () => {
+    const handleManualSummarize = async (range: SummarizeRange = "auto") => {
         if (!selectedCharId || summarizing) return;
+        setSummarizeRangeOpen(false);
         setSummarizing(true);
         try {
-            const lastSummarizedAt = getLastSummarizedTimestamp(selectedCharId);
+            const sinceTimestamp = typeof range === "number"
+                ? new Date(Date.now() - range * 86400000).toISOString()
+                : undefined;
+            const afterTimestamp = range === "all"
+                ? undefined
+                : sinceTimestamp ?? getLastSummarizedTimestamp(selectedCharId) ?? undefined;
             const timelineCount = loadNativeTimeline(
                 selectedCharId,
-                lastSummarizedAt ? { afterTimestamp: lastSummarizedAt } : undefined,
+                afterTimestamp ? { afterTimestamp } : undefined,
             ).length;
             if (timelineCount < 4) {
-                showNotice(lastSummarizedAt ? "新事件太少，至少需要 4 条记录" : "数据太少，至少需要 4 条记录");
+                showNotice("所选范围内事件不足 4 条");
                 return;
             }
 
-            const result = await runSummarizationPipeline(selectedCharId, selectedChar?.name ?? "");
+            const result = await runSummarizationPipeline(
+                selectedCharId,
+                selectedChar?.name ?? "",
+                range === "all" ? { force: true } : sinceTimestamp ? { sinceTimestamp } : undefined,
+            );
             if (result.success) {
                 showNotice("总结完成");
                 loadDetailData(selectedCharId);
@@ -597,6 +650,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             <div className="flex flex-col absolute inset-0 overflow-hidden" style={{ padding: "0 16px" }}>
                 {/* Content */}
                 <div className="memory-detail-scroll flex-1 overflow-y-auto flex flex-col gap-2 min-h-0">
+                    <MemoryDetailBoundary>
                     {loading ? (
                         <p className="text-center ts-14 mt-10 text-secondary">
                             加载中...
@@ -627,6 +681,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                         /* ── Long-term: Summarized Memories ── */
                         renderMemoryEntries("long_term", longTermEntries, "暂无长期记忆。点击设置页的手动总结，或直接新增一条记忆。")
                     )}
+                    </MemoryDetailBoundary>
                 </div>
 
                 {/* Bottom tab bar — floating above bottom */}
@@ -766,7 +821,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 <div className="menu-right">
                                     <button
                                         className="ui-btn ui-btn-outline py-1 px-3 ts-12"
-                                        onClick={handleManualSummarize}
+                                        onClick={() => setSummarizeRangeOpen(true)}
                                         disabled={summarizing}
                                     >
                                         <Zap size={12} className="mr-1" />
@@ -792,6 +847,35 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
                                 </div>
                             </div>
                         </div>
+
+                        {summarizeRangeOpen ? (
+                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setSummarizeRangeOpen(false)}>
+                                <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+                                    <div className="modal-header" data-ui="modal-header">
+                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setSummarizeRangeOpen(false)}><X size={18} /></button>
+                                        <h3 className="modal-title">选择总结范围</h3>
+                                        <span style={{ width: 44 }} />
+                                    </div>
+                                    <div className="modal-body modal-body-tight" data-ui="modal-body">
+                                        <div className="menu-group">
+                                            {SUMMARIZE_RANGE_OPTIONS.map(option => (
+                                                <button
+                                                    key={String(option.value)}
+                                                    type="button"
+                                                    className="menu-item w-full text-left"
+                                                    onClick={() => void handleManualSummarize(option.value)}
+                                                >
+                                                    <div className="menu-label-group">
+                                                        <span className="menu-label">{option.label}</span>
+                                                        {option.desc ? <span className="menu-desc">{option.desc}</span> : null}
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
                     </>
                 )}
 

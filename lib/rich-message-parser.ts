@@ -13,6 +13,7 @@ import type { ChatMessage } from "./chat-storage";
 import type { StateValue } from "./chat-storage";
 import { parseStateValues, mergeStateValues } from "./state-value-parser";
 import { stripActionShells } from "./action-parser";
+import { stripTextToolDirectives } from "./text-tool-protocol";
 import {
     formatCustomAppDirectiveSummary,
     getCustomAppDirectiveSyntaxHead,
@@ -31,7 +32,10 @@ export interface ParsedMessagePart {
 
 export interface ParsedAIResponse {
     parts: ParsedMessagePart[];
+    /** 与历史合并后的完整状态快照（用于状态链传递与下一轮提示词） */
     stateValues: StateValue[];
+    /** 本轮回复实际输出的状态值（未合并历史；漏输出时为空，内心卡片按此渲染） */
+    freshStateValues: StateValue[];
     statusPanel: string;
     innerMonologue: string;
 }
@@ -635,16 +639,14 @@ export function parseAIResponse(rawText: string, previousState: StateValue[]): P
     //    part empty → filtered out → inner monologue lands on the first real reply.
     const cleaned = parts.map(p => {
         if (p.mediaType) return p;
-        const display = restore(p.content)
-            .replace(/\[[^\]]*?(?:获取指令|获取工具)[：:][^\]]*\]/g, "")
-            .replace(/\[[^\]]*?(?:执行动作|工具调用)[：:][^\]]*?[（(][\s\S]*?[)）]\]/g, "")
-            .trim();
+        const display = stripTextToolDirectives(restore(p.content));
         return { ...p, content: display };
     }).filter(p => p.mediaType || p.content);
 
     return {
         parts: cleaned,
         stateValues,
+        freshStateValues: parsedSV.stateValues,
         statusPanel: restore(status.content),
         innerMonologue: restore(mono.content),
     };

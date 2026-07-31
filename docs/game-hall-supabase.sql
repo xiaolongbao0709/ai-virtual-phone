@@ -137,38 +137,18 @@ alter table public.game_hall_likes enable row level security;
 alter table public.game_hall_favorites enable row level security;
 alter table public.game_hall_comments enable row level security;
 
-grant select on public.game_hall_games to anon;
-grant select on public.game_hall_likes to anon;
-grant select on public.game_hall_favorites to anon;
-grant select on public.game_hall_comments to anon;
+-- 收回 anon 直读：game_hall_games 含 game_html/picker_html 整套游戏源码，
+-- 开放 anon 会被拿 anon key 绕过服务端 API 匿名批量爬走（likes/favorites 还会泄露用户 ID 关系）。
+-- 站内所有游戏大厅读写都走 Next API + service key，无 anon 直连依赖。
+revoke select on public.game_hall_games from anon;
+revoke select on public.game_hall_likes from anon;
+revoke select on public.game_hall_favorites from anon;
+revoke select on public.game_hall_comments from anon;
 
 drop policy if exists "game_hall_games_public_read" on public.game_hall_games;
-create policy "game_hall_games_public_read"
-  on public.game_hall_games
-  for select
-  to anon
-  using (deleted_at is null);
-
 drop policy if exists "game_hall_likes_public_read" on public.game_hall_likes;
-create policy "game_hall_likes_public_read"
-  on public.game_hall_likes
-  for select
-  to anon
-  using (true);
-
 drop policy if exists "game_hall_favorites_public_read" on public.game_hall_favorites;
-create policy "game_hall_favorites_public_read"
-  on public.game_hall_favorites
-  for select
-  to anon
-  using (true);
-
 drop policy if exists "game_hall_comments_public_read" on public.game_hall_comments;
-create policy "game_hall_comments_public_read"
-  on public.game_hall_comments
-  for select
-  to anon
-  using (deleted_at is null);
 
 alter table public.game_hall_games replica identity full;
 alter table public.game_hall_likes replica identity full;

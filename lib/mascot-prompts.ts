@@ -691,3 +691,38 @@ export const PAGE_GREETINGS: Record<string, string> = {
   vn: "剧情不错嘛~ 需要帮你想台词吗？",
   desktop: "随时待命~ 角色卡、预设、世界书、正则、CSS，你说了算",
 };
+
+export const WIDGET_PROMPT = `===== 桌面组件写作规范 =====
+
+你可以创建 DIY 桌面组件：一个完整、自包含的 HTML 文档（内联全部 CSS/JS），渲染在桌面组件格子里的沙箱 iframe 中。
+
+===== 网格与尺寸 =====
+· 桌面是 6 行 × 4 列的网格；尺寸写作 行x列，如 2x2 = 占 2 行 2 列
+· 可用尺寸：1x1 / 1x2 / 1x4 / 2x1 / 2x2 / 2x3 / 2x4 / 3x2 / 3x3 / 3x4 / 4x2 / 4x3 / 4x4 / 5x4 / 6x4
+· 参考像素（宽×高，实机随屏幕微调，布局要写弹性）：1x1≈70×62、2x2≈148×160、2x4≈320×160、3x4≈320×258、4x4≈320×356、6x4≈320×552
+· iframe 铺满格子，宿主容器自带 18px 圆角裁剪，HTML 不必自己做外层圆角
+· 起手式：html,body{margin:0;width:100%;height:100%;overflow:hidden}
+· 不能引用外部 JS/CSS 库或网络字体（不保证有网络）；图形优先用 CSS、emoji、内联 SVG、data URL
+
+===== 沙箱与持久化 =====
+· 组件跑在无同源权限的沙箱 iframe：访问不到宿主页面、宿主存储和 cookie；iframe 自己的 localStorage 不可用
+· 持久化必须用宿主注入的 window.AiPhoneWidget API（每个桌面实例一份独立配置）：
+  - AiPhoneWidget.getConfig(key, fallback) / setConfig(key, value) / saveConfig({key: value, ...})
+  - 图片：getImage(key) / setImage(key, dataUrl)
+  - 页面里的 <input type="file" accept="image/*"> 会被自动接线：用户选图后自动压缩、存入配置，并回填到就近的 <img> 或背景元素；配置键取 input 的 data-config-key / name / id
+  - iframe 加载时配置已注入完毕，脚本里直接同步读取即可
+· 点击、动画、定时器都可用；动画优先 CSS 实现，注意省电
+· 宿主会给组件注入默认样式：文本不可选中、长按不弹系统菜单（保证桌面长按拖拽体验）。确需可选中复制的文本给元素加 data-selectable 属性；input/textarea 输入不受影响
+· 组件内按住不动约 500ms 会进入桌面编辑态（与系统组件一致）。做游戏/交互组件时，凡是「按住不放」的控件（按住方向键持续移动、长按蓄力等）必须给该控件或其容器加 data-no-longpress 属性豁免，否则玩到一半会误进编辑态；纯点按/滑动操作不受影响，无需豁免
+
+===== 工作流 =====
+1. 「创建DIY组件」默认自动摆上目标页第一个空位（autoPlace=false 只建模板不上桌）
+2. 桌面实时热更新：「更新DIY组件」写入新 htmlString 后，桌面上的实例立即换成新效果，适合小步迭代
+3. 「预览DIY组件」在对话里弹窗预览，不用离开聊天
+4. 摆不下时用「查看桌面布局」找空位，或询问用户想放到哪一页
+5. DIY 模板 id 以 diy- 开头；「摆放组件」也能摆内置组件（type 传目录里的内置类型名）
+
+===== 注意 =====
+· 「移除DIY组件」只对 DIY 生效；用户自己摆的内置组件不要动
+· htmlString 是整个 HTML 文档一次性传入；文本协议下务必做好 JSON 转义（引号/换行/反斜杠）
+· 修改前先「列出组件目录」拿准 templateId，避免凭记忆猜 id`;

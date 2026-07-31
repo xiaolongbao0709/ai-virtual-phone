@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { formatSupabaseRestError, getSupabaseServerConfig, supabaseRestFetch } from "@/lib/server/supabase-rest";
 import { cleanText, generateQueryCode, VERIFY_BUCKET, type VerificationRequestRow } from "@/lib/server/verification";
+import { VERIFY_APPLICATIONS_CLOSED_MESSAGE, VERIFY_APPLICATIONS_OPEN } from "@/lib/verification-availability";
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
@@ -23,6 +24,10 @@ function extensionForType(type: string): string {
 
 export async function POST(request: Request) {
   try {
+    if (!VERIFY_APPLICATIONS_OPEN) {
+      return NextResponse.json({ ok: false, error: VERIFY_APPLICATIONS_CLOSED_MESSAGE }, { status: 503 });
+    }
+
     const config = getSupabaseServerConfig();
     if (!config) return NextResponse.json({ ok: false, error: "服务端 Supabase 未配置。" }, { status: 503 });
 

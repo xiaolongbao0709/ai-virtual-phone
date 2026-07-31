@@ -22,6 +22,7 @@ import { generateChatCompletion, flattenCompletionResult } from "./chat-engine";
 import { loadFollowUpConfig } from "./settings-storage";
 import { parseAIResponse } from "./rich-message-parser";
 import type { ParsedMessagePart } from "./rich-message-parser";
+import { isKnownStickerLabel } from "./sticker-data";
 import { loadCharacters } from "./character-storage";
 import { bgSetInterval } from "./bg-timer";
 import { dispatchChatMessageNotice } from "./chat-notification-events";
@@ -135,10 +136,12 @@ export async function requestBackgroundChatReply(sessionId: string): Promise<{ o
     try {
         const latestMessages = loadChatMessages(session.id);
         window.dispatchEvent(new CustomEvent("followup-started", { detail: { sessionId: session.id } }));
+        let reasoning: string | undefined;
         const aiResponseText = flattenCompletionResult(await generateChatCompletion(
             session,
             latestMessages,
             { appTags: session.isGroup ? undefined : ["chat", "text"] },
+            { onReasoning: (t) => { reasoning = t; } },
         ));
         const { hasVisible, stateValues } = await parseAndSaveResponse(
             aiResponseText,
@@ -146,6 +149,7 @@ export async function requestBackgroundChatReply(sessionId: string): Promise<{ o
             0,
             undefined,
             latestMessages,
+            { reasoningText: reasoning },
         );
         if (hasVisible) scheduleFollowUp(session.id, 0, stateValues);
         window.dispatchEvent(new CustomEvent("followup-fired", { detail: { sessionId: session.id } }));
@@ -317,10 +321,12 @@ async function fireFollowUp(sched: { sessionId: string; count: number; delaySec?
         console.log("[FollowUp] Dispatching followup-started for session:", session.id);
         window.dispatchEvent(new CustomEvent("followup-started", { detail: { sessionId: session.id } }));
 
+        let reasoning: string | undefined;
         const aiResponseText = flattenCompletionResult(await generateChatCompletion(
             session,
             messagesWithHint,
             { followUpCount: count, followUpDelay: sched.delaySec ?? 60, appTags: ["chat", "text", "followup"] },
+            { onReasoning: (t) => { reasoning = t; } },
         ));
 
         // User sent a message while we were waiting for the API — discard result
@@ -330,7 +336,7 @@ async function fireFollowUp(sched: { sessionId: string; count: number; delaySec?
             return;
         }
 
-        const { hasVisible, newCount, stateValues } = await parseAndSaveResponse(aiResponseText, session.id, sched.count, count, latestMessages);
+        const { hasVisible, newCount, stateValues } = await parseAndSaveResponse(aiResponseText, session.id, sched.count, count, latestMessages, { reasoningText: reasoning });
         console.log(`[FollowUp] Result: hasVisible=${hasVisible}, newCount=${newCount}`);
 
         if (hasVisible && newCount < MAX_FOLLOW_UPS) {
@@ -369,6 +375,7 @@ async function fireTimedWake(sched: TimedWakeSchedule) {
         console.log("[TimedWake] Dispatching followup-started for session:", session.id);
         window.dispatchEvent(new CustomEvent("followup-started", { detail: { sessionId: session.id } }));
 
+        let reasoning: string | undefined;
         const aiResponseText = flattenCompletionResult(await generateChatCompletion(
             session,
             latestMessages,
@@ -377,6 +384,7 @@ async function fireTimedWake(sched: TimedWakeSchedule) {
                 timedWakeElapsedMinutes: elapsedMinutes,
                 timedWakeIntent: sched.intent,
             },
+            { onReasoning: (t) => { reasoning = t; } },
         ));
 
         const { hasVisible, stateValues } = await parseAndSaveResponse(
@@ -385,6 +393,7 @@ async function fireTimedWake(sched: TimedWakeSchedule) {
             0,
             undefined,
             latestMessages,
+            { reasoningText: reasoning },
         );
         console.log(`[TimedWake] Result: hasVisible=${hasVisible}`);
 
@@ -425,6 +434,7 @@ async function fireMenstrualPeriodCare(input: {
         console.log("[PeriodCare] Dispatching followup-started for session:", session.id);
         window.dispatchEvent(new CustomEvent("followup-started", { detail: { sessionId: session.id } }));
 
+        let reasoning: string | undefined;
         const aiResponseText = flattenCompletionResult(await generateChatCompletion(
             session,
             latestMessages,
@@ -432,6 +442,7 @@ async function fireMenstrualPeriodCare(input: {
                 appTags: ["chat", "text", "period_care"],
                 periodCareContext: input.event.context,
             },
+            { onReasoning: (t) => { reasoning = t; } },
         ));
 
         const { hasVisible, stateValues } = await parseAndSaveResponse(
@@ -440,6 +451,7 @@ async function fireMenstrualPeriodCare(input: {
             0,
             undefined,
             latestMessages,
+            { reasoningText: reasoning },
         );
         saveMenstrualPeriodCareTrigger({
             characterId: input.characterId,
@@ -566,20 +578,27 @@ function buildGeneratedFollowUpImageMessage(
     };
 }
 
-async function parseAndSaveResponse(
+// options.senderCharacterId/senderName：群聊消息的发言角色（单聊不传）。
+export async function parseAndSaveResponse(
     rawText: string,
     sessionId: string,
     currentCount: number,
     followUpIndex: number | undefined,
     contextMessages: ChatMessage[],
+    options?: {
+        senderCharacterId?: string;
+        senderName?: string;
+        reasoningText?: string;
+    },
 ): Promise<{ hasVisible: boolean; newCount: number; stateValues: StateValue[] }> {
     const responseBatchId = createResponseBatchId();
+    const reasoningText = options?.reasoningText;
     void contextMessages;
     const sessions = loadChatSessions();
     const sess = sessions.find(s => s.id === sessionId);
     const previousState = sess && !sess.isGroup ? getLatestCharacterStateValues(sess.contactId) : [];
 
-    const { parts, stateValues, statusPanel, innerMonologue } = parseAIResponse(rawText, previousState);
+    const { parts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(rawText, previousState);
 
     // Detect call triggers and AI media actions, filter them out (not stored as messages)
     let triggerCall: "voice" | "video" | undefined;
@@ -589,6 +608,11 @@ async function parseAndSaveResponse(
     const filteredParts = parts.filter(p => {
         if (p.mediaType === "voice_call") { triggerCall = "voice"; return false; }
         if (p.mediaType === "video_call") { triggerCall = "video"; return false; }
+        // 「丢弃角色输出的无效表情包」开关（主动消息路径）
+        if (p.mediaType === "sticker" && sess?.discardInvalidStickers === true) {
+            const senderIds = sess.isGroup ? (sess.participantIds ?? []) : [sess.contactId];
+            if (!isKnownStickerLabel(p.mediaData?.label || "", senderIds)) return false;
+        }
         if (p.mediaType === "accept_red_packet" || p.mediaType === "decline_red_packet"
             || p.mediaType === "accept_transfer" || p.mediaType === "decline_transfer"
             || p.mediaType === "accept_payment_request" || p.mediaType === "decline_payment_request") {
@@ -625,7 +649,7 @@ async function parseAndSaveResponse(
     }
 
     if (filteredParts.length === 0) {
-        if (statusPanel || innerMonologue) {
+        if (statusPanel || innerMonologue || reasoningText) {
             pushChatMessage({
                 sessionId,
                 role: "assistant",
@@ -634,7 +658,9 @@ async function parseAndSaveResponse(
                 rawResponseText: rawText,
                 statusPanel,
                 innerMonologue,
+                reasoningText,
                 stateValues: stateValues.length > 0 ? stateValues : undefined,
+                freshStateValues,
                 ...(followUpIndex ? { followUpIndex } : {}),
             });
         }
@@ -660,7 +686,11 @@ async function parseAndSaveResponse(
             rawResponseText: rawText,
             statusPanel: i === 0 && statusPanel ? statusPanel : undefined,
             innerMonologue: i === 0 && innerMonologue ? innerMonologue : undefined,
+            reasoningText: i === 0 ? reasoningText : undefined,
             stateValues: i === 0 && stateValues.length > 0 ? stateValues : undefined,
+            freshStateValues: i === 0 ? freshStateValues : undefined,
+            senderCharacterId: options?.senderCharacterId,
+            senderName: options?.senderName,
             ...(followUpIndex ? { followUpIndex } : {}),
         });
         if (isPendingChatGeneratedImageMessage(saved)) {
@@ -682,21 +712,24 @@ async function parseAndSaveResponse(
 
     // In-app notice for follow-up messages: rotate through multi-bubble replies.
     if (filteredParts.length > 0) {
+        const isGroup = sess?.isGroup === true;
+        const bodyPrefix = isGroup && options?.senderName ? `${options.senderName}: ` : "";
         filteredParts.forEach((part, index) => {
-            const body = (part.content || "").trim()
-                || (part.mediaType === "image" && part.mediaData?.label ? `发了一张照片: ${part.mediaData.label}` : "发来一条消息");
+            const body = bodyPrefix + ((part.content || "").trim()
+                || (part.mediaType === "image" && part.mediaData?.label ? `发了一张照片: ${part.mediaData.label}` : "发来一条消息"));
             window.setTimeout(() => {
                 dispatchChatMessageNotice({
                     sessionId,
                     senderName: charName,
                     body: body.slice(0, 80),
+                    ...(isGroup ? { isGroup: true } : {}),
                 });
             }, index * 1000);
         });
         import("./browser-notification").then(({ sendBrowserNotification }) => {
             const firstPart = filteredParts[0];
-            const body = firstPart.content.trim()
-                || (firstPart.mediaType === "image" && firstPart.mediaData?.label ? `发了一张照片: ${firstPart.mediaData.label}` : "发来一条消息");
+            const body = bodyPrefix + (firstPart.content.trim()
+                || (firstPart.mediaType === "image" && firstPart.mediaData?.label ? `发了一张照片: ${firstPart.mediaData.label}` : "发来一条消息"));
             sendBrowserNotification(charName, { body: body.slice(0, 50) });
         });
     }

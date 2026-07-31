@@ -136,6 +136,7 @@ export type VoiceApiConfig = {
     model?: string;
     sttModel?: string;
     defaultVoice: string;
+    languageBoost?: string;
     customVoices?: { id: string; name: string; createdAt?: number }[];
     enableSTT: boolean;
     enableTTS: boolean;
@@ -237,6 +238,8 @@ export type BindingConfig = {
     embeddingApiConfigId?: string;
     /** Auxiliary API: used by the mascot assistant (global, not per-character) */
     mascotApiConfigId?: string;
+    /** Auxiliary API: used to translate reasoning/chain-of-thought text (global, not per-character) */
+    reasoningTranslateApiConfigId?: string;
 };
 
 // --- Chat Toolbox ---

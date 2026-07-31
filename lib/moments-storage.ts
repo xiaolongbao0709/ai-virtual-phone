@@ -67,7 +67,44 @@ export function saveMomentPosts(posts: MomentPost[]): void {
     dbReplacePosts(posts);
 }
 
-export function addMomentPost(post: Omit<MomentPost, "id" | "likes" | "createdAt">): MomentPost {
+// ── 朋友圈内容去重 ──
+// 同一条 AI 回复里的 [朋友圈] 块可能被多条路径重复派发（工具多轮循环复读、
+// 评论/回复/NPC 反应生成时回显原帖、离线推送后重放等），这里按
+// "作者 + 归一化文本 + 图片描述" 在时间窗口内判重，兜住所有入库来源。
+// 用户手动发帖（authorType === "user"）不做去重。
+const DUPLICATE_POST_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function normalizeMomentText(value: string | undefined): string {
+    return (value ?? "").replace(/\s+/g, "");
+}
+
+export function findRecentDuplicateMomentPost(
+    candidate: Pick<MomentPost, "authorType" | "authorId" | "content"> & { photoDescription?: string },
+): MomentPost | null {
+    if (candidate.authorType !== "character") return null;
+    const content = normalizeMomentText(candidate.content);
+    const photoDescription = normalizeMomentText(candidate.photoDescription);
+    if (!content && !photoDescription) return null;
+    const cutoff = Date.now() - DUPLICATE_POST_WINDOW_MS;
+    for (const existing of loadMomentPosts()) { // newest first
+        const createdAt = Date.parse(existing.createdAt);
+        if (Number.isFinite(createdAt) && createdAt < cutoff) break;
+        if (existing.authorType !== "character" || existing.authorId !== candidate.authorId) continue;
+        if (normalizeMomentText(existing.content) === content
+            && normalizeMomentText(existing.photoDescription) === photoDescription) {
+            return existing;
+        }
+    }
+    return null;
+}
+
+/** 新增一条朋友圈；角色帖命中内容去重时丢弃并返回 null。 */
+export function addMomentPost(post: Omit<MomentPost, "id" | "likes" | "createdAt">): MomentPost | null {
+    const duplicate = findRecentDuplicateMomentPost(post);
+    if (duplicate) {
+        console.warn(`[MomentsStorage] SKIP duplicate moment post from ${post.authorId} (existing ${duplicate.id})`);
+        return null;
+    }
     const newPost: MomentPost = {
         ...post,
         id: generateId("moment"),

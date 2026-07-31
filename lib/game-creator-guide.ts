@@ -319,6 +319,86 @@ await AiPhoneGame.setTitleBar({
 await AiPhoneGame.closeGame();
 \`\`\`
 
+### 多人联机（真人对战/云共享）
+
+游戏可以让不同用户的真人联机：开房间实时对战（狼人杀、谁是卧底、你画我猜），或用云端共享数据做异步玩法（排行榜、漂流瓶）。联机不需要高级游戏权限，但要求玩家登录了联机账号——未登录或单机模式下调用会抛错，请 catch 后在界面上提示"联机功能需要登录账号"。
+
+实时房间：
+
+\`\`\`js
+// 房主开房，拿到 4 位房号给朋友；其他玩家凭房号加入
+const room = await AiPhoneGame.room.create({ title: "谁是卧底", maxPlayers: 8 });
+const joined = await AiPhoneGame.room.join({ code: "8A3F" });
+
+// 收发消息与玩家名单
+AiPhoneGame.on("room.message", (msg) => handle(msg.from.name, msg.payload));
+AiPhoneGame.on("room.players", ({ players }) => renderPlayers(players));
+await AiPhoneGame.room.send({ type: "speak", text: "我觉得是3号" });
+
+// 权威状态：只有房主能写，全员（含中途加入者）自动同步
+AiPhoneGame.on("room.state", ({ state }) => renderGame(state));
+if (room.isHost) await AiPhoneGame.room.setState({ phase: "vote", round: 2 });
+
+// 房主特权与退出；房间被关/被踢/房主掉线时收到 room.closed
+await AiPhoneGame.room.kick(playerId);
+await AiPhoneGame.room.close();
+await AiPhoneGame.room.leave();
+AiPhoneGame.on("room.closed", ({ reason }) => showEnd(reason));
+\`\`\`
+
+云端共享（异步）：
+
+\`\`\`js
+await AiPhoneGame.cloud.put({ collection: "scores", data: { score: 9800 }, sortKey: 9800 });
+const top = await AiPhoneGame.cloud.list({ collection: "scores", orderBy: "sortKey", limit: 10 });
+const bottle = await AiPhoneGame.cloud.takeRandom({ collection: "bottles" }); // 可能为 null
+\`\`\`
+
+联机架构规则（重要）：
+
+- 游戏权威逻辑（发牌、分身份、回合判定）全部放在**房主客户端**，用 \`room.setState\` 下发；其他玩家只用 \`room.send\` 把自己的操作报给房主。
+- 游戏画面始终从 \`room.state\` 渲染，\`room.send\` 的消息只当事件用——新玩家进房自动收到最新 state。
+- 房主掉线 30 秒后房间自动结束（reason 为 \`host_left\`），本版本不支持房主迁移，请做好收尾界面。
+- 限速每人每秒 25 条、单条 16000 字符；适合回合制与低频同步，不适合动作类帧同步。
+- 内容安全：请在联机 UI 里放举报入口——\`AiPhoneGame.room.report(原因)\` 举报当前房间、\`AiPhoneGame.cloud.report({ id, reason })\` 举报一条云端内容（如排行榜/漂流瓶条目）。
+
+带角色上桌（人和 AI 角色同场玩）：
+
+联机局里可以有两类 AI 参与者，驱动方不同，别弄混：
+
+1. **无主 NPC**（系统裁判、补位路人）：只在**房主端**用 \`callGlobalLLM\` 生成（prompt 里自定义 NPC 人设），结果写进 \`room.state\` 同步全员。
+2. **玩家自带的角色**（每个玩家把自己的角色带进来一起玩）：由**角色主人的客户端**驱动——人设、记忆、API key 都只在主人设备上，轮到这个角色行动时，主人的客户端本地调 \`getRoleFullPackage\` + \`callLLM\` 生成，再把结果当普通玩家操作用 \`room.send\` 报给房主。其他玩家只看到角色的发言，永远拿不到人设。token 由角色主人消耗。
+
+虚拟座位协议（推荐照抄）：
+
+\`\`\`js
+// 加入时把自己带的角色报给房主
+await AiPhoneGame.room.send({ type: "bring", name: "小红", charId: "c1" });
+
+// 房主维护座位表并轮转回合（seatId 全局唯一）
+await AiPhoneGame.room.setState({
+  seats: [
+    { seatId: "s1", kind: "human",     ownerUserId: "u_a", name: "爱丽丝" },
+    { seatId: "s2", kind: "character", ownerUserId: "u_a", name: "小红" },
+    { seatId: "s3", kind: "human",     ownerUserId: "u_b", name: "鲍勃" },
+  ],
+  turn: "s2", phase: "speak",
+});
+
+// 每个客户端收到 state 后：轮到"我拥有的角色座位"就代它行动
+AiPhoneGame.on("room.state", async ({ state }) => {
+  const seat = state.seats.find(s => s.seatId === state.turn);
+  if (seat && seat.kind === "character" && seat.ownerUserId === myUserId) {
+    const pkg = await AiPhoneGame.getRoleFullPackage(seat.charId);
+    const reply = await AiPhoneGame.callLLM({ messages: [...pkg.messages,
+      { role: "user", content: buildTurnPrompt(state) }], characterId: seat.charId });
+    await AiPhoneGame.room.send({ type: "action", seatId: seat.seatId, text: reply });
+  }
+});
+\`\`\`
+
+注意：角色主人掉线时它的角色也会"卡回合"，房主端要做超时跳过（比如 60 秒无响应自动弃权）；同一角色生成期间禁止重复触发（加个 generating 锁）。
+
 ## 权限说明
 
 如果游戏只是普通前端小游戏，只用 \`saveGame\`、\`loadGame\`、\`closeGame\`，通常不需要高级权限。

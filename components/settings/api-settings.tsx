@@ -121,9 +121,15 @@ export function ApiSettings() {
             // Gemini 原生协议（/v1beta）：URL 用 ?key= 鉴权，响应是 { models: [{ name }] }
             // OpenAI 兼容（/v1）：Authorization: Bearer + 响应是 { data: [{ id }] }
             const isGoogleNative = config.provider === "Google";
+            // 用户常把完整端点填进 Base URL（如 .../v1/embeddings、.../v1/chat/completions），
+            // 拼 /models 前剥掉这类端点后缀；已以 /models 结尾则原样使用。
+            const modelsBase = baseUrl
+                .replace(/\/$/, "")
+                .replace(/\/(chat\/completions|completions|embeddings|messages)$/i, "");
+            const modelsUrl = /\/models$/i.test(modelsBase) ? modelsBase : `${modelsBase}/models`;
             const url = isGoogleNative
-                ? `${baseUrl.replace(/\/$/, "")}/models?key=${encodeURIComponent(config.apiKey)}`
-                : `${baseUrl.replace(/\/$/, "")}/models`;
+                ? `${modelsUrl}?key=${encodeURIComponent(config.apiKey)}`
+                : modelsUrl;
             const headers: Record<string, string> = { "Content-Type": "application/json" };
             if (!isGoogleNative) headers["Authorization"] = `Bearer ${config.apiKey}`;
 

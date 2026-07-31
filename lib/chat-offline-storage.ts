@@ -13,6 +13,7 @@ export type ChatOfflineTurn = {
     summary: string;
     summaryTag: string;
     rawText?: string;
+    reasoningText?: string; // 模型思维链（reasoning/CoT）内容
     createdAt: string;
 };
 
@@ -90,6 +91,7 @@ export function appendChatOfflineTurn(input: {
     summary: string;
     summaryTag: string;
     rawText?: string;
+    reasoningText?: string;
 }): ChatOfflineTurn {
     const turn: ChatOfflineTurn = {
         id: createTurnId(),
@@ -99,6 +101,7 @@ export function appendChatOfflineTurn(input: {
         summary: input.summary,
         summaryTag: input.summaryTag.trim() || "summary",
         rawText: input.rawText,
+        reasoningText: input.reasoningText,
         createdAt: new Date().toISOString(),
     };
     saveChatOfflineTurns(input.sessionId, [...loadChatOfflineTurns(input.sessionId), turn]);
@@ -108,7 +111,7 @@ export function appendChatOfflineTurn(input: {
 export function updateChatOfflineTurn(
     sessionId: string,
     turnId: string,
-    patch: Partial<Pick<ChatOfflineTurn, "userContent" | "assistantContent" | "summary" | "summaryTag" | "rawText">>,
+    patch: Partial<Pick<ChatOfflineTurn, "userContent" | "assistantContent" | "summary" | "summaryTag" | "rawText" | "reasoningText">>,
 ): ChatOfflineTurn | null {
     let updated: ChatOfflineTurn | null = null;
     const turns = loadChatOfflineTurns(sessionId).map((turn) => {

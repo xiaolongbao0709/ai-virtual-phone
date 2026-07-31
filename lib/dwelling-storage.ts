@@ -13,18 +13,30 @@ export type DwellingFurnitureItem = {
     preview: string;
 };
 
+export type DwellingMarker = { x: number; y: number };
+
 export type DwellingFurniture = {
     id: string;
     icon: string;
     label: string;
+    /** 英文名（大写，标注幽灵字），旧数据可能没有 */
+    en?: string;
     position: DwellingPosition;
+    /** 归一化标注点坐标 0~1，旧数据没有时按 position 兜底 */
+    marker?: DwellingMarker;
     items: DwellingFurnitureItem[];
 };
 
 export type DwellingRoom = {
     id: string;
     name: string;
+    /** 英文名（大写，页签副标），旧数据可能没有 */
+    en?: string;
     description: string;
+    /** 生图构图描述（与家具布局同源） */
+    imagePrompt?: string;
+    /** 已生成房间图的媒体引用 */
+    imageAssetId?: string;
     furniture: DwellingFurniture[];
 };
 
@@ -174,4 +186,29 @@ export function loadAllItemHtmlForChar(characterId: string): Record<string, stri
         }
     }
     return result;
+}
+
+// ── Dwelling image generation toggle ──────────
+
+const DWELLING_IMAGE_TOGGLE_KEY = "dwelling_image_gen_enabled";
+
+export function loadDwellingImageEnabled(): boolean {
+    if (typeof window === "undefined") return false;
+    try {
+        return localStorage.getItem(DWELLING_IMAGE_TOGGLE_KEY) !== "0";
+    } catch {
+        return true;
+    }
+}
+
+export function saveDwellingImageEnabled(enabled: boolean): void {
+    try {
+        localStorage.setItem(DWELLING_IMAGE_TOGGLE_KEY, enabled ? "1" : "0");
+    } catch { /* ignore */ }
+}
+
+/** Collect all room image media refs in a layout (for cleanup before delete/rebuild) */
+export function collectRoomImageRefs(layout: DwellingLayout | null | undefined): string[] {
+    if (!layout) return [];
+    return layout.rooms.map(r => r.imageAssetId).filter((v): v is string => Boolean(v));
 }

@@ -15,6 +15,13 @@ create table if not exists public.app_users (
   constraint app_users_status_check check (status in ('active', 'disabled'))
 );
 
+-- 单机模式（NEXT_PUBLIC_SELF_HOSTED_MODE）下服务端使用固定账号 local_user；
+-- 黑市等云端表对 app_users 有外键，这里预置占位行，否则单机模式开钱包会
+-- 报外键错误。password_hash 为无法通过校验的占位值，此账号不可登录。
+insert into public.app_users (id, username, password_hash, display_name, status)
+values ('local_user', 'local_user', 'self_hosted_placeholder', '本地用户', 'active')
+on conflict do nothing;
+
 create table if not exists public.activation_codes (
   code text primary key,
   label text,

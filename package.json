@@ -19,6 +19,7 @@
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@react-three/postprocessing": "^3.0.4",
+    "@supabase/realtime-js": "^2.110.7",
     "@types/three": "^0.183.1",
     "d3-delaunay": "^6.0.4",
     "dexie": "^4.3.0",

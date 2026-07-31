@@ -1,9 +1,12 @@
-import type { IconPosition } from "@/lib/desktop-config";
+import { DOCK_DEFAULT, type DesktopIconId, type IconPosition } from "@/lib/desktop-config";
 import {
+  appendMissingCustomAppIcons,
   createDefaultDesktopIconLayout,
   getDesktopIconLayoutItems,
+  loadDockLayout,
   normalizeDesktopIconLayout,
   writeDesktopIconLayout,
+  writeDockLayout,
   type DesktopIconLayout
 } from "@/lib/desktop-layout-storage";
 import { DEFAULT_THEME_PROFILE, normalizeThemeProfile, type ThemeAssetType, type ThemeProfile } from "@/lib/theme-types";
@@ -70,6 +73,8 @@ export type InstalledThemePackage = {
   widgets: WidgetInstance[];
   diyTemplates: DIYWidgetTemplate[];
   summary: ThemePackageSummary;
+  /** 恢复默认时重置后的 dock；主题包导入不含 dock（保留用户当前 dock）时为 undefined */
+  dock?: DesktopIconId[];
 };
 
 export type CreateThemePackageInput = {
@@ -355,7 +360,9 @@ function makeSummary(manifest: ThemePackageManifest): ThemePackageSummary {
 function packageFileName(themeProfile: ThemeProfile): string {
   const name = (themeProfile.name || "theme").replace(/[\\/:*?"<>|]+/g, "-").trim() || "theme";
   const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
-  return `${name}-${stamp}.ai-theme`;
+  // 用标准 .zip 后缀：iOS/桌面都原生识别，选择器不置灰。导入端按包内
+  // manifest.json 校验内容，旧的 .ai-theme 文件仍可正常导入。
+  return `${name}-${stamp}.zip`;
 }
 
 async function loadZip(file: File) {
@@ -443,7 +450,10 @@ export async function installThemePackageFile(file: File): Promise<InstalledThem
   const themeProfile = writeThemeProfile(manifest.themeProfile);
   saveDIYTemplates(manifest.desktop.diyTemplates);
   saveWidgets(manifest.desktop.widgets);
-  const iconLayout = writeDesktopIconLayout(manifest.desktop.iconLayout);
+  // 主题包布局不含本机安装的自定义 app 图标，补回空位，避免导入后 app 从桌面消失
+  const iconLayout = writeDesktopIconLayout(
+    appendMissingCustomAppIcons(manifest.desktop.iconLayout, manifest.desktop.widgets, loadDockLayout())
+  );
 
   return {
     themeProfile,
@@ -466,7 +476,12 @@ export async function resetThemePackageState(): Promise<InstalledThemePackage> {
     wallpaperLibrary: previousProfile.wallpaperLibrary
   });
   const widgets = createDefaultWidgets();
-  const iconLayout = writeDesktopIconLayout(createDefaultDesktopIconLayout(widgets));
+  // dock 一并恢复出厂，否则被拖出 dock 的默认图标（如设置）会在重置后彻底丢失
+  const dock = writeDockLayout([...DOCK_DEFAULT]);
+  // 出厂布局只含内置图标，把已安装的自定义 app 图标补回空位，避免重置后 app 从桌面消失
+  const iconLayout = writeDesktopIconLayout(
+    appendMissingCustomAppIcons(createDefaultDesktopIconLayout(widgets), widgets, dock)
+  );
   saveDIYTemplates(previousTemplates);
   saveWidgets(widgets);
 
@@ -474,6 +489,7 @@ export async function resetThemePackageState(): Promise<InstalledThemePackage> {
     themeProfile,
     iconLayout,
     widgets,
+    dock,
     diyTemplates: previousTemplates,
     summary: {
       assetCount: previousProfile.wallpaperLibrary.length + collectDIYTemplateAssetIds(previousTemplates).length,

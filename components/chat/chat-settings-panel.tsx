@@ -36,7 +36,7 @@ import { clearChatOfflineTurns } from "@/lib/chat-offline-storage";
 import { triggerDeleteFriendReaction } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
-import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Trash2, type LucideIcon } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Trash2, Smile, Sparkles, type LucideIcon } from "lucide-react";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -51,6 +51,7 @@ import {
 } from "@/lib/bilingual-prompt-defaults";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 import { MessageBubble, isStandaloneHtmlPreviewContent } from "./message-bubble";
+import { ScreenEffectSettingsModal } from "./screen-effect-settings-modal";
 
 type ChatSettingsPanelProps = {
     session: ChatSession;
@@ -110,6 +111,7 @@ function getSearchResultRole(msg: ChatMessage): SearchResultRole {
 
 function isSearchHiddenMessage(msg: ChatMessage): boolean {
     return msg.role === "tool"
+        || msg.mediaType === "tool_call"
         || msg.mediaType === "tool_result"
         || msg.mediaType === "tool_notice"
         || msg.mediaType === "memory_write_request"
@@ -168,6 +170,7 @@ export function ChatSettingsPanel({
     const [visionImagePromptLimit, setVisionImagePromptLimit] = useState(() => normalizeVisionImagePromptLimit(session.visionImagePromptLimit));
     const [bilingualTranslationEnabled, setBilingualTranslationEnabled] = useState(session.bilingualTranslationEnabled !== false);
     const [collapseBilingualTranslation, setCollapseBilingualTranslation] = useState(session.collapseBilingualTranslation !== false);
+    const [discardInvalidStickers, setDiscardInvalidStickers] = useState(session.discardInvalidStickers === true);
     const defaultBilingualPrompt = session.isGroup ? DEFAULT_GROUP_CHAT_BILINGUAL_PROMPT : DEFAULT_CHAT_BILINGUAL_PROMPT;
     const defaultOfflineBilingualPrompt = session.isGroup ? DEFAULT_GROUP_OFFLINE_CHAT_BILINGUAL_PROMPT : DEFAULT_OFFLINE_CHAT_BILINGUAL_PROMPT;
     const [bilingualTranslationPrompt, setBilingualTranslationPrompt] = useState(session.bilingualTranslationPrompt || defaultBilingualPrompt);
@@ -188,6 +191,7 @@ export function ChatSettingsPanel({
     const [editingAlias, setEditingAlias] = useState(false);
     const [editingBilingualPrompt, setEditingBilingualPrompt] = useState(false);
     const [editingCSS, setEditingCSS] = useState(false);
+    const [showScreenEffects, setShowScreenEffects] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
@@ -773,6 +777,32 @@ export function ChatSettingsPanel({
                                 </button>
                             </>
                         )}
+                        <div className="menu-item">
+                            <ChatInfoIcon icon={Smile} color={BINDING_ACCENTS.preset} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">丢弃无效表情包</span>
+                                <span className="menu-desc">角色发送不存在的表情包时自动丢弃该消息</span>
+                            </div>
+                            <div className="menu-right">
+                                <Toggle
+                                    checked={discardInvalidStickers}
+                                    onChange={c => {
+                                        setDiscardInvalidStickers(c);
+                                        updateSession({ discardInvalidStickers: c });
+                                    }}
+                                />
+                            </div>
+                        </div>
+                        <button className="menu-item" onClick={() => setShowScreenEffects(true)}>
+                            <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">全屏特效</span>
+                                <span className="menu-desc">消息包含触发词时播放表情雨/礼花，全局生效</span>
+                            </div>
+                            <div className="menu-right">
+                                <ChevronRight size={16} />
+                            </div>
+                        </button>
                     </>
                 </div>
 
@@ -1071,6 +1101,9 @@ export function ChatSettingsPanel({
                     </div>
                 </div>
             )}
+
+            {/* Modal: Screen Effects */}
+            {showScreenEffects && <ScreenEffectSettingsModal onClose={() => setShowScreenEffects(false)} />}
 
             {/* Modal: Confirm Clear History */}
             {showConfirmClear && (

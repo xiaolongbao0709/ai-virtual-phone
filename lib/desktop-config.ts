@@ -49,9 +49,11 @@ export const PAGE_2_DEFAULT: IconId[] = [
   "dwelling",
   "story",
   "vnmode",
-  "mapmode",
-  "worldbuilder"
+  "mapmode"
 ];
+
+// 第三页默认图标（居中放置，位置见 createDefaultDesktopIconLayout）
+export const PAGE_3_DEFAULT: IconId[] = ["worldbuilder"];
 
 export const DOCK_DEFAULT: IconId[] = ["settings", "theme", "resources", "characters"];
 

@@ -22,6 +22,8 @@ import { ScanPayCard } from "@/components/chat/scan-pay-card";
 import { payWithWalletBalance } from "@/lib/wallet-storage";
 import { formatShoppingPaymentRequestHistory } from "@/lib/shopping-payment-request";
 import { toCustomAppIconId } from "@/lib/custom-app-types";
+import { ChatPluginSlot } from "@/components/chat/chat-plugin-slot";
+import { CHAT_PLUGIN_SLOTS_CHANGED_EVENT, getChatPluginRuntime } from "@/lib/chat-plugin-runtime";
 
 interface MessageBubbleProps {
     msg: ChatMessage;
@@ -36,6 +38,43 @@ interface MessageBubbleProps {
     onActionSelect?: (text: string) => void;
     displayContent?: string;
     defaultTranslationExpanded?: boolean;
+}
+
+/** 聊天插件自定义消息气泡：把裸 DOM 容器交给注册了该 kind 的插件渲染 */
+function PluginKindBubble({ msg, kind }: { msg: ChatMessage; kind: string }) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [slotVersion, setSlotVersion] = useState(0);
+
+    useEffect(() => {
+        const bump = () => setSlotVersion(v => v + 1);
+        window.addEventListener(CHAT_PLUGIN_SLOTS_CHANGED_EVENT, bump);
+        return () => window.removeEventListener(CHAT_PLUGIN_SLOTS_CHANGED_EVENT, bump);
+    }, []);
+
+    const registration = getChatPluginRuntime().getMessageKindRenderer(kind);
+
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el || !registration) return;
+        let cleanup: (() => void) | void;
+        try {
+            cleanup = registration.renderer(el, msg);
+        } catch { /* 渲染失败按占位处理 */ }
+        return () => {
+            try { if (typeof cleanup === "function") cleanup(); } catch { /* ignore */ }
+            el.replaceChildren();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [registration, slotVersion, msg.id, msg.content, msg.mediaData]);
+
+    if (!registration) {
+        return (
+            <div className="bubble bubble-text opacity-60">
+                <span className="ts-12">[插件消息：{kind}]（对应插件未启用）</span>
+            </div>
+        );
+    }
+    return <div ref={containerRef} data-chat-plugin-kind={kind} />;
 }
 
 /**
@@ -64,6 +103,8 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
             return <PokeBubble msg={msg} charName={charName} userName={userName} />;
         case "sticker":
             return <StickerBubble msg={msg} characterId={characterId} />;
+        case "dice":
+            return <DiceBubble msg={msg} />;
         case "quote":
             return <QuoteBubble msg={msg} displayContent={displayContent} defaultTranslationExpanded={defaultTranslationExpanded} />;
         case "music_share":
@@ -74,8 +115,19 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
             return <XiaohongshuShareBubble msg={msg} />;
         case "audio":
             return <VoiceMessageBubble msg={msg} characterId={characterId} onUpdate={onUpdate} defaultTranslationExpanded={defaultTranslationExpanded} />;
-        default:
-            return <TextBubble content={displayContent ?? msg.content} onActionSelect={onActionSelect} defaultTranslationExpanded={defaultTranslationExpanded} />;
+        default: {
+            // 聊天插件自定义消息类型：mediaType = "plugin:<kind>"，由注册插件渲染
+            if (msg.mediaType?.startsWith("plugin:")) {
+                return <PluginKindBubble msg={msg} kind={msg.mediaType.slice("plugin:".length)} />;
+            }
+            const textBubble = <TextBubble content={displayContent ?? msg.content} onActionSelect={onActionSelect} defaultTranslationExpanded={defaultTranslationExpanded} />;
+            return (
+                <>
+                    {textBubble}
+                    <ChatPluginSlot name="message.footer" slotProps={{ sessionId: msg.sessionId, message: msg }} className="chat-plugin-message-footer" />
+                </>
+            );
+        }
     }
 }, (prev, next) => {
     // Skip function props (onUpdate, onSystemMessage, onShowDetail) — they're inline and always new
@@ -356,6 +408,26 @@ function stripPaySchemeUrls(text: string): string {
         .replace(/[ \t]{2,}/g, " ");
 }
 
+/**
+ * 台词包裹：渲染前把引号内的对话包进 <q> 标签，
+ * 让自定义 CSS 可以用 `q { ... }` 单独给台词上样式。
+ * - 只处理代码块/行内代码之外的文本
+ * - 跳过 HTML 标签内部，避免命中属性里的引号
+ * - 支持中文弯引号 “…”、直角引号 「…」、英文直引号 "…"（同一行内成对才包）
+ * - 默认无视觉变化（chat.css 已关掉 q 的浏览器默认引号），仅当用户 CSS 写了 q {} 才生效
+ */
+function wrapQuotedDialogue(text: string): string {
+    return mapMarkdownOutsideCode(text, segment =>
+        segment.split(/(<[^>]*>)/g).map(part => {
+            if (part.startsWith("<")) return part;
+            return part
+                .replace(/“([^”\n]+)”/g, "<q>“$1”</q>")
+                .replace(/「([^」\n]+)」/g, "<q>「$1」</q>")
+                .replace(/"([^"\n]+)"/g, "<q>\"$1\"</q>");
+        }).join(""),
+    );
+}
+
 function linkifyBareUrls(text: string): string {
     return mapMarkdownOutsideCode(text, segment => {
         const normalized = segment.replace(
@@ -446,7 +518,7 @@ function MarkdownTextContent({
     if (!hasHtmlBlocks) {
         // Simple path: pure markdown — extract styles only from non-html content
         const { styles, body } = extractStyles(cleaned);
-        const mdCleaned = linkifyBareUrls(stripPaySchemeUrls(body.trim()));
+        const mdCleaned = wrapQuotedDialogue(linkifyBareUrls(stripPaySchemeUrls(body.trim())));
         if (!mdCleaned && !styles && payUrls.length === 0) return null;
         return (
             <div className="chat-markdown hide-scrollbar break-words" ref={containerRef}>
@@ -470,7 +542,7 @@ function MarkdownTextContent({
                 }
                 // Extract styles only from markdown segments (not from html blocks)
                 const { styles, body } = extractStyles(seg.content);
-                const mdContent = linkifyBareUrls(stripPaySchemeUrls(body.trim()));
+                const mdContent = wrapQuotedDialogue(linkifyBareUrls(stripPaySchemeUrls(body.trim())));
                 return (
                     <div key={`md-${i}`}>
                         {styles && <style dangerouslySetInnerHTML={{ __html: styles }} />}
@@ -1310,6 +1382,58 @@ function LocationBubble({ msg }: { msg: ChatMessage }) {
 }
 
 // ── Poke ─────────────────────────────
+
+// 骰子点位：3x3 宫格（0-8）中每个点数要点亮的格子
+const DICE_BUBBLE_PIPS: Record<number, number[]> = {
+    1: [4],
+    2: [0, 8],
+    3: [0, 4, 8],
+    4: [0, 2, 6, 8],
+    5: [0, 2, 4, 6, 8],
+    6: [0, 2, 3, 5, 6, 8],
+};
+
+// 让指定点数朝向屏幕所需的立方体末态旋转（配合各面的摆放变换）
+const DICE_BUBBLE_ORIENTATIONS: Record<number, [number, number]> = {
+    1: [0, 0],
+    2: [-90, 0],
+    3: [0, -90],
+    4: [0, 90],
+    5: [90, 0],
+    6: [0, 180],
+};
+
+/** 骰子消息：3D 实骰。新消息立方体翻滚约 1.4 秒后定格在掷出的点数；历史消息直接定格 */
+function DiceBubble({ msg }: { msg: ChatMessage }) {
+    const face = Math.min(6, Math.max(1, Number(msg.mediaData?.diceFace) || 1));
+    // 挂载瞬间判定一次：只有刚发出的消息播翻滚动画
+    const rollingRef = useRef(Date.now() - new Date(msg.createdAt).getTime() < 6000);
+    const [rx, ry] = DICE_BUBBLE_ORIENTATIONS[face];
+
+    return (
+        <div className="dice-bubble3d" aria-label={`骰子 ${face} 点`}>
+            <div className="dice-bubble3d-tilt">
+                <div
+                    className="dice-bubble3d-cube"
+                    {...(rollingRef.current ? { "data-rolling": "" } : {})}
+                    style={{ "--dice-rx": `${rx}deg`, "--dice-ry": `${ry}deg` } as React.CSSProperties}
+                >
+                    {[1, 2, 3, 4, 5, 6].map(f => (
+                        <span key={f} className="dice-bubble3d-face" data-face={f}>
+                            {Array.from({ length: 9 }, (_, cell) => (
+                                <span
+                                    key={cell}
+                                    className="dice-bubble3d-pip"
+                                    {...(DICE_BUBBLE_PIPS[f].includes(cell) ? { "data-on": "" } : {})}
+                                />
+                            ))}
+                        </span>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
 
 function PokeBubble({ msg, charName, userName }: { msg: ChatMessage; charName?: string; userName?: string }) {
     // Prefer mediaData fields (group chat aware), fallback to old role-based logic

@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, createContext, type CSSProperties, type ReactNode } from "react";
-import { Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, Layers, Link2, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench } from "lucide-react";
+import { Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X } from "lucide-react";
+import { ConfirmDialog } from "./ui/modal";
+import { useAccount } from "@/lib/account-context";
+import { changeAccountPassword } from "@/lib/account-client";
 import { ApiSettings } from "./settings/api-settings";
 import { VoiceSettings } from "./settings/voice-settings";
 import { ImageGenerationSettings } from "./settings/image-generation-settings";
@@ -14,6 +17,9 @@ import { AboutDeclaration } from "./settings/about-declaration";
 import { BindingManager } from "./settings/binding-manager";
 import { WeixinSettings } from "./settings/weixin-settings";
 import { ToolboxSettings } from "./settings/toolbox-settings";
+import { ModerationCenter } from "./settings/moderation-center";
+import { fetchIsAdmin } from "@/lib/moderation-client";
+import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
 import { PageShell } from "./ui/page-shell";
 import { CardGrid, FeaturedCard, type CardItem, type FeaturedCardItem } from "./ui/card-grid";
 import { Toggle } from "./ui/form";
@@ -44,6 +50,7 @@ type SubPage =
     | "identity"
     | "weixin"
     | "toolbox"
+    | "moderation"
     | "about";
 
 const SETTINGS_MENU = [
@@ -73,6 +80,18 @@ const quickActionIconStyle = {
     "--icon-color": BINDING_ACCENTS.worldBook,
 } as CSSProperties;
 
+const accountIconStyle = {
+    "--icon-color": BINDING_ACCENTS.identity,
+} as CSSProperties;
+
+const passwordIconStyle = {
+    "--icon-color": BINDING_ACCENTS.api,
+} as CSSProperties;
+
+const logoutIconStyle = {
+    "--icon-color": "var(--c-danger)",
+} as CSSProperties;
+
 export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     const [currentPage, setCurrentPage] = useState<SubPage>("main");
     const [subpageTitle, setSubpageTitle] = useState<string | null>(null);
@@ -83,11 +102,71 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     const [quickActionEnabled, setQuickActionEnabled] = useState(false);
     const pageBodyRef = useRef<HTMLDivElement | null>(null);
 
+    // ── 账号：显示当前登录 / 修改密码 / 退出登录 ──
+    const selfHostedMode = isSelfHostedModeEnabled();
+    const { account, logout } = useAccount();
+    const [pwdModalOpen, setPwdModalOpen] = useState(false);
+    const [oldPwd, setOldPwd] = useState("");
+    const [newPwd, setNewPwd] = useState("");
+    const [confirmPwd, setConfirmPwd] = useState("");
+    const [pwdBusy, setPwdBusy] = useState(false);
+    const [pwdError, setPwdError] = useState("");
+    const [confirmLogout, setConfirmLogout] = useState(false);
+    const [accountSheetOpen, setAccountSheetOpen] = useState(false);
+
+    // ── 管理中心入口：仅 role=admin 的账号可见 ──
+    const [isAdmin, setIsAdmin] = useState(false);
+    useEffect(() => {
+        if (selfHostedMode || !account) return;
+        let cancelled = false;
+        void fetchIsAdmin().then(result => { if (!cancelled) setIsAdmin(result); });
+        return () => { cancelled = true; };
+    }, [selfHostedMode, account]);
+
+    const closePwdModal = () => {
+        if (pwdBusy) return;
+        setPwdModalOpen(false);
+        setOldPwd("");
+        setNewPwd("");
+        setConfirmPwd("");
+        setPwdError("");
+    };
+
+    const handleChangePassword = async () => {
+        if (pwdBusy) return;
+        if (!oldPwd || !newPwd) { setPwdError("请填写当前密码和新密码。"); return; }
+        if (newPwd.length < 6) { setPwdError("新密码至少需要 6 位。"); return; }
+        if (newPwd !== confirmPwd) { setPwdError("两次输入的新密码不一致。"); return; }
+        setPwdBusy(true);
+        setPwdError("");
+        try {
+            const result = await changeAccountPassword({ oldPassword: oldPwd, newPassword: newPwd });
+            if (!result.ok) { setPwdError(result.error || "修改失败。"); return; }
+            setPwdModalOpen(false);
+            setOldPwd("");
+            setNewPwd("");
+            setConfirmPwd("");
+            onNotice("密码已修改");
+        } finally {
+            setPwdBusy(false);
+        }
+    };
+
+    const handleCopyUsername = () => {
+        if (navigator.clipboard?.writeText) {
+            void navigator.clipboard.writeText(account.username).then(() => onNotice("用户名已复制"));
+        } else {
+            onNotice(`用户名：${account.username}`);
+        }
+    };
+
     const defaultTitle = currentPage === "main"
         ? "设置"
         : currentPage === "api" || currentPage === "voice" || currentPage === "imageGeneration" || currentPage === "presets" || currentPage === "worldbook" || currentPage === "regex" || currentPage === "identity"
             ? ""
-            : SETTINGS_MENU.find(m => m.id === currentPage)?.label || "设置";
+            : currentPage === "moderation"
+                ? "管理中心"
+                : SETTINGS_MENU.find(m => m.id === currentPage)?.label || "设置";
     const title = subpageTitle || defaultTitle;
 
     const setSubpageRightAction = useCallback((page: string, action: ReactNode | null) => {
@@ -182,6 +261,8 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                 return <WeixinSettings />;
             case "toolbox":
                 return <ToolboxSettings />;
+            case "moderation":
+                return <ModerationCenter onNotice={onNotice} />;
             case "identity":
                 return <UserIdentitySettings />;
             case "about":
@@ -240,6 +321,16 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
             <PageShell title={title} onBack={handleBack} rightAction={currentPage !== "main" ? subpageRightActions[currentPage] : undefined} bodyRef={pageBodyRef}>
                 {currentPage === "main" && (
                     <div className="page-menu settings-main-menu">
+                        {!selfHostedMode && (
+                            <button type="button" className="settings-account-card" onClick={() => setAccountSheetOpen(true)}>
+                                <span className="settings-account-avatar">{account.username.slice(0, 1).toUpperCase()}</span>
+                                <span className="settings-account-copy">
+                                    <span className="settings-account-name">{account.displayName || account.username}</span>
+                                    <span className="settings-account-sub">账号、密码与登录</span>
+                                </span>
+                                <ChevronRight size={18} className="settings-account-chevron" />
+                            </button>
+                        )}
                         <CardGrid
                             label="API Config"
                             labelClassName="settings-menu-section-title"
@@ -278,6 +369,21 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                 <Toggle checked={timeAware} onChange={handleTimeAwareChange} className="settings-toggle-control" />
                             </div>
                         </div>
+                        {isAdmin ? (
+                            <div className="settings-moderation-section">
+                                <h3 className="settings-menu-section-title">Moderation</h3>
+                                <div className="app-card card-featured settings-toggle-card" role="button" tabIndex={0} style={{ cursor: "pointer" }} onClick={() => setCurrentPage("moderation")}>
+                                    <span className="card-icon" style={accountIconStyle}>
+                                        <SlidersHorizontal size={22} strokeWidth={1.75} />
+                                    </span>
+                                    <div className="card-featured-body">
+                                        <div className="card-featured-label">管理中心</div>
+                                        <div className="card-featured-desc">举报队列、应用审核与用户封禁</div>
+                                    </div>
+                                    <ChevronRight size={18} className="settings-account-chevron" />
+                                </div>
+                            </div>
+                        ) : null}
                         <div className="settings-tools-section">
                             <h3 className="settings-menu-section-title">Tools</h3>
                             <div className="menu-group settings-tools-menu">
@@ -312,6 +418,90 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                             labelClassName="settings-menu-section-title"
                             items={SETTINGS_MENU.filter(item => ["identity", "about"].includes(item.id)).map(makeCardItem)}
                         />
+                        {accountSheetOpen && (
+                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setAccountSheetOpen(false)}>
+                                <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+                                    <div className="modal-header" data-ui="modal-header">
+                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setAccountSheetOpen(false)}><X size={18} /></button>
+                                        <h3 className="modal-title">账号</h3>
+                                        <span style={{ width: 44 }} />
+                                    </div>
+                                    <div className="modal-body modal-body-tight" data-ui="modal-body">
+                                        <div className="menu-group">
+                                            <div className="menu-item settings-tools-menu-item">
+                                                <span className="card-icon" style={accountIconStyle}>
+                                                    <UserCircle size={22} strokeWidth={1.75} />
+                                                </span>
+                                                <span className="settings-tools-menu-copy">
+                                                    <span className="menu-label appearance-menu-item-label">当前账号</span>
+                                                    <span className="menu-desc settings-tools-menu-desc">@{account.username}</span>
+                                                </span>
+                                                <span className="menu-right">
+                                                    <button className="ui-btn ui-btn-outline py-1 px-3 ts-12" style={{ whiteSpace: "nowrap" }} onClick={handleCopyUsername}>复制</button>
+                                                </span>
+                                            </div>
+                                            <button type="button" className="menu-item settings-tools-menu-item w-full text-left" onClick={() => { setAccountSheetOpen(false); setPwdModalOpen(true); }}>
+                                                <span className="card-icon" style={passwordIconStyle}>
+                                                    <KeyRound size={22} strokeWidth={1.75} />
+                                                </span>
+                                                <span className="settings-tools-menu-copy">
+                                                    <span className="menu-label appearance-menu-item-label">修改密码</span>
+                                                    <span className="menu-desc settings-tools-menu-desc">需验证当前密码</span>
+                                                </span>
+                                                <span className="menu-right"><ChevronRight size={17} className="settings-account-chevron" /></span>
+                                            </button>
+                                            <button type="button" className="menu-item settings-tools-menu-item w-full text-left" onClick={() => { setAccountSheetOpen(false); setConfirmLogout(true); }}>
+                                                <span className="card-icon" style={logoutIconStyle}>
+                                                    <LogOut size={22} strokeWidth={1.75} />
+                                                </span>
+                                                <span className="settings-tools-menu-copy">
+                                                    <span className="menu-label appearance-menu-item-label" style={{ color: "var(--c-danger)" }}>退出登录</span>
+                                                    <span className="menu-desc settings-tools-menu-desc">退出后需重新输入用户名和密码</span>
+                                                </span>
+                                                <span className="menu-right"><ChevronRight size={17} className="settings-account-chevron" /></span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {pwdModalOpen && (
+                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={closePwdModal}>
+                                <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+                                    <div className="modal-header" data-ui="modal-header">
+                                        <button className="modal-header-btn modal-header-btn-muted" onClick={closePwdModal} disabled={pwdBusy}><X size={18} /></button>
+                                        <h3 className="modal-title">修改密码</h3>
+                                        <button className="modal-header-btn modal-header-btn-action" onClick={() => void handleChangePassword()} disabled={pwdBusy}>
+                                            {pwdBusy ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+                                        </button>
+                                    </div>
+                                    <div className="modal-body" data-ui="modal-body">
+                                        <div className="flex flex-col gap-3 px-1">
+                                            <input type="password" className="ui-input" placeholder="当前密码" autoComplete="current-password"
+                                                value={oldPwd} onChange={event => setOldPwd(event.target.value)} />
+                                            <input type="password" className="ui-input" placeholder="新密码（至少 6 位）" autoComplete="new-password"
+                                                value={newPwd} onChange={event => setNewPwd(event.target.value)} />
+                                            <input type="password" className="ui-input" placeholder="确认新密码" autoComplete="new-password"
+                                                value={confirmPwd} onChange={event => setConfirmPwd(event.target.value)} />
+                                            {pwdError ? <p className="ts-12" style={{ color: "var(--c-danger)" }}>{pwdError}</p> : null}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {confirmLogout && (
+                            <ConfirmDialog
+                                title="退出登录"
+                                message={`当前账号 @${account.username}。退出后需要重新输入用户名和密码才能登录，密码无法找回，请确认已牢记。`}
+                                icon={LogOut}
+                                variant="danger"
+                                confirmLabel="退出登录"
+                                onConfirm={() => { setConfirmLogout(false); void logout(); }}
+                                onCancel={() => setConfirmLogout(false)}
+                            />
+                        )}
                     </div>
                 )}
 

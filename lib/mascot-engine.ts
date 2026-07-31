@@ -531,7 +531,9 @@ async function callMascotText(
         buildMascotToolsListPrompt(),
     ].join("\n\n");
 
-    const hasImages = historyHasImages(history);
+    // 仅在该 API 配置开启"图像识别"时才构造 multipart 图片消息；
+    // 关闭时走纯文本（适配器另有总闸兜底，双保险）。
+    const hasImages = apiConfig.enableImageRecognition === true && historyHasImages(history);
     const messages: LlmRequestMessage[] = [
         { role: "system", content: systemPrompt },
         ...(hasImages ? await historyToTextMessagesMultipart(history) : historyToTextRequestMessages(history)),

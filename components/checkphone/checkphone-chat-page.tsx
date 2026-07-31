@@ -1070,6 +1070,7 @@ export function CheckPhoneChatPage({
         {payload && !activeConversation && !activeGroup && (
           <>
             <div
+              className="cp-scroll-guard"
               style={{
                 flex: "1 1 auto",
                 minHeight: 0,
@@ -1900,6 +1901,7 @@ export function CheckPhoneChatPage({
             }}
           >
             <div
+              className="cp-scroll-guard"
               style={{
                 flex: 1,
                 minHeight: 0,
@@ -2041,6 +2043,7 @@ export function CheckPhoneChatPage({
             }}
           >
             <div
+              className="cp-scroll-guard"
               style={{
                 flex: 1,
                 minHeight: 0,

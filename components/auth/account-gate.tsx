@@ -6,6 +6,7 @@ import { Loader2, LogIn } from "lucide-react";
 import { AccountProvider } from "@/lib/account-context";
 import { ACCOUNT_NETWORK_ERROR, fetchCurrentAccount, loginAccount, logoutAccount, type AccountProfile } from "@/lib/account-client";
 import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
+import { VERIFY_APPLICATIONS_CLOSED_MESSAGE, VERIFY_APPLICATIONS_OPEN } from "@/lib/verification-availability";
 
 type AccountGateProps = {
   children: ReactNode;
@@ -213,9 +214,15 @@ export function AccountGate({ children }: AccountGateProps) {
               inputMode="text"
               placeholder="首次使用该账号时填写"
             />
-            <a className="account-gate-verify-link" href="/verify" target="_blank" rel="noreferrer">
-              没有激活码？申请内测资格 →
-            </a>
+            {VERIFY_APPLICATIONS_OPEN ? (
+              <a className="account-gate-verify-link" href="/verify" target="_blank" rel="noreferrer">
+                没有激活码？申请内测资格 →
+              </a>
+            ) : (
+              <span className="account-gate-verify-link" aria-disabled="true">
+                {VERIFY_APPLICATIONS_CLOSED_MESSAGE}
+              </span>
+            )}
           </label>
           {error ? <div className="account-gate-error" role="alert">{error}</div> : null}
           <button type="submit" disabled={busy}>

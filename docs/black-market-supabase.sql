@@ -56,14 +56,11 @@ create index if not exists black_market_theaters_tags_idx
 
 alter table public.black_market_theaters enable row level security;
 
-grant select on public.black_market_theaters to anon;
+-- 收回 anon 直读：剧场模板是用户创作内容，开放 anon 会被拿 anon key
+-- 绕过服务端 API 匿名批量爬走。站内读写都走 Next API + service key，无 anon 直连依赖。
+revoke select on public.black_market_theaters from anon;
 
 drop policy if exists "black_market_theaters_public_read" on public.black_market_theaters;
-create policy "black_market_theaters_public_read"
-  on public.black_market_theaters
-  for select
-  to anon
-  using (deleted_at is null);
 
 alter table public.black_market_theaters replica identity full;
 
