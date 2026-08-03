@@ -1,0 +1,11 @@
+{
+  "sdkVersion": "1.0",
+  "id": "app.reading-nook",
+  "name": "共读小屋",
+  "version": "1.0.0",
+  "author": "鹿鹿",
+  "description": "和鹿鹿一起读书！划线写想法，点「聊一聊」直接发给鹿鹿 💕",
+  "icon": "icon.svg",
+  "entry": "index.html",
+  "permissions": ["ui.toast"]
+}
