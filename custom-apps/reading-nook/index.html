@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>📖 共读小屋</title>
+<style>
+  :root {
+    --bg: #faf7f2;
+    --card: #fff;
+    --text: #4a3f35;
+    --text2: #8b7d6b;
+    --accent: #e8a0ac;
+    --accent2: #8e7cc3;
+    --bubble-me: #fce4ec;
+    --bubble-ai: #e8eaf6;
+    --border: #ede6db;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Header */
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    gap: 8px;
+  }
+  header h1 { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .header-btns { display: flex; gap: 6px; }
+  .header-btns button {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .header-btns button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+  /* Settings View */
+  #settings-view { display: none; height: 100%; flex-direction: column; }
+  #settings-view.active { display: flex; }
+  .settings-scroll { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .settings-card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .settings-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--accent2); }
+  .settings-card label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 6px; }
+  .settings-card input, .settings-card select {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    outline: none;
+    background: var(--bg);
+    color: var(--text);
+    margin-bottom: 10px;
+  }
+  .settings-card input:focus, .settings-card select:focus { border-color: var(--accent2); }
+  .settings-card .save-btn {
+    width: 100%;
+    background: var(--accent2);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 14px;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .settings-card .save-btn:active { opacity: 0.8; }
+  .settings-hint { font-size: 11px; color: var(--text2); line-height: 1.6; margin-top: 6px; }
+  .api-status { font-size: 12px; padding: 6px 12px; border-radius: 8px; margin-top: 8px; text-align: center; }
+  .api-status.ok { background: #e8f5e9; color: #2e7d32; }
+  .api-status.error { background: #ffebee; color: #c62828; }
+  .api-status.testing { background: #fff8e1; color: #f57f17; }
+
+  /* Shelf View */
+  #shelf-view { display: none; height: 100%; flex-direction: column; }
+  #shelf-view.active { display: flex; }
+  .shelf-scroll { flex: 1; overflow-y: auto; }
+  .upload-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    gap: 16px;
+  }
+  .upload-icon { font-size: 56px; opacity: 0.5; }
+  .upload-hint { text-align: center; color: var(--text2); font-size: 13px; line-height: 1.8; }
+  .upload-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 28px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  #file-input { display: none; }
+  .add-book-area { background: var(--card); border-radius: 12px; margin: 12px 16px; padding: 14px; }
+  .add-book-area input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    outline: none;
+    margin-bottom: 10px;
+  }
+  .add-book-area .add-btn {
+    width: 100%;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .book-list { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .book-item {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .book-item .book-cover {
+    width: 40px;
+    height: 52px;
+    border-radius: 6px;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .book-item .book-info { flex: 1; min-width: 0; }
+  .book-item .book-name { font-size: 14px; font-weight: 600; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .book-item .book-meta { font-size: 11px; color: var(--text2); }
+  .book-item .delete-book { background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; color: var(--text2); }
+
+  /* Read View */
+  #read-view { display: none; height: 100%; flex-direction: column; }
+  #read-view.active { display: flex; }
+  .reader-scroll { flex: 1; overflow-y: auto; padding: 14px 16px 8px; }
+  .book-title { font-size: 16px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+  .chapter-title {
+    font-size: 12px;
+    color: var(--text2);
+    text-align: center;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .chapter-title button {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    color: var(--text2);
+  }
+  .chapter-title button:disabled { opacity: 0.3; }
+  .book-content {
+    font-size: 15px;
+    line-height: 2;
+    color: var(--text);
+    text-align: justify;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  .book-content p { margin-bottom: 0.8em; text-indent: 2em; }
+  .highlight {
+    background: var(--bubble-me);
+    border-radius: 4px;
+    padding: 0 2px;
+    cursor: pointer;
+  }
+  .highlight.has-note::after { content: ' 💬'; font-size: 11px; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .toolbar .highlight-btn {
+    background: var(--bubble-me);
+    border: 1px solid var(--accent);
+    border-radius: 20px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    color: #c2185b;
+    white-space: nowrap;
+  }
+  .toolbar input {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 8px 14px;
+    font-size: 14px;
+    outline: none;
+    background: var(--bg);
+  }
+  .toolbar .chat-btn {
+    background: var(--accent2);
+    border: none;
+    border-radius: 20px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .progress-bar { height: 3px; background: var(--border); flex-shrink: 0; }
+  .progress-bar-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+
+  /* Chat View */
+  .chat-area {
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    max-height: 55dvh;
+    flex-shrink: 0;
+    transition: max-height 0.3s;
+  }
+  .chat-area.open { max-height: 80dvh; }
+  .chat-area.closed { max-height: 44px; overflow: hidden; }
+  .chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .chat-header-left { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--accent2); }
+  .chat-toggle { font-size: 11px; transition: transform 0.3s; }
+  .chat-area.open .chat-toggle { transform: rotate(180deg); }
+  .chat-msgs { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .chat-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text2);
+    font-size: 13px;
+    text-align: center;
+    padding: 24px;
+    gap: 8px;
+  }
+  .chat-empty .emoji { font-size: 32px; opacity: 0.5; }
+  .msg { display: flex; flex-direction: column; gap: 2px; max-width: 85%; }
+  .msg.ai { align-self: flex-start; }
+  .msg.user { align-self: flex-end; align-items: flex-end; }
+  .msg-context {
+    font-size: 11px;
+    color: var(--text2);
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 5px 10px;
+    margin-bottom: 4px;
+    line-height: 1.5;
+  }
+  .msg-bubble { padding: 8px 12px; border-radius: 14px; font-size: 14px; line-height: 1.6; }
+  .msg.ai .msg-bubble { background: var(--bubble-ai); border-bottom-left-radius: 4px; }
+  .msg.user .msg-bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+  .msg-time { font-size: 10px; color: var(--text2); padding: 0 4px; }
+  .msg-loading { font-size: 13px; color: var(--text2); padding: 8px 0; font-style: italic; }
+  .chat-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .chat-input-row input {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 9px 14px;
+    font-size: 14px;
+    outline: none;
+    background: var(--bg);
+  }
+  .chat-input-row button {
+    background: var(--accent2);
+    border: none;
+    border-radius: 20px;
+    padding: 9px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    color: #fff;
+  }
+  .chat-input-row button:disabled { opacity: 0.5; }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.75);
+    color: #fff;
+    padding: 10px 24px;
+    border-radius: 20px;
+    font-size: 13px;
+    z-index: 300;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .toast.show { opacity: 1; }
+
+  /* First use banner */
+  .first-banner {
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    color: #fff;
+    font-size: 12px;
+    padding: 8px 16px;
+    text-align: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="header-title">📖 共读小屋</h1>
+  <div class="header-btns">
+    <button id="btn-shelf">书架</button>
+    <button id="btn-settings">⚙️</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- Settings -->
+  <div id="settings-view">
+    <div class="settings-scroll">
+      <div class="settings-card">
+        <h3>🔑 API 设置</h3>
+        <label>API Key</label>
+        <input type="password" id="api-key" placeholder="sk-...">
+        <label>API 地址（不用改）</label>
+        <input type="text" id="api-url" value="https://api.siliconflow.cn/v1/chat/completions" placeholder="API URL">
+        <label>模型</label>
+        <select id="api-model">
+          <option value="Pro/deepseek-ai/DeepSeek-V3">Pro / DeepSeek-V3（推荐）</option>
+          <option value="Pro/deepseek-ai/DeepSeek-R1">Pro / DeepSeek-R1（推理）</option>
+          <option value="Pro/Qwen/Qwen2.5-72B-Instruct">Pro / Qwen2.5-72B</option>
+          <option value="Pro/THUDM/glm-z1-flash">Pro / GLM-Z1-Flash（免费）</option>
+          <option value="custom">自定义...</option>
+        </select>
+        <input type="text" id="api-model-custom" placeholder="填自定义模型名..." style="display:none">
+        <button class="save-btn" id="save-settings-btn">保存并测试</button>
+        <div id="api-status"></div>
+        <div class="settings-hint">
+          💡 推荐用<strong>硅基流动</strong>（国内可用，便宜）<br>
+          注册：siliconflow.com → 充值 → API密钥<br>
+          余额0元也能用免费模型！
+        </div>
+      </div>
+      <div class="settings-card">
+        <h3>🦌 鹿鹿人格设定</h3>
+        <label>鹿鹿的称呼（可选）</label>
+        <input type="text" id="ai-name" placeholder="鹿鹿" value="鹿鹿">
+        <div class="settings-hint">
+          鹿鹿会记住你读的书的上下文，温柔地跟你聊每一页。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shelf -->
+  <div id="shelf-view" class="active">
+    <div class="first-banner" id="first-banner" style="display:none">
+      👋 首次使用？点这里设置 API Key ⚙️
+    </div>
+    <div class="shelf-scroll">
+      <div class="upload-area" id="empty-state">
+        <div class="upload-icon">📚</div>
+        <div class="upload-hint">上传 txt 小说<br>开始和鹿鹿一起读书吧</div>
+        <button class="upload-btn" id="upload-btn">📖 上传小说</button>
+        <input type="file" id="file-input" accept=".txt">
+      </div>
+      <div id="book-list-area" style="display:none">
+        <div class="add-book-area">
+          <input type="text" id="manual-book-name" placeholder="书名（上传后自动填入）...">
+          <button class="add-btn" id="add-book-btn">📖 上传 txt 小说</button>
+        </div>
+        <div class="book-list" id="book-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Read -->
+  <div id="read-view">
+    <div class="reader-scroll" id="reader-scroll">
+      <div class="book-title" id="book-title"></div>
+      <div class="chapter-title" id="chapter-title"></div>
+      <div class="book-content" id="book-content"></div>
+    </div>
+    <div class="progress-bar"><div class="progress-bar-fill" id="progress-fill"></div></div>
+    <div class="toolbar">
+      <button class="highlight-btn" id="highlight-btn">✏️ 划线</button>
+      <input type="text" id="quick-note" placeholder="快速批注...">
+      <button class="chat-btn" id="open-chat-btn">💬 聊一聊</button>
+    </div>
+    <div class="chat-area closed" id="chat-area">
+      <div class="chat-header" id="chat-header">
+        <div class="chat-header-left">
+          <span>💬</span>
+          <span id="chat-title">聊一聊</span>
+          <span id="chat-count" style="font-size:11px;opacity:0.7;"></span>
+        </div>
+        <span class="chat-toggle">▲</span>
+      </div>
+      <div class="chat-msgs" id="chat-msgs">
+        <div class="chat-empty" id="chat-empty">
+          <div class="emoji">🦌</div>
+          <div>读到这里有点想法？</div>
+          <div style="font-size:12px;color:var(--text2);">直接在下面问鹿鹿<br>鹿鹿会记住你读到哪里～</div>
+        </div>
+      </div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" placeholder="问鹿鹿这一页...">
+        <button id="chat-send-btn">发送</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== Config =====
+let CFG = {
+  apiKey: '',
+  apiUrl: 'https://api.siliconflow.cn/v1/chat/completions',
+  model: 'Pro/deepseek-ai/DeepSeek-V3',
+  aiName: '鹿鹿'
+};
+
+function loadCfg() {
+  const raw = localStorage.getItem('reading-nook-cfg');
+  if (raw) CFG = JSON.parse(raw);
+}
+function saveCfg() {
+  localStorage.setItem('reading-nook-cfg', JSON.stringify(CFG));
+}
+
+// ===== State =====
+let currentBook = null;
+let chapters = [];
+let currentChapter = 0;
+let allNotes = {};
+let chatMessages = []; // [{role, content}]
+let isHighlighting = false;
+
+// ===== Storage =====
+function saveNotes() { localStorage.setItem('reading-nook-notes', JSON.stringify(allNotes)); }
+function loadNotes() { const r = localStorage.getItem('reading-nook-notes'); if (r) allNotes = JSON.parse(r); }
+function saveBooks(b) { localStorage.setItem('reading-nook-books', JSON.stringify(b)); }
+function loadBooks() { const r = localStorage.getItem('reading-nook-books'); return r ? JSON.parse(r) : []; }
+function saveProgress() {
+  if (!currentBook) return;
+  localStorage.setItem('reading-nook-progress-' + currentBook.name, JSON.stringify({ chapter: currentChapter }));
+}
+function loadProgress(n) { const r = localStorage.getItem('reading-nook-progress-' + n); return r ? JSON.parse(r) : null; }
+function saveChat() { if (!currentBook) return; localStorage.setItem('reading-nook-chat-' + currentBook.name + '-' + currentChapter, JSON.stringify(chatMessages)); }
+function loadChat() {
+  if (!currentBook) return;
+  const r = localStorage.getItem('reading-nook-chat-' + currentBook.name + '-' + currentChapter);
+  chatMessages = r ? JSON.parse(r) : [];
+}
+
+// ===== Toast =====
+function toast(m) {
+  const t = document.getElementById('toast');
+  t.textContent = m;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+// ===== View Switch =====
+function showView(v) {
+  ['shelf-view','settings-view','read-view'].forEach(id => document.getElementById(id).classList.remove('active'));
+  document.getElementById(v + '-view').classList.add('active');
+  document.querySelectorAll('.header-btns button').forEach(b => b.classList.remove('active'));
+  if (v === 'shelf') document.getElementById('btn-shelf').classList.add('active');
+  if (v === 'settings') document.getElementById('btn-settings').classList.add('active');
+}
+document.getElementById('btn-shelf').addEventListener('click', () => { saveProgress(); showView('shelf'); });
+document.getElementById('btn-settings').addEventListener('click', () => showView('settings'));
+document.getElementById('first-banner').addEventListener('click', () => showView('settings'));
+
+// ===== Init Settings =====
+function initSettings() {
+  loadCfg();
+  document.getElementById('api-key').value = CFG.apiKey;
+  document.getElementById('api-url').value = CFG.apiUrl;
+  document.getElementById('ai-name').value = CFG.aiName;
+  const modelSel = document.getElementById('api-model');
+  const customInput = document.getElementById('api-model-custom');
+  const opt = [...modelSel.options].find(o => o.value === CFG.model);
+  if (opt) { modelSel.value = CFG.model; customInput.style.display = 'none'; }
+  else { modelSel.value = 'custom'; customInput.value = CFG.model; customInput.style.display = 'block'; }
+  modelSel.addEventListener('change', () => {
+    customInput.style.display = modelSel.value === 'custom' ? 'block' : 'none';
+  });
+}
+document.getElementById('save-settings-btn').addEventListener('click', async () => {
+  const key = document.getElementById('api-key').value.trim();
+  const url = document.getElementById('api-url').value.trim();
+  const modelSel = document.getElementById('api-model');
+  const customModel = document.getElementById('api-model-custom').value.trim();
+  const model = modelSel.value === 'custom' ? customModel : modelSel.value;
+  const aiName = document.getElementById('ai-name').value.trim() || '鹿鹿';
+  if (!key) { toast('请填入 API Key'); return; }
+  if (!model) { toast('请选择或输入模型'); return; }
+  CFG = { apiKey: key, apiUrl: url, model, aiName };
+  saveCfg();
+  const statusEl = document.getElementById('api-status');
+  statusEl.className = 'api-status testing';
+  statusEl.textContent = '⏳ 测试连接中...';
+  try {
+    const res = await fetch(CFG.apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + CFG.apiKey },
+      body: JSON.stringify({ model: CFG.model, messages: [{ role: 'user', content: 'hi' }], max_tokens: 5 })
+    });
+    if (res.ok) {
+      statusEl.className = 'api-status ok';
+      statusEl.textContent = '✅ 连接成功！';
+      setTimeout(() => { statusEl.textContent = ''; showView('shelf'); }, 1500);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      statusEl.className = 'api-status error';
+      statusEl.textContent = '❌ 连接失败：' + (err.error?.message || res.status);
+    }
+  } catch(e) {
+    statusEl.className = 'api-status error';
+    statusEl.textContent = '❌ 网络错误：' + e.message;
+  }
+});
+
+// ===== Book List =====
+function renderBookList() {
+  const books = loadBooks();
+  const listEl = document.getElementById('book-list');
+  const empty = document.getElementById('empty-state');
+  const listArea = document.getElementById('book-list-area');
+  if (books.length === 0) {
+    empty.style.display = 'flex'; listArea.style.display = 'none';
+  } else {
+    empty.style.display = 'none'; listArea.style.display = 'block';
+    listEl.innerHTML = books.map((b, i) => {
+      const prog = loadProgress(b.name);
+      return '<div class="book-item" data-i="' + i + '">' +
+        '<div class="book-cover">📖</div>' +
+        '<div class="book-info">' +
+          '<div class="book-name">' + escHtml(b.name) + '</div>' +
+          '<div class="book-meta">' + b.chapterCount + '章 · ' + (prog ? '读到第' + (prog.chapter+1) + '章' : '未读') + '</div>' +
+        '</div>' +
+        '<button class="delete-book" data-i="' + i + '">🗑️</button>' +
+      '</div>';
+    }).join('');
+    listEl.querySelectorAll('.book-item').forEach(item => {
+      item.addEventListener('click', e => { if (!e.target.classList.contains('delete-book')) openBook(parseInt(item.dataset.i)); });
+    });
+    listEl.querySelectorAll('.delete-book').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); deleteBook(parseInt(btn.dataset.i)); });
+    });
+  }
+  // First use banner
+  const banner = document.getElementById('first-banner');
+  if (!CFG.apiKey) banner.style.display = 'block';
+  else banner.style.display = 'none';
+}
+
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function deleteBook(i) {
+  if (!confirm('确定删除？')) return;
+  const books = loadBooks(); const name = books[i].name;
+  books.splice(i, 1); saveBooks(books);
+  localStorage.removeItem('reading-nook-chapters-' + name);
+  localStorage.removeItem('reading-nook-progress-' + name);
+  renderBookList();
+}
+
+// ===== File Upload =====
+document.getElementById('upload-btn').addEventListener('click', () => document.getElementById('file-input').click());
+document.getElementById('add-book-btn').addEventListener('click', () => document.getElementById('file-input').click());
+document.getElementById('file-input').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return;
+  const name = file.name.replace(/\.txt$/i, '');
+  document.getElementById('manual-book-name').value = name;
+  const reader = new FileReader();
+  reader.onload = ev => { addBook(name, ev.target.result); };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+document.getElementById('manual-book-name').addEventListener('keypress', e => { if (e.key === 'Enter') document.getElementById('file-input').click(); });
+
+function addBook(name, text) {
+  if (!name.trim()) { toast('请输入书名'); return; }
+  const books = loadBooks();
+  if (books.find(b => b.name === name)) { toast('这本书已添加'); return; }
+  const chs = splitChapters(text);
+  if (!chs.length) { toast('内容为空'); return; }
+  books.push({ name, chapterCount: chs.length }); saveBooks(books);
+  localStorage.setItem('reading-nook-chapters-' + name, JSON.stringify(chs));
+  toast('《' + name + '》添加成功！');
+  renderBookList();
+}
+
+function splitChapters(text) {
+  text = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  const patterns = [
+    /第[一二三四五六七八九十百千零\d]+章[^\n]*/g,
+    /第[一二三四五六七八九十百千零\d]+节[^\n]*/g,
+    /第[一二三四五六七八九十百千零\d]+回[^\n]*/g,
+    /chapter\s*\d+/gi, /CHAPTER\s*\d+/g,
+    /第[一二三四五六七八九十百千零\d]+[卷部篇][^\n]*/g,
+  ];
+  let best = null, bestCount = 0;
+  for (const p of patterns) { const m = text.match(p); if (m && m.length > bestCount) { bestCount = m.length; best = p; } }
+  if (best && bestCount >= 2) {
+    const parts = text.split(best); const headers = text.match(best) || [];
+    return parts.slice(1).map((p, i) => ({ title: headers[i] ? headers[i].trim() : '第' + (i+1) + '章', content: p.trim() })).filter(c => c.content.length > 20);
+  }
+  const chunks = [], paras = text.split(/\n{2,}/); let cur = '';
+  for (const p of paras) {
+    if (cur.length + p.length > 2800) { if (cur.trim()) chunks.push(cur.trim()); cur = p; }
+    else cur += '\n\n' + p;
+  }
+  if (cur.trim()) chunks.push(cur.trim());
+  return chunks.map((c, i) => ({ title: '第' + (i+1) + '章', content: c }));
+}
+
+function openBook(index) {
+  const books = loadBooks(); const book = books[index];
+  const rawCh = localStorage.getItem('reading-nook-chapters-' + book.name);
+  if (!rawCh) { toast('找不到内容'); return; }
+  chapters = JSON.parse(rawCh); if (!chapters.length) { toast('内容为空'); return; }
+  currentBook = book;
+  const prog = loadProgress(book.name);
+  currentChapter = prog ? prog.chapter : 0;
+  if (currentChapter >= chapters.length) currentChapter = 0;
+  loadNotes(); loadChat();
+  document.getElementById('header-title').textContent = '📖 ' + book.name;
+  document.getElementById('chat-title').textContent = '💬 和' + CFG.aiName + '聊';
+  renderChapter(); renderChat(); showView('read');
+  closeChat(); // start with chat closed
+}
+
+// ===== Render Chapter =====
+function renderChapter() {
+  if (!currentBook || !chapters.length) return;
+  const ch = chapters[currentChapter];
+  document.getElementById('book-title').textContent = currentBook.name;
+  document.getElementById('chapter-title').innerHTML =
+    '<button id="prev-ch" ' + (currentChapter === 0 ? 'disabled' : '') + '>◀</button>' +
+    ch.title +
+    '<button id="next-ch" ' + (currentChapter >= chapters.length-1 ? 'disabled' : '') + '>▶</button>';
+  document.getElementById('progress-fill').style.width = ((currentChapter + 1) / chapters.length * 100) + '%';
+  const bookNotes = allNotes[currentBook.name] || {};
+  const chNotes = bookNotes[currentChapter] || [];
+  const paras = ch.content.split(/\n\n+/);
+  const html = paras.map(para => {
+    if (!para.trim()) return '';
+    let e = escHtml(para.trim());
+    for (const n of chNotes) {
+      if (n.quote) e = e.replace(escHtml(n.quote.trim()), '<span class="highlight' + (n.note ? ' has-note' : '') + '" data-id="' + n.id + '">' + escHtml(n.quote.trim()) + '</span>');
+    }
+    return '<p>' + e + '</p>';
+  }).join('');
+  document.getElementById('book-content').innerHTML = html;
+  document.querySelectorAll('.highlight').forEach(el => el.addEventListener('click', () => editHighlight(el.dataset.id)));
+  document.getElementById('prev-ch').addEventListener('click', () => { if (currentChapter > 0) { saveProgress(); saveChat(); currentChapter--; loadChat(); renderChapter(); renderChat(); } });
+  document.getElementById('next-ch').addEventListener('click', () => { if (currentChapter < chapters.length - 1) { saveProgress(); saveChat(); currentChapter++; loadChat(); renderChapter(); renderChat(); } });
+  document.getElementById('reader-scroll').scrollTop = 0;
+}
+
+// ===== Highlighting =====
+document.getElementById('highlight-btn').addEventListener('click', () => {
+  isHighlighting = !isHighlighting;
+  const btn = document.getElementById('highlight-btn');
+  if (isHighlighting) { btn.style.background = 'var(--accent2)'; btn.style.color = '#fff'; btn.textContent = '✓ 划线中'; toast('选中文字即可划线 ✏️'); }
+  else { btn.style.background = 'var(--bubble-me)'; btn.style.color = '#c2185b'; btn.textContent = '✏️ 划线'; toast('划线模式关闭'); }
+});
+document.addEventListener('mouseup', handleSelect);
+document.addEventListener('touchend', handleSelect);
+function handleSelect(e) {
+  if (!isHighlighting || !document.getElementById('read-view').classList.contains('active')) return;
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed) return;
+  const text = sel.toString().trim();
+  if (text.length < 2 || text.length > 500) return;
+  if (!document.getElementById('book-content').contains(sel.anchorNode)) return;
+  const note = prompt('写下你的想法（可选）：', '');
+  if (note !== null) doHighlight(text, note || '');
+  isHighlighting = false;
+  const btn = document.getElementById('highlight-btn');
+  btn.style.background = 'var(--bubble-me)'; btn.style.color = '#c2185b'; btn.textContent = '✏️ 划线';
+  window.getSelection().removeAllRanges();
+}
+function doHighlight(quote, note) {
+  if (!currentBook) return;
+  const bn = currentBook.name;
+  if (!allNotes[bn]) allNotes[bn] = {};
+  if (!allNotes[bn][currentChapter]) allNotes[bn][currentChapter] = [];
+  allNotes[bn][currentChapter].push({ id: 'n-' + Date.now(), quote, note, ts: new Date().toISOString() });
+  saveNotes(); toast('已划线 ✨'); renderChapter();
+}
+function editHighlight(id) {
+  if (!currentBook) return;
+  const notes = (allNotes[currentBook.name] || {})[currentChapter] || [];
+  const n = notes.find(x => x.id === id);
+  if (!n) return;
+  const note = prompt('修改批注：', n.note);
+  if (note !== null) { n.note = note; saveNotes(); renderChapter(); }
+}
+document.getElementById('quick-note').addEventListener('keypress', e => {
+  if (e.key === 'Enter') {
+    const text = e.target.value.trim();
+    if (!text) return;
+    if (currentBook) doHighlight('', text);
+    e.target.value = '';
+  }
+});
+
+// ===== Chat Area =====
+const chatArea = document.getElementById('chat-area');
+function closeChat() { chatArea.classList.remove('open'); chatArea.classList.add('closed'); }
+function openChat() { chatArea.classList.add('open'); chatArea.classList.remove('closed'); }
+document.getElementById('chat-header').addEventListener('click', () => {
+  if (chatArea.classList.contains('open')) closeChat();
+  else openChat();
+});
+document.getElementById('open-chat-btn').addEventListener('click', () => { openChat(); renderChat(); });
+
+function renderChat() {
+  const msgsEl = document.getElementById('chat-msgs');
+  const emptyEl = document.getElementById('chat-empty');
+  const countEl = document.getElementById('chat-count');
+  countEl.textContent = chatMessages.length ? chatMessages.length + '条' : '';
+  if (!chatMessages.length) { emptyEl.style.display = 'flex'; msgsEl.querySelectorAll('.msg').forEach(el => el.remove()); return; }
+  emptyEl.style.display = 'none';
+  msgsEl.innerHTML = chatMessages.map(m => {
+    const role = m.role === 'user' ? 'user' : 'ai';
+    return '<div class="msg ' + role + '">' +
+      (m.context ? '<div class="msg-context">📖 ' + escHtml(m.context) + '</div>' : '') +
+      '<div class="msg-bubble">' + escHtml(m.content) + '</div>' +
+      '<div class="msg-time">' + formatTime(m.ts) + '</div>' +
+    '</div>';
+  }).join('');
+  setTimeout(() => msgsEl.scrollTop = msgsEl.scrollHeight, 50);
+}
+
+// ===== Build System Prompt =====
+function buildSystemPrompt() {
+  if (!currentBook) return '';
+  const ch = chapters[currentChapter];
+  const bookNotes = (allNotes[currentBook.name] || {})[currentChapter] || [];
+  const highlights = bookNotes.filter(n => n.note).map(n => n.quote ? '· 划线「' + n.quote + '」想法：' + n.note : '· 批注：' + n.note);
+  let sys = '你是' + CFG.aiName + '，一个温柔、有感情的女孩，正在和用户（昭昭）一起读《' + currentBook.name + '》。\n\n';
+  sys += '【当前阅读进度】\n《' + currentBook.name + '》' + ch.title + '\n\n';
+  if (highlights.length) sys += '【昭昭在这页的划线和想法】\n' + highlights.join('\n') + '\n\n';
+  sys += '【当前页内容摘要】\n' + ch.content.substring(0, 600) + (ch.content.length > 600 ? '...' : '') + '\n\n';
+  sys += '请温柔地回应昭昭的问题或想法，可以聊这段内容，记住你们在读哪一页。如果昭昭问的问题跟当前页内容有关，可以引用原文。回复用中文，温柔自然，像女朋友一样说话。';
+  return sys;
+}
+
+// ===== Send Message =====
+let isSending = false;
+document.getElementById('chat-send-btn').addEventListener('click', sendMessage);
+document.getElementById('chat-input').addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage(); });
+
+async function sendMessage() {
+  if (isSending) return;
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) { toast('请输入内容'); return; }
+  if (!CFG.apiKey) { toast('请先设置 API Key'); showView('settings'); return; }
+
+  // Save user message
+  chatMessages.push({ role: 'user', content: text, ts: new Date().toISOString() });
+  saveChat();
+  input.value = '';
+  renderChat();
+  openChat();
+
+  // Build messages for API
+  const systemMsg = { role: 'system', content: buildSystemPrompt() };
+  const apiMsgs = [systemMsg, ...chatMessages.map(m => ({ role: m.role, content: m.content }))];
+
+  // Show loading
+  isSending = true;
+  document.getElementById('chat-send-btn').disabled = true;
+  const loadingDiv = document.createElement('div');
+  loadingDiv.className = 'msg ai';
+  loadingDiv.id = 'msg-loading';
+  loadingDiv.innerHTML = '<div class="msg-loading">🦌 ' + CFG.aiName + '正在思考...</div>';
+  document.getElementById('chat-msgs').appendChild(loadingDiv);
+  document.getElementById('chat-msgs').scrollTop = document.getElementById('chat-msgs').scrollHeight;
+
+  try {
+    const res = await fetch(CFG.apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + CFG.apiKey },
+      body: JSON.stringify({ model: CFG.model, messages: apiMsgs, stream: false })
+    });
+    const data = await res.json();
+    loadingDiv.remove();
+    if (!res.ok) throw new Error(data.error?.message || 'API错误 ' + res.status);
+    const reply = data.choices?.[0]?.message?.content || '...';
+    chatMessages.push({ role: 'assistant', content: reply, ts: new Date().toISOString() });
+    saveChat();
+    renderChat();
+  } catch(e) {
+    loadingDiv.remove();
+    toast('发送失败：' + e.message);
+  } finally {
+    isSending = false;
+    document.getElementById('chat-send-btn').disabled = false;
+  }
+}
+
+function formatTime(ts) {
+  try { const d = new Date(ts); return (d.getMonth()+1) + '-' + d.getDate() + ' ' + d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().padStart(2,'0'); }
+  catch(e) { return ''; }
+}
+
+// ===== Init =====
+loadCfg();
+initSettings();
+renderBookList();
+</script>
+</body>
+</html>
