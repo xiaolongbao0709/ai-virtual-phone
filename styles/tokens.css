@@ -69,42 +69,50 @@
   --c-icon-lilac: #9580B066;
   --c-icon-story: #8B6F5266;
 
-  /* ── 音乐色 (Spring Light Green Aesthetics) ── */
-  --c-music-bg: #f6fcf0;
-  /* 页面底色（极淡黄绿） */
-  --c-music-bg-mint: rgba(186, 225, 220, 0.6);
-  /* 背景渐变·薄荷青 */
-  --c-music-bg-cream: rgba(255, 255, 238, 0.7);
-  /* 背景渐变·米黄 */
-  --c-music-bg-lime: rgba(200, 240, 186, 0.5);
-  /* 背景渐变·嫩绿 */
-  --c-music-bg-mint-dim: rgba(186, 230, 225, 0.4);
-  /* 背景渐变·薄荷青淡 */
-  --c-music-bg-center: rgba(240, 252, 228, 0.8);
-  /* 背景渐变·中心淡绿 */
-  --c-music-bg-glow: rgba(255, 255, 255, 0.3);
-  /* 全屏播放器·白光 */
-  --c-music-bg-mist: rgba(120, 155, 135, 0.1);
-  /* 全屏播放器·绿雾 */
-  --c-music-surface: rgba(255, 255, 255, 0.3);
+  /* ── 音乐色 (夜光 Lumen · Dark Immersive) ── */
+  --c-music-bg: #0a0b10;
+  /* 页面底色（夜幕黑） */
+  --c-music-bg-mint: rgba(88, 116, 196, 0.16);
+  /* 背景渐变·极光蓝 */
+  --c-music-bg-cream: rgba(122, 96, 202, 0.12);
+  /* 背景渐变·夜紫 */
+  --c-music-bg-lime: rgba(66, 134, 160, 0.12);
+  /* 背景渐变·青蓝 */
+  --c-music-bg-mint-dim: rgba(88, 116, 196, 0.1);
+  /* 背景渐变·极光蓝淡 */
+  --c-music-bg-center: rgba(14, 16, 26, 0.85);
+  /* 背景渐变·中心深蓝 */
+  --c-music-bg-glow: rgba(160, 190, 255, 0.14);
+  /* 全屏播放器·月光 */
+  --c-music-bg-mist: rgba(90, 120, 200, 0.1);
+  /* 全屏播放器·蓝雾 */
+  --c-music-surface: rgba(255, 255, 255, 0.06);
   /* 玻璃面板/唱片底 */
-  --c-music-surface-solid: rgba(255, 255, 255, 0.55);
-  /* 不透明面板/边框/高光 */
-  --c-music-glass-dim: rgba(255, 255, 255, 0.08);
+  --c-music-surface-solid: rgba(255, 255, 255, 0.13);
+  /* 边框/高光 */
+  --c-music-panel: rgba(22, 25, 38, 0.96);
+  /* 不透明面板（弹窗/抽屉） */
+  --c-music-glass-dim: rgba(255, 255, 255, 0.09);
   /* 极淡装饰（沟槽/纹路） */
-  --c-music-white: rgba(255, 255, 255, 0.3);
+  --c-music-white: #ffffff;
   /* 纯白（文字/圆钮） */
-  --c-music-text: #2b3d31;
-  /* 深墨绿主文字 */
-  --c-music-accent: #5b7b64;
-  /* 龙井绿强调色/文字/按钮 */
-  --c-music-accent-dim: rgba(106, 141, 115, 0.15);
-  /* 淡绿（阴影/投影/进度条） */
-  --c-music-gold: rgba(212, 168, 83, 0.3);
-  /* 金色（唱片中心/唱臂/光晕） */
-  --c-music-overlay: rgba(0, 0, 0, 0.25);
+  --c-music-text: #eef0f7;
+  /* 月白主文字 */
+  --c-music-accent: #9aa6c0;
+  /* 月灰蓝次级文字/图标 */
+  --c-music-accent-dim: rgba(150, 170, 220, 0.14);
+  /* 淡蓝（阴影/投影/进度条） */
+  --c-music-primary: #ff5468;
+  /* 珊瑚红主强调（红心/CTA） */
+  --c-music-primary-dim: rgba(255, 84, 104, 0.14);
+  /* 珊瑚红淡底 */
+  --c-music-glowtext: #dcebff;
+  /* 发光歌词月光色 */
+  --c-music-gold: rgba(220, 235, 255, 0.4);
+  /* 月光（唱片中心/光晕） */
+  --c-music-overlay: rgba(0, 0, 0, 0.55);
   /* 遮罩/投影 */
-  --c-music-liked: #ff6b7f;
+  --c-music-liked: #ff5468;
   /* 已点赞红心 */
 
   /* ── 日历色 (Ocean Foam Aesthetics - Default Base) ── */

@@ -4814,12 +4814,18 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
                 if (isMetaSlot && (statusPanelHere || innerMonologueHere || reasoningTextHere || (stateValuesHere && stateValuesHere.length > 0))) {
                     metaProjected = true;
                 }
+                // 语音条的 mediaData 里存着播放必需的状态（synthesizedFromText/voiceDuration），
+                // 直接用重解析结果整体替换会把它们丢掉，导致气泡永远判定"待重合成"而点不响。
+                // 双方都是语音条时按存储值打底、重解析字段覆盖。
+                const mediaData = part.mediaType === "audio" && base.mediaType === "audio" && base.mediaData
+                    ? { ...base.mediaData, ...part.mediaData }
+                    : part.mediaData;
                 projected.push({
                     ...base,
                     id,
                     content: part.content,
                     mediaType: part.mediaType,
-                    mediaData: part.mediaData,
+                    mediaData,
                     statusPanel: statusPanelHere,
                     innerMonologue: innerMonologueHere,
                     reasoningText: reasoningTextHere,
