@@ -11,6 +11,37 @@ type ImageGenerationRequest = {
   size?: string;
   quality?: string;
   referenceImageDataUrl?: string;
+  /** Provider 类型 */
+  provider?: "openai" | "novelai" | "google-imagen";
+  /** NovelAI 专属配置（provider=novelai 时使用） */
+  novelaiUrl?: string;
+  novelaiKey?: string;
+  novelaiModel?: string;
+  novelaiSize?: string;
+  novelaiPositivePrefix?: string;
+  novelaiQualitySuffix?: string;
+  novelaiNegativePrompt?: string;
+  novelaiPromptTemplate?: string;
+  // ---- 新增高级参数 ----
+  novelaiSteps?: number;
+  novelaiCfgScale?: number;
+  novelaiSampler?: string;
+  novelaiNoiseSchedule?: string;
+  novelaiSeed?: string | null;
+  novelaiStyleStrength?: number;
+  novelaiUcPreset?: number;
+  novelaiQualityTags?: boolean;
+  novelaiSmea?: boolean;
+  novelaiSmeaDyn?: boolean;
+  novelaiEndpointMode?: "stream" | "normal";
+  /** Google Imagen 专属配置（provider=google-imagen 时使用） */
+  googleKey?: string;
+  googleModel?: string;
+  googleWidth?: number;
+  googleHeight?: number;
+  googleNegativePrompt?: string;
+  googleAspectRatio?: string;
+  googlePersonGeneration?: string;
 };
 
 type ExtractedImage =
@@ -117,6 +148,188 @@ async function fetchImageUrl(url: string): Promise<{ b64: string; mimeType: stri
   return { b64: buffer.toString("base64"), mimeType };
 }
 
+// ── NovelAI 服务端生图 ──────────────────────────────────────────
+
+const NAI_SIZE_MAP: Record<string, [number, number]> = {
+    "832x1216": [832, 1216],
+    "1216x832": [1216, 832],
+    "1024x1024": [1024, 1024],
+    "832x832": [832, 832],
+    "1280x720": [1280, 720],
+    "720x1280": [720, 1280],
+};
+
+function buildNaiPrompt(prompt: string, input: ImageGenerationRequest): string {
+    const template = input.novelaiPromptTemplate || "{prompt}";
+    return template
+        .replace(/\{positive_prefix\}/gi, input.novelaiPositivePrefix || "")
+        .replace(/\{quality_suffix\}/gi, input.novelaiQualitySuffix || "best quality, very aesthetic, masterpiece")
+        .replace(/\{prompt\}/gi, prompt);
+}
+
+async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  try {
+    const naiKey = input.novelaiKey?.trim();
+    const naiUrl = input.novelaiUrl?.trim();
+    const prompt = input.prompt?.trim();
+
+    if (!naiKey) return { status: 400, body: { error: "缺少 NovelAI API Key" } };
+    if (!naiUrl) return { status: 400, body: { error: "缺少 NovelAI 地址" } };
+    if (!prompt) return { status: 400, body: { error: "缺少提示词" } };
+
+    const baseUrl = naiUrl.replace(/\/+$/, "");
+    const url = `${baseUrl}/ai/generate-image`;
+    const sizeStr = input.novelaiSize || "832x1216";
+    const [width, height] = NAI_SIZE_MAP[sizeStr] || ([832, 1216] as [number, number]);
+    const finalPrompt = buildNaiPrompt(prompt, input);
+
+    const body = JSON.stringify({
+      input: finalPrompt,
+      model: input.novelaiModel || "nai-diffusion-4-5-full",
+      action: "generate",
+      parameters: {
+        width,
+        height,
+        scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
+        sampler: (input.novelaiSampler || "euler_ancestral").replace(/^k_/, "k_").replace("euler_ancestral", "k_euler_ancestral"),
+        steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(150, input.novelaiSteps)) : 28,
+        seed: typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) || -1 : -1,
+        negative_prompt: input.novelaiNegativePrompt || "",
+        ucPreset: typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0,
+        add_original_image: false,
+        cfg_rescale: 0,
+        controlnet_strength: 1,
+        dynamic_thresholding: false,
+        legacy: false,
+        quality_toggle: true,
+        sm: !!input.novelaiSmeaDyn,
+        sm_dyn: !!input.novelaiSmeaDyn,
+        uncond_scale: 1,
+        noise_schedule: input.novelaiNoiseSchedule || "native",
+        legacy_v3_extend: false,
+        smea_dy: !!input.novelaiSmeaDyn,
+        smea_static: !!input.novelaiSmea,
+        smea: !!input.novelaiSmea,
+        ref_sw: false,
+        decr_countdown: false,
+      },
+    });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 300_000); // 5min
+    let res: Response;
+    try {
+      res = await externalFetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${naiKey}`,
+        },
+        body,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      return { status: 502, body: { error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 600)}` } };
+    }
+
+    const json = await res.json() as Record<string, unknown>;
+    const artifacts = json.artifacts as Array<Record<string, unknown>> | undefined;
+    if (!artifacts || !artifacts.length) {
+      return { status: 502, body: { error: `NovelAI 返回格式异常：${JSON.stringify(Object.keys(json)).slice(0, 200)}` } };
+    }
+
+    const b64 = artifacts[0].base64 as string | undefined;
+    if (!b64) return { status: 502, body: { error: "NovelAI 返回的图片数据为空" } };
+
+    return {
+      status: 200,
+      body: {
+        b64,
+        mimeType: (artifacts[0].type as string) || "image/png",
+        revisedPrompt: finalPrompt,
+      },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const status = message.toLowerCase().includes("abort") ? 504 : 502;
+    return { status, body: { error: message } };
+  }
+}
+
+// ── Google Imagen 服务端生图（OpenAI 兼容端点）─────────────────────
+const GOOGLE_IMAGEN_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/openai/images:generations";
+
+async function runGoogleImagenImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  try {
+    const apiKey = input.googleKey?.trim();
+    const prompt = input.prompt?.trim();
+    if (!apiKey) return { status: 400, body: { error: "缺少 Google API Key" } };
+    if (!prompt) return { status: 400, body: { error: "缺少提示词" } };
+
+    const model = input.googleModel?.trim() || "imagen-3.0-generate-002";
+    const width = typeof input.googleWidth === "number" ? input.googleWidth : 1024;
+    const height = typeof input.googleHeight === "number" ? input.googleHeight : 1024;
+
+    const body: Record<string, unknown> = {
+      model,
+      prompt,
+      n: 1,
+      size: `${width}x${height}`,
+      response_format: "b64_json",
+    };
+    if (input.googleNegativePrompt?.trim()) body.negative_prompt = input.googleNegativePrompt.trim();
+    if (input.googleAspectRatio?.trim()) body.aspect_ratio = input.googleAspectRatio.trim();
+    if (input.googlePersonGeneration?.trim()) body.person_generation = input.googlePersonGeneration.trim();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180_000);
+    let res: Response;
+    try {
+      res = await externalFetch(GOOGLE_IMAGEN_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      return { status: 502, body: { error: `Google Imagen API 错误 ${res.status}: ${errText.slice(0, 600)}` } };
+    }
+
+    const json = await res.json() as Record<string, unknown>;
+    const extracted = extractFromObject(json);
+    if (!extracted) {
+      return { status: 502, body: { error: `Google Imagen 返回格式异常：${JSON.stringify(Object.keys(json || {})).slice(0, 200)}` } };
+    }
+    if (extracted.kind === "url") {
+      const downloaded = await fetchImageUrl(extracted.url);
+      return { status: 200, body: { ...downloaded, revisedPrompt: extracted.revisedPrompt } };
+    }
+    return {
+      status: 200,
+      body: { b64: extracted.b64, mimeType: extracted.mimeType || "image/png", revisedPrompt: extracted.revisedPrompt },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const status = message.toLowerCase().includes("abort") ? 504 : 502;
+    return { status, body: { error: message } };
+  }
+}
+
+// ── 原有 OpenAI 兼容生图 ──────────────────────────────────────────
+
 async function runImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
   try {
     const apiKey = input.apiKey?.trim();
@@ -210,7 +423,92 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "请求体不是有效 JSON" }, { status: 400 });
   }
 
-  // 心跳流式模式:立刻开始返回响应并周期性发送心跳字节,把真正的结果附在流末尾。
+  // ── Provider 路由：NovelAI 走专属逻辑 ──
+  if (input.provider === "novelai") {
+    // 心跳流式模式同样支持
+    if (req.headers.get("x-stream-heartbeat") === "1") {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          let finished = false;
+          const heartbeat = setInterval(() => {
+            if (!finished) {
+              try { controller.enqueue(encoder.encode(" ")); } catch { /* */ }
+            }
+          }, 3000);
+          runNovelAIImageGeneration(input)
+            .then(({ status, body }) => {
+              controller.enqueue(encoder.encode("\n" + IMAGE_STREAM_RESULT_MARKER + JSON.stringify({ httpStatus: status, ...body })));
+            })
+            .catch((err) => {
+              const message = err instanceof Error ? err.message : String(err);
+              try {
+                controller.enqueue(encoder.encode("\n" + IMAGE_STREAM_RESULT_MARKER + JSON.stringify({ httpStatus: 502, error: message })));
+              } catch { /* */ }
+            })
+            .finally(() => {
+              finished = true;
+              clearInterval(heartbeat);
+              try { controller.close(); } catch { /* */ }
+            });
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    }
+    const { status, body } = await runNovelAIImageGeneration(input);
+    return NextResponse.json(body, { status });
+  }
+
+  // ── Google Imagen（OpenAI 兼容端点）──
+  if (input.provider === "google-imagen") {
+    if (req.headers.get("x-stream-heartbeat") === "1") {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          let finished = false;
+          const heartbeat = setInterval(() => {
+            if (!finished) {
+              try { controller.enqueue(encoder.encode(" ")); } catch { /* */ }
+            }
+          }, 3000);
+          runGoogleImagenImageGeneration(input)
+            .then(({ status, body }) => {
+              controller.enqueue(encoder.encode("\n" + IMAGE_STREAM_RESULT_MARKER + JSON.stringify({ httpStatus: status, ...body })));
+            })
+            .catch((err) => {
+              const message = err instanceof Error ? err.message : String(err);
+              try {
+                controller.enqueue(encoder.encode("\n" + IMAGE_STREAM_RESULT_MARKER + JSON.stringify({ httpStatus: 502, error: message })));
+              } catch { /* */ }
+            })
+            .finally(() => {
+              finished = true;
+              clearInterval(heartbeat);
+              try { controller.close(); } catch { /* */ }
+            });
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    }
+    const { status, body } = await runGoogleImagenImageGeneration(input);
+    return NextResponse.json(body, { status });
+  }
+
+  // ── OpenAI 兼容（原有逻辑）──
   // 这样托管平台(Netlify 等)按"流式响应"计时,不会因为上游生图慢(30~120s)
   // 而在缓冲模式的 10~26s 上限处直接 504。旧客户端不带该头时行为不变。
   if (req.headers.get("x-stream-heartbeat") === "1") {
