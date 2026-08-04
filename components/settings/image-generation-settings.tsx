@@ -24,31 +24,32 @@ const QUALITY_OPTIONS = ["auto", "low", "medium", "high"];
 
 /** NovelAI 尺寸选项 */
 const NAI_SIZE_OPTIONS = [
-    { value: "832x1216", label: "832x1216（竖图）" },
-    { value: "1216x832", label: "1216x832（横图）" },
+    { value: "832x1216", label: "832x1216（2:3 竖图）" },
+    { value: "1216x832", label: "1216x832（3:2 横图）" },
+    { value: "1024x1536", label: "1024x1536（2:3 竖图）" },
+    { value: "1536x1024", label: "1536x1024（3:2 横图）" },
     { value: "1024x1024", label: "1024x1024（正方）" },
-    { value: "832x832", label: "832x832（小正方）" },
-    { value: "1280x720", label: "1280x720（横版）" },
-    { value: "720x1280", label: "720x1280（竖版）" },
-    { value: "1024x768", label: "1024x768（经典）" },
-    { value: "768x1024", label: "768x1024（竖经典）" },
+    { value: "1472x1472", label: "1472x1472（高清正方）" },
 ];
 
-/** NAI 模型预设 */
+/** NAI 模型预设（均为 NAI 官方真实模型，与 Miya 小手机一致） */
 const NAI_MODEL_OPTIONS = [
-    { value: "nai-diffusion-4-5-full", label: "nai-diffusion-4-5-full" },
-    { value: "nai-diffusion-3", label: "nai-diffusion-3" },
-    { value: "nai-diffusion-xl", label: "nai-diffusion-xl" },
+    { value: "nai-diffusion-4-5-full", label: "nai-diffusion-4-5-full（最新·推荐）" },
+    { value: "nai-diffusion-4-5-curated", label: "nai-diffusion-4-5-curated" },
+    { value: "nai-diffusion-4-full", label: "nai-diffusion-4-full" },
+    { value: "nai-diffusion-4-curated-preview", label: "nai-diffusion-4-curated-preview" },
+    { value: "nai-diffusion-3", label: "nai-diffusion-3（旧版·省额度）" },
+    { value: "nai-diffusion-furry-3", label: "nai-diffusion-furry-3（兽人）" },
 ];
 
-/** NAI 采样器选项 */
+/** NAI 采样器选项（NAI 真实 sampler 名，带 k_ 前缀） */
 const NAI_SAMPLER_OPTIONS = [
-    { value: "dpmpp_2m", label: "DPM++ 2M" },
-    { value: "euler_ancestral", label: "Euler Ancestral" },
-    { value: "euler", label: "Euler" },
-    { value: "dpmpp_2m_sde", label: "DPM++ 2M SDE" },
-    { value: "ddim", label: "DDIM" },
-    { value: "uni_pc", label: "UniPC" },
+    { value: "k_euler_ancestral", label: "k_euler_ancestral（推荐）" },
+    { value: "k_euler", label: "k_euler" },
+    { value: "k_dpmpp_2m", label: "k_dpmpp_2m" },
+    { value: "k_dpmpp_sde", label: "k_dpmpp_sde" },
+    { value: "k_lms", label: "k_lms" },
+    { value: "ddim_v3", label: "ddim_v3" },
 ];
 
 /** NAI UC 预设选项 */
@@ -262,6 +263,7 @@ export function ImageGenerationSettings() {
     const [characters, setCharacters] = useState<Character[]>([]);
     const [referencePreviews, setReferencePreviews] = useState<Record<string, string>>({});
     const [models, setModels] = useState<string[]>([]);
+    const [naiModels, setNaiModels] = useState<string[]>(NAI_MODEL_OPTIONS.map(o => o.value));
     const [isFetchingModels, setIsFetchingModels] = useState(false);
     const [isTesting, setIsTesting] = useState(false);
     const [status, setStatus] = useState<Status | null>(null);
@@ -378,6 +380,46 @@ export function ImageGenerationSettings() {
             });
         } catch (err) {
             setModels([]);
+            setStatus({ success: false, message: err instanceof Error ? err.message : String(err) });
+        } finally {
+            setIsFetchingModels(false);
+        }
+    };
+
+    // ── 拉取 NAI 模型 ──
+    const fetchNaiModels = async () => {
+        setStatus(null);
+        const url = settings.novelai.url.trim();
+        const key = settings.novelai.apiKey.trim();
+        if (!key) {
+            setStatus({ success: false, message: "请先填写 API ACCESS TOKEN。" });
+            return;
+        }
+        setIsFetchingModels(true);
+        try {
+            // 优先尝试从服务器 /v1/models 拉取（中转站常支持）；失败则回退内置列表
+            let fetched: string[] = [];
+            if (url) {
+                const base = url.replace(/\/+$/, "");
+                const res = await fetch(`${base}/v1/models`, {
+                    headers: { Authorization: `Bearer ${key}` },
+                });
+                if (res.ok) {
+                    const json = await res.json().catch(() => null);
+                    if (json && Array.isArray(json.data)) {
+                        fetched = json.data.map((m: { id?: string }) => m.id).filter(Boolean) as string[];
+                    }
+                }
+            }
+            const merged = Array.from(new Set([...NAI_MODEL_OPTIONS.map(o => o.value), ...fetched]));
+            setNaiModels(merged);
+            setStatus({
+                success: true,
+                message: fetched.length > 0
+                    ? `已拉取 ${fetched.length} 个模型，可在上方下拉选择。`
+                    : "已载入内置 NAI 模型列表，可直接在下拉选择。",
+            });
+        } catch (err) {
             setStatus({ success: false, message: err instanceof Error ? err.message : String(err) });
         } finally {
             setIsFetchingModels(false);
@@ -566,7 +608,7 @@ export function ImageGenerationSettings() {
                 </button>
             </div>
 
-            {/* ════════════ NOVELAI 区域 ════════════ */}
+            {/* ════════════ NOVELAI 区域（简洁版 · 棉花糖机风格） ════════════ */}
             <div className="flex flex-col gap-3">
                 <div className="flex items-center ml-2">
                     <p className="menu-desc font-semibold opacity-60">NOVELAI</p>
@@ -602,115 +644,231 @@ export function ImageGenerationSettings() {
                     </div>
                 </div>
 
-                {/* NAI 基础配置 */}
                 {(isNai || true) && (
-                    <>
-                        {/* API Key */}
-                        <div className="menu-group">
-                            <div className="menu-item">
-                                <span className="card-icon" style={naiIconStyle}>
-                                    <Upload size={22} strokeWidth={1.75} />
-                                </span>
-                                <span className="settings-tools-menu-copy flex-1 min-w-0">
-                                    <span className="menu-label appearance-menu-item-label truncate">API Key</span>
-                                    <span className="menu-desc settings-tools-menu-desc truncate">
-                                        {settings.novelai.apiKey ? "••••••••••••••••" : "未填写"}
-                                    </span>
-                                </span>
-                            </div>
+                    <div className="menu-group p-4 flex flex-col gap-3">
+
+                        {/* ── NovelAI 地址 ── */}
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1 font-medium">NovelAI 地址</label>
+                            <Input
+                                type="text"
+                                value={settings.novelai.url}
+                                onChange={(e) => updateNai({ url: e.target.value })}
+                                placeholder="本站官方部署可留空；中转填站点根或完整路径"
+                            />
+                            <p className="menu-desc ml-1 opacity-50 text-xs">
+                                用本站官方部署时：地址留空即可（本站自带 NovelAI 直连代理）。
+                                填写中转站 Key 后能出图。中转分两种：①官方设中转——填站点根（自动走 /ai/generate-image 或贴完整端点）；②走兼容 OpenAI markdown 图。
+                            </p>
                         </div>
 
-                        {/* NOVELAI API URL */}
-                        <div className="menu-group p-4 flex flex-col gap-3">
-                            <div className="flex flex-col gap-1">
-                                <label className="menu-desc ml-1 font-medium">NOVELAI API URL</label>
-                                <Input
-                                    type="text"
-                                    value={settings.novelai.url}
-                                    onChange={(e) => updateNai({ url: e.target.value })}
-                                    placeholder="留空使用官方 NovelAI"
-                                />
-                                <p className="menu-desc ml-1 opacity-60 text-xs">
-                                    可填写中转站/镜像站地址；配置是否可用请用下方测试出图验证。
-                                </p>
-                            </div>
-
-                            {/* 出图接口 */}
-                            <div className="flex flex-col gap-1">
-                                <label className="menu-desc ml-1 font-medium">出图接口</label>
-                                <Select
-                                    value={settings.novelai.endpointMode}
-                                    onChange={(e) => updateNai({ endpointMode: e.target.value as "stream" | "normal" })}
-                                >
-                                    {NAI_ENDPOINT_OPTIONS.map(opt => (
-                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                    ))}
-                                </Select>
-                                <p className="menu-desc ml-1 opacity-60 text-xs">
-                                    自定义站不支持流式时，可以改成普通接口后用测试出图验证。
-                                </p>
-                            </div>
-
-                            {/* API ACCESS TOKEN */}
-                            <div className="flex flex-col gap-1">
-                                <label className="menu-desc ml-1 font-medium">API ACCESS TOKEN</label>
-                                <Input
-                                    type="password"
-                                    value={settings.novelai.apiKey}
-                                    onChange={(e) => updateNai({ apiKey: e.target.value })}
-                                    placeholder="pst-... 或中转站 Key"
-                                />
-                                <p className="menu-desc ml-1 opacity-60 text-xs">密钥仅保存在本地存储中。</p>
-                            </div>
+                        {/* ── NovelAI Key ── */}
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1 font-medium">NovelAI Key</label>
+                            <Input
+                                type="password"
+                                value={settings.novelai.apiKey}
+                                onChange={(e) => updateNai({ apiKey: e.target.value })}
+                                placeholder="pst-... 或中转站 Key"
+                            />
+                            <p className="menu-desc ml-1 opacity-50 text-xs">当前：{settings.novelai.apiKey ? "已填写" : "未填写"}</p>
                         </div>
 
-                        {/* 模型选择 + 拉取模型 */}
-                        <div className="menu-group">
-                            <div className="menu-item">
-                                <span className="card-icon" style={naiIconStyle}>
-                                    <Sparkles size={22} strokeWidth={1.75} />
-                                </span>
-                                <span className="settings-tools-menu-copy flex-1 min-w-0">
-                                    <span className="menu-label appearance-menu-item-label truncate">选择模型</span>
-                                    <span className="menu-desc settings-tools-menu-desc">{settings.novelai.model}</span>
-                                </span>
+                        {/* ── 模型（下拉 + 拉取）── */}
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1 font-medium">NovelAI 模型</label>
+                            <Select
+                                value={settings.novelai.model}
+                                onChange={(e) => updateNai({ model: e.target.value })}
+                            >
+                                {naiModels.map((m) => (
+                                    <option key={m} value={m}>{m}</option>
+                                ))}
+                            </Select>
+                            <div className="flex justify-end">
                                 <button
                                     type="button"
                                     className="ui-link-btn shrink-0"
-                                    onClick={() => setShowNaiModal(true)}
+                                    onClick={fetchNaiModels}
+                                    disabled={isFetchingModels}
                                 >
-                                    <RefreshCw size={16} />
-                                    拉取模型
+                                    <RefreshCw size={14} />
+                                    {isFetchingModels ? "拉取中…" : "刷新模型列表"}
                                 </button>
                             </div>
                         </div>
 
-                        {/* 生成设定（尺寸） */}
-                        <div className="menu-group">
-                            <div className="menu-item">
-                                <span className="card-icon" style={naiIconStyle}>
-                                    <Image size={22} strokeWidth={1.75} />
-                                </span>
-                                <span className="settings-tools-menu-copy flex-1 min-w-0">
-                                    <span className="menu-label appearance-menu-item-label truncate">生成设定</span>
-                                    <span className="menu-desc settings-tools-menu-desc">{settings.novelai.size}</span>
-                                </span>
-                                <ChevronDown size={18} className="shrink-0 opacity-40" />
-                            </div>
+                        {/* ── 尺寸 ── */}
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1 font-medium">NovelAI 尺寸</label>
+                            <Select
+                                value={settings.novelai.size}
+                                onChange={(e) => updateNai({ size: e.target.value })}
+                            >
+                                {NAI_SIZE_OPTIONS.map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                            </Select>
+                            <p className="menu-desc ml-1 opacity-50 text-xs">图尺寸；聊天生图也会优先使用这里的选择。</p>
                         </div>
 
-                        {/* 打开 NAI 详细设置弹窗按钮 */}
-                        <div className="flex justify-center pt-1 pb-2">
-                            <button
-                                type="button"
-                                className="ui-btn ui-btn-soft-action"
-                                onClick={() => setShowNaiModal(true)}
-                            >
-                                <Sparkles size={16} />
-                                打开 NovelAI 详细设置
-                            </button>
+                        {/* ── 正向提示词前缀 ── */}
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1 font-medium">NovelAI 正向提示词前缀</label>
+                            <Textarea
+                                value={settings.novelai.positivePrefix}
+                                onChange={(e) => updateNai({ positivePrefix: e.target.value })}
+                                placeholder="{{handsome}}, {{delicate features}}, {{matte skin}}, {{skin texture}}, {{soft shading}}"
+                                rows={3}
+                            />
                         </div>
-                    </>
+
+                        {/* ── 正向质量词（后缀）── */}
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1 font-medium">NovelAI 正向质量词（后缀）</label>
+                            <Input
+                                type="text"
+                                value={settings.novelai.qualitySuffix}
+                                onChange={(e) => updateNai({ qualitySuffix: e.target.value })}
+                                placeholder="留空用默认：best quality, very aesthetic, masterpiece"
+                            />
+                        </div>
+
+                        {/* ── 负面提示词 ── */}
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1 font-medium">NovelAI 负面提示词</label>
+                            <Textarea
+                                value={settings.novelai.negativePrompt}
+                                onChange={(e) => updateNai({ negativePrompt: e.target.value })}
+                                placeholder="lowres, bad anatomy, worst quality, low quality, full body, wide shot, distant shot, small face, angular face, blocky face, long neck, mutated hands, poorly drawn face, mutation, deformed, extra limbs, ugly, blurry,"
+                                rows={3}
+                            />
+                        </div>
+
+                        {/* ═══ 高级选项（默认折叠） ═══ */}
+                        <details className="group">
+                            <summary className="cursor-pointer select-none ts-13 opacity-50 hover:opacity-80 py-1 flex items-center gap-1">
+                                <ChevronDown size={14} className="transition-transform group-open:rotate-90" />
+                                高级选项（模板 / 画风 / 出图接口 / 采样参数）
+                            </summary>
+                            <div className="flex flex-col gap-3 mt-3 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
+
+                                {/* 提示词模板 */}
+                                <div className="flex flex-col gap-1">
+                                    <label className="ts-13 font-medium opacity-70">提示词模板（高级）</label>
+                                    <Textarea
+                                        value={settings.novelai.promptTemplate}
+                                        onChange={(e) => updateNai({ promptTemplate: e.target.value })}
+                                        placeholder='填写则覆盖前缀/质量词；可用 {{prompt}} 插入本次内容'
+                                        rows={2}
+                                    />
+                                </div>
+
+                                {/* 默认画风 */}
+                                <div className="flex flex-col gap-1">
+                                    <label className="ts-13 font-medium opacity-70">默认画风</label>
+                                    <Input
+                                        type="text"
+                                        value={settings.novelai.defaultStyle}
+                                        onChange={(e) => updateNai({ defaultStyle: e.target.value })}
+                                        placeholder="不套用（用上方前缀/模板）"
+                                    />
+                                    <p className="ts-11 opacity-40">内置画师库底座；角色「专属画风」会覆盖这里。</p>
+                                </div>
+
+                                {/* 出图接口 */}
+                                <div className="flex flex-col gap-1">
+                                    <label className="ts-13 font-medium opacity-70">出图接口</label>
+                                    <Select
+                                        value={settings.novelai.endpointMode}
+                                        onChange={(e) => updateNai({ endpointMode: e.target.value as "stream" | "normal" })}
+                                    >
+                                        {NAI_ENDPOINT_OPTIONS.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
+                                    </Select>
+                                    <p className="ts-11 opacity-40">自定义站不支持流式时切到普通接口。</p>
+                                </div>
+
+                                {/* Steps */}
+                                <div className="flex flex-col gap-1">
+                                    <label className="ts-13 font-medium opacity-70">采样步数 (Steps)：{settings.novelai.steps}</label>
+                                    <input
+                                        type="range"
+                                        min={1} max={50}
+                                        value={settings.novelai.steps}
+                                        onChange={(e) => updateNai({ steps: parseInt(e.target.value, 10) || 28 })}
+                                        className="w-full h-2 rounded-full appearance-none bg-gray-200 accent-purple-500"
+                                    />
+                                </div>
+
+                                {/* CFG Scale */}
+                                <div className="flex flex-col gap-1">
+                                    <label className="ts-13 font-medium opacity-70">CFG Scale：{settings.novelai.cfgScale}</label>
+                                    <input
+                                        type="range"
+                                        min={0} max={20} step={0.5}
+                                        value={settings.novelai.cfgScale}
+                                        onChange={(e) => updateNai({ cfgScale: parseFloat(e.target.value) || 5 })}
+                                        className="w-full h-2 rounded-full appearance-none bg-gray-200 accent-purple-500"
+                                    />
+                                </div>
+
+                                {/* 采样器 */}
+                                <div className="flex flex-col gap-1">
+                                    <label className="ts-13 font-medium opacity-70">采样器</label>
+                                    <Select value={settings.novelai.sampler} onChange={(e) => updateNai({ sampler: e.target.value })}>
+                                        {NAI_SAMPLER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                    </Select>
+                                </div>
+
+                                {/* 噪声调度 */}
+                                <div className="flex flex-col gap-1">
+                                    <label className="ts-13 font-medium opacity-70">噪声调度</label>
+                                    <Select value={settings.novelai.noiseSchedule} onChange={(e) => updateNai({ noiseSchedule: e.target.value })}>
+                                        {NAI_NOISE_SCHEDULE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                    </Select>
+                                </div>
+
+                                {/* UC 预设 */}
+                                <div className="flex flex-col gap-1">
+                                    <label className="ts-13 font-medium opacity-70">负面预设 (UC)</label>
+                                    <Select value={String(settings.novelai.ucPreset)} onChange={(e) => updateNai({ ucPreset: parseInt(e.target.value, 10) || 0 })}>
+                                        {NAI_UC_PRESET_OPTIONS.map(o => <option key={o.value} value={String(o.value)}>{o.label}</option>)}
+                                    </Select>
+                                </div>
+
+                                {/* Seed */}
+                                <div className="flex flex-col gap-1">
+                                    <label className="ts-13 font-medium opacity-70">随机种子 (Seed)</label>
+                                    <Input
+                                        type="text"
+                                        value={settings.novelai.seed ?? ""}
+                                        onChange={(e) => updateNai({ seed: e.target.value || null })}
+                                        placeholder="-1 = 随机"
+                                    />
+                                </div>
+
+                                {/* Toggles row */}
+                                <div className="flex flex-col gap-2 pt-1">
+                                    <div className="flex items-center justify-between py-1">
+                                        <label className="ts-13 opacity-70">质量标签 (Quality Tags)</label>
+                                        <Toggle checked={!!settings.novelai.qualityTags} onChange={(c) => updateNai({ qualityTags: c })} />
+                                    </div>
+                                    <div className="flex items-center justify-between py-1">
+                                        <label className="ts-13 opacity-70">SMEA 细节提升</label>
+                                        <Toggle checked={!!settings.novelai.smea} onChange={(c) => updateNai({ smea: c })} />
+                                    </div>
+                                    <div className="flex items-center justify-between py-1">
+                                        <label className="ts-13 opacity-70">SMEA DYN 动态优化</label>
+                                        <Toggle checked={!!settings.novelai.smeaDyn} onChange={(c) => updateNai({ smeaDyn: c })} />
+                                    </div>
+                                </div>
+
+                            </div>
+                        </details>
+
+                    </div>
                 )}
             </div>
 
@@ -1198,386 +1356,9 @@ export function ImageGenerationSettings() {
                 </div>
             </div>
 
-            {/* ════════════ NAI 详细设置弹窗 ════════════ */}
-            {showNaiModal && (
-                <div
-                    className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm"
-                    onClick={(e) => { if (e.target === e.currentTarget) setShowNaiModal(false); }}
-                >
-                    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-[92vw] max-w-lg max-h-[90vh] overflow-y-auto flex flex-col m-4">
-                        {/* 弹窗标题栏 */}
-                        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 sticky top-0 bg-white dark:bg-gray-800 rounded-t-2xl z-10">
-                            <h3 className="m-0 ts-20 font-bold text-black dark:text-white">NovelAI 生成设置</h3>
-                            <button
-                                type="button"
-                                className="ui-icon-btn"
-                                onClick={() => setShowNaiModal(false)}
-                            >
-                                <X size={20} />
-                            </button>
-                        </div>
+            {/* ═══ NAI 详细设置弹窗已移除（所有字段已内联到上方） ═══ */}
 
-                        {/* 弹窗内容 */}
-                        <div className="flex flex-col gap-5 p-5">
-
-                            {/* 参考图区域 */}
-                            <div className="flex flex-col gap-2">
-                                <label className="ts-14 font-medium text-black dark:text-white">参考图（风格迁移）</label>
-                                <div className="flex gap-3 items-start">
-                                    {/* 参考图预览 */}
-                                    <div className="w-20 h-20 rounded-xl overflow-hidden bg-gray-100 dark:bg-gray-700 shrink-0 flex items-center justify-center border border-gray-200 dark:border-gray-600">
-                                        {naiRefPreview ? (
-                                            <img src={naiRefPreview} alt="参考图" className="w-full h-full object-cover" />
-                                        ) : (
-                                            <Image size={24} className="opacity-30" />
-                                        )}
-                                    </div>
-                                    <div className="flex flex-col gap-2 flex-1">
-                                        <button
-                                            type="button"
-                                            className="ui-btn ui-btn-soft-action w-full text-left justify-center"
-                                            onClick={() => {
-                                                const input = document.createElement("input");
-                                                input.type = "file";
-                                                input.accept = "image/*,.naiv4vibe";
-                                                input.onchange = async () => {
-                                                    const file = input.files?.[0];
-                                                    if (file) await uploadNaiReference(file);
-                                                };
-                                                input.click();
-                                            }}
-                                        >
-                                            更换
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="ui-btn ui-btn-soft-action w-full text-left justify-center"
-                                            onClick={() => {
-                                                const input = document.createElement("input");
-                                                input.type = "file";
-                                                input.accept = ".naiv4vibe";
-                                                input.onchange = async () => {
-                                                    const file = input.files?.[0];
-                                                    if (file) await uploadNaiReference(file);
-                                                };
-                                                input.click();
-                                            }}
-                                        >
-                                            导入 .naiv4vibe 文件
-                                        </button>
-                                        {naiRefPreview && (
-                                            <button
-                                                type="button"
-                                                className="ui-btn w-full text-left justify-center"
-                                                style={{ color: "#EF4444", borderColor: "#FECACA" }}
-                                                onClick={removeNaiReference}
-                                            >
-                                                移除
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* 画风强度 */}
-                            <div className="flex flex-col gap-1">
-                                <div className="flex justify-between items-center">
-                                    <label className="ts-14 font-medium text-black dark:text-white">画风强度</label>
-                                    <span className="ts-13 text-purple-600 font-mono">{settings.novelai.styleStrength.toFixed(1)}</span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min={0}
-                                    max={1}
-                                    step={0.05}
-                                    value={settings.novelai.styleStrength}
-                                    onChange={(e) => updateNai({ styleStrength: parseFloat(e.target.value) })}
-                                    className="w-full h-2 rounded-full appearance-none bg-gray-200 accent-purple-500"
-                                />
-                                <p className="ts-12 opacity-50">0~1，越高越贴近参考画风（建议 0.5~0.7）</p>
-                            </div>
-
-                            {/* 预设组管理 */}
-                            <div className="flex flex-col gap-2">
-                                <label className="ts-14 font-medium text-black dark:text-white">预设组</label>
-                                <div className="flex gap-2">
-                                    <select
-                                        value={activeGroupId}
-                                        onChange={(e) => setActiveGroupId(e.target.value)}
-                                        className="flex-1 ui-select"
-                                    >
-                                        <option value="">新建预设组...</option>
-                                        {settings.novelai.presetGroups.map(g => (
-                                            <option key={g.id} value={g.id}>{g.name} ({g.presets.length})</option>
-                                        ))}
-                                    </select>
-                                    <button
-                                        type="button"
-                                        className="ui-btn ui-btn-soft-action shrink-0"
-                                        onClick={() => {
-                                            const name = prompt("输入新预设组名称：");
-                                            if (name?.trim()) createPresetGroup(name.trim());
-                                        }}
-                                    >
-                                        <Plus size={16} />
-                                        新增
-                                    </button>
-                                </div>
-                                {activeGroup && (
-                                    <div className="flex gap-2 items-center">
-                                        <select
-                                            value={activeGroup.activePresetId || ""}
-                                            onChange={(e) => {
-                                                const g = settings.novelai.presetGroups.find(x => x.id === activeGroupId);
-                                                if (!g) return;
-                                                const pid = e.target.value || null;
-                                                const groups = settings.novelai.presetGroups.map(x =>
-                                                    x.id === activeGroupId ? { ...x, activePresetId: pid } : x
-                                                );
-                                                updateNai({ presetGroups: groups });
-                                                if (pid) {
-                                                    const preset = g.presets.find(p => p.id === pid);
-                                                    if (preset) applyPreset(preset);
-                                                }
-                                            }}
-                                            className="flex-1 ui-select"
-                                        >
-                                            <option value="">-- 选择预设 --</option>
-                                            {activeGroup.presets.map(p => (
-                                                <option key={p.id} value={p.id}>{p.name}</option>
-                                            ))}
-                                        </select>
-                                        <button
-                                            type="button"
-                                            className="ui-btn ui-btn-soft-action shrink-0"
-                                            onClick={() => {
-                                                const name = prompt("保存当前设置为预设名称：");
-                                                if (name?.trim()) saveCurrentAsPreset(name.trim());
-                                            }}
-                                        >
-                                            <Save size={16} />
-                                            保存
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* 正向预设词 */}
-                            <div className="flex flex-col gap-1">
-                                <label className="ts-14 font-medium text-black dark:text-white">正面预设词</label>
-                                <Textarea
-                                    value={settings.novelai.positivePrefix}
-                                    onChange={(e) => updateNai({ positivePrefix: e.target.value })}
-                                    placeholder="illumination, exquisite style, exquisite thick painting,-4::artist collaboration::..."
-                                    rows={3}
-                                />
-                            </div>
-
-                            {/* 负面预设词 */}
-                            <div className="flex flex-col gap-1">
-                                <label className="ts-14 font-medium text-black dark:text-white">负面预设词</label>
-                                <Textarea
-                                    value={settings.novelai.negativePrompt}
-                                    onChange={(e) => updateNai({ negativePrompt: e.target.value })}
-                                    placeholder="lowres, bad anatomy, worst quality..."
-                                    rows={3}
-                                />
-                            </div>
-
-                            {/* 分割线 */}
-                            <hr className="border-gray-200 dark:border-gray-700" />
-
-                            {/* 图像尺寸 */}
-                            <div className="flex flex-col gap-1">
-                                <label className="ts-14 font-medium text-black dark:text-white">图像尺寸（oplus可无限出小图）</label>
-                                <Select
-                                    value={settings.novelai.size}
-                                    onChange={(e) => updateNai({ size: e.target.value })}
-                                >
-                                    {NAI_SIZE_OPTIONS.map(opt => (
-                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                    ))}
-                                </Select>
-                                <p className="ts-12 opacity-50">建议使用官方支持的标准尺寸以获得最佳效果</p>
-                            </div>
-
-                            {/* 采样步数 — slider 1~50 */}
-                            <div className="flex flex-col gap-1">
-                                <div className="flex justify-between items-center">
-                                    <label className="ts-14 font-medium text-black dark:text-white">采样步数 (Steps) : {settings.novelai.steps}</label>
-                                </div>
-                                <input
-                                    type="range"
-                                    min={1}
-                                    max={50}
-                                    value={settings.novelai.steps}
-                                    onChange={(e) => updateNai({ steps: parseInt(e.target.value, 10) || 28 })}
-                                    className="w-full h-2 rounded-full appearance-none bg-gray-200 accent-purple-500"
-                                />
-                                <p className="ts-12 opacity-50">推荐值: 28（值越高质量越好但耗时越长）</p>
-                            </div>
-
-                            {/* CFG Scale — slider */}
-                            <div className="flex flex-col gap-1">
-                                <div className="flex justify-between items-center">
-                                    <label className="ts-14 font-medium text-black dark:text-white">提示词相关性 (CFG Scale) : {settings.novelai.cfgScale}</label>
-                                </div>
-                                <input
-                                    type="range"
-                                    min={0}
-                                    max={20}
-                                    step={0.5}
-                                    value={settings.novelai.cfgScale}
-                                    onChange={(e) => updateNai({ cfgScale: parseFloat(e.target.value) || 5 })}
-                                    className="w-full h-2 rounded-full appearance-none bg-gray-200 accent-purple-500"
-                                />
-                                <p className="ts-12 opacity-50">推荐值: 5（控制图像与提示词的相关程度）</p>
-                            </div>
-
-                            {/* 采样器 */}
-                            <div className="flex flex-col gap-1">
-                                <label className="ts-14 font-medium text-black dark:text-white">采样器 (Sampler)</label>
-                                <Select
-                                    value={settings.novelai.sampler}
-                                    onChange={(e) => updateNai({ sampler: e.target.value })}
-                                >
-                                    {NAI_SAMPLER_OPTIONS.map(opt => (
-                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                    ))}
-                                </Select>
-                            </div>
-
-                            {/* 噪声调度 */}
-                            <div className="flex flex-col gap-1">
-                                <label className="ts-14 font-medium text-black dark:text-white">噪声调度 (Noise Schedule)</label>
-                                <Select
-                                    value={settings.novelai.noiseSchedule}
-                                    onChange={(e) => updateNai({ noiseSchedule: e.target.value })}
-                                >
-                                    {NAI_NOISE_SCHEDULE_OPTIONS.map(opt => (
-                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                    ))}
-                                </Select>
-                            </div>
-
-                            {/* 负面预设 (UC PRESET) */}
-                            <div className="flex flex-col gap-1">
-                                <label className="ts-14 font-medium text-black dark:text-white">负面预设 (UC PRESET)</label>
-                                <Select
-                                    value={String(settings.novelai.ucPreset)}
-                                    onChange={(e) => updateNai({ ucPreset: parseInt(e.target.value, 10) || 0 })}
-                                >
-                                    {NAI_UC_PRESET_OPTIONS.map(opt => (
-                                        <option key={opt.value} value={String(opt.value)}>{opt.label}</option>
-                                    ))}
-                                </Select>
-                            </div>
-
-                            {/* 随机种子 */}
-                            <div className="flex flex-col gap-1">
-                                <label className="ts-14 font-medium text-black dark:text-white">随机种子 (Seed)</label>
-                                <Input
-                                    type="text"
-                                    value={settings.novelai.seed ?? ""}
-                                    onChange={(e) => updateNai({ seed: e.target.value || null })}
-                                    placeholder="-1 = 随机"
-                                />
-                                <p className="ts-12 opacity-50">'-1' 表示每次随机生成，固定数字可复现结果。</p>
-                            </div>
-
-                            {/* 自动添加质量标签 */}
-                            <div className="flex items-center justify-between py-2">
-                                <label className="ts-14 font-medium text-black dark:text-white">自动添加质量标签 (Quality Tags)</label>
-                                <Toggle
-                                    checked={settings.novelai.qualityTags}
-                                    onChange={(checked) => updateNai({ qualityTags: checked })}
-                                />
-                            </div>
-
-                            {/* SMEA */}
-                            <div className="flex items-center justify-between py-2">
-                                <label className="ts-14 font-medium text-black dark:text-white">SMEA (提升细节)</label>
-                                <Toggle
-                                    checked={settings.novelai.smea}
-                                    onChange={(checked) => updateNai({ smea: checked })}
-                                />
-                            </div>
-
-                            {/* SMEA DYN */}
-                            <div className="flex items-center justify-between py-2">
-                                <label className="ts-14 font-medium text-black dark:text-white">SMEA DYN (动态优化)</label>
-                                <Toggle
-                                    checked={settings.novelai.smeaDyn}
-                                    onChange={(checked) => updateNai({ smeaDyn: checked })}
-                                />
-                            </div>
-
-                            {/* 正向质量词后缀 */}
-                            <div className="flex flex-col gap-1">
-                                <label className="ts-14 font-medium text-black dark:text-white">正向质量词（后缀）</label>
-                                <Input
-                                    value={settings.novelai.qualitySuffix}
-                                    onChange={(e) => updateNai({ qualitySuffix: e.target.value })}
-                                    placeholder="best quality, very aesthetic, masterpiece"
-                                />
-                            </div>
-
-                            {/* 提示词模板 */}
-                            <div className="flex flex-col gap-1">
-                                <label className="ts-14 font-medium text-black dark:text-white">提示词模板（高级）</label>
-                                <Textarea
-                                    value={settings.novelai.promptTemplate}
-                                    onChange={(e) => updateNai({ promptTemplate: e.target.value })}
-                                    placeholder='{{positive_prefix}}, {{prompt}}, {{quality_suffix}}'
-                                    rows={2}
-                                />
-                            </div>
-
-                            {/* 默认画风 */}
-                            <div className="flex flex-col gap-1">
-                                <label className="ts-14 font-medium text-black dark:text-white">默认画风</label>
-                                <Input
-                                    value={settings.novelai.defaultStyle}
-                                    onChange={(e) => updateNai({ defaultStyle: e.target.value })}
-                                    placeholder="不套用（用上方前缀/模板）"
-                                />
-                            </div>
-
-                        </div>
-
-                        {/* 弹窗底部按钮 */}
-                        <div className="flex gap-3 px-5 py-4 border-t border-gray-200 dark:border-gray-700 sticky bottom-0 bg-white dark:bg-gray-800 rounded-b-2xl">
-                            <button
-                                type="button"
-                                className="ui-btn ui-btn-soft-action flex-1"
-                                onClick={resetNaiDefaults}
-                            >
-                                恢复默认
-                            </button>
-                            <button
-                                type="button"
-                                className="ui-btn ui-btn-primary flex-1"
-                                onClick={() => {
-                                    setShowNaiModal(false);
-                                    setStatus({ success: true, message: "NovelAI 设置已保存。" });
-                                }}
-                            >
-                                保存设置
-                            </button>
-                        </div>
-
-                        {/* 弹窗内专用测试生图框：不关闭弹窗即可直接预览结果 */}
-                        <div className="px-5 pb-5">
-                            <TestGenCard
-                                onTest={(p) => testGeneration(p)}
-                                status={status}
-                                testPreviewUrl={testPreviewUrl}
-                                isTesting={isTesting}
-                            />
-                        </div>
-                    </div>
-                </div>
-            )}
+            {/* ═══ NAI 弹窗已移除，角色参考图保留在下方独立区域 ═══ */}
 
             {/* ════════════ CORS 跨域代理 ════════════ */}
             <div className="flex flex-col gap-3">
