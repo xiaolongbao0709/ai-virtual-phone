@@ -7,6 +7,9 @@ import type {
     ApiConfig,
     VoiceApiConfig,
     ImageGenerationSettings,
+    NovelAIConfig,
+    PollinationsConfig,
+    GoogleImagenConfig,
     BindingConfig,
     BindingSlot,
     CharacterBinding,
@@ -623,12 +626,63 @@ export function saveVoiceConfigs(configs: VoiceApiConfig[]): void {
 export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
     enabled: false,
     requestMode: "direct",
+    provider: "openai",
+    // --- OpenAI 兼容 ---
     apiKey: "",
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-image-2",
     size: "1024x1024",
     quality: "auto",
     extraPrompt: "",
+    // --- NovelAI ---
+    novelai: {
+        url: "https://api.novelai.net",
+        apiKey: "",
+        model: "nai-diffusion-4-5-full",
+        size: "832x1216",
+        positivePrefix: "{handsome}, {delicate features}, {matte skin}, {skin texture}, {soft shading}",
+        qualitySuffix: "best quality, very aesthetic, masterpiece",
+        negativePrompt: "lowres, bad anatomy, worst quality, low quality, full body, wide shot, distant shot, small face, angular face, blocky face, long neck, mutated hands, poorly drawn face, mutation, deformed, extra limbs, ugly, blurry, amputation",
+        promptTemplate: "{positive_prefix}, {prompt}, {quality_suffix}",
+        defaultStyle: "",
+        // ---- 高级参数 ----
+        referenceImageDataUrl: "",
+        styleStrength: 0.6,
+        steps: 28,
+        cfgScale: 5,
+        sampler: "euler_ancestral",
+        noiseSchedule: "karras",
+        seed: null,
+        presetGroups: [],
+        // ---- 截图中新增字段 ----
+        ucPreset: 0,
+        qualityTags: true,
+        smea: false,
+        smeaDyn: false,
+        endpointMode: "stream",
+        corsProxy: false,
+    },
+    // --- Pollinations ---
+    pollinations: {
+        apiKey: "",
+        model: "flux",
+        width: 1024,
+        height: 1024,
+        seed: "",
+        enhance: true,
+        nologo: true,
+    },
+    // --- Google Imagen ---
+    googleImagen: {
+        apiKey: "",
+        model: "imagen-3.0-generate-002",
+        width: 1024,
+        height: 1024,
+        negativePrompt: "",
+        aspectRatio: "1:1",
+        personGeneration: "allow_adult",
+    },
+    // --- 通用 ---
     characterReferences: {},
     imageHosting: {
         provider: "none",
@@ -647,25 +701,92 @@ function normalizeImageGenerationSettings(settings: Partial<ImageGenerationSetti
     const requestMode = settings?.requestMode === "server" || settings?.requestMode === "direct"
         ? settings.requestMode
         : DEFAULT_IMAGE_GENERATION_SETTINGS.requestMode;
+    const provider = settings?.provider === "openai" || settings?.provider === "novelai"
+        || settings?.provider === "pollinations" || settings?.provider === "google-imagen"
+        ? settings.provider
+        : DEFAULT_IMAGE_GENERATION_SETTINGS.provider;
     const hosting: Partial<ImageGenerationSettings["imageHosting"]> = settings?.imageHosting && typeof settings.imageHosting === "object"
         ? settings.imageHosting
         : {};
-    const provider = hosting.provider === "imgbb" ? "imgbb" : "none";
+    const nai: Partial<NovelAIConfig> = settings?.novelai && typeof settings.novelai === "object"
+        ? settings.novelai
+        : {};
+    const hostingProvider = hosting.provider === "imgbb" ? "imgbb" : "none";
     const defaultExpirationSeconds = typeof hosting.defaultExpirationSeconds === "number"
         ? Math.max(0, Math.min(15552000, Math.floor(hosting.defaultExpirationSeconds)))
         : DEFAULT_IMAGE_GENERATION_SETTINGS.imageHosting.defaultExpirationSeconds;
     const maxUploadBytes = typeof hosting.maxUploadBytes === "number"
         ? Math.max(64 * 1024, Math.min(32 * 1024 * 1024, Math.floor(hosting.maxUploadBytes)))
         : DEFAULT_IMAGE_GENERATION_SETTINGS.imageHosting.maxUploadBytes;
+    // NAI 高级参数 normalize
+    const naiStyleStrength = typeof nai.styleStrength === "number" ? nai.styleStrength : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.styleStrength;
+    const naiSteps = typeof nai.steps === "number" ? nai.steps : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.steps;
+    const naiCfgScale = typeof nai.cfgScale === "number" ? nai.cfgScale : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.cfgScale;
+    const naiSampler = typeof nai.sampler === "string" && nai.sampler ? nai.sampler : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.sampler;
+    const naiNoiseSchedule = typeof nai.noiseSchedule === "string" && nai.noiseSchedule ? nai.noiseSchedule : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.noiseSchedule;
+    const naiSeed = nai.seed !== undefined ? (nai.seed === "" ? null : nai.seed) : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.seed;
+    const naiRefImg = typeof nai.referenceImageDataUrl === "string" ? nai.referenceImageDataUrl : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.referenceImageDataUrl;
+    const naiPresetGroups = Array.isArray(nai.presetGroups) ? nai.presetGroups : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.presetGroups;
+    // 新增字段 normalize
+    const naiUcPreset = typeof nai.ucPreset === "number" ? nai.ucPreset : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.ucPreset;
+    const naiQualityTags = typeof nai.qualityTags === "boolean" ? nai.qualityTags : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.qualityTags;
+    const naiSmea = typeof nai.smea === "boolean" ? nai.smea : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.smea;
+    const naiSmeaDyn = typeof nai.smeaDyn === "boolean" ? nai.smeaDyn : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.smeaDyn;
+    const naiEndpointMode = nai.endpointMode === "stream" || nai.endpointMode === "normal" ? nai.endpointMode : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.endpointMode;
+    const naiCorsProxy = typeof nai.corsProxy === "boolean" ? nai.corsProxy : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.corsProxy;
+    // Pollinations / Google Imagen 配置 normalize
+    const poll: Partial<PollinationsConfig> = settings?.pollinations && typeof settings.pollinations === "object" ? settings.pollinations : {};
+    const gi: Partial<GoogleImagenConfig> = settings?.googleImagen && typeof settings.googleImagen === "object" ? settings.googleImagen : {};
     return {
         ...DEFAULT_IMAGE_GENERATION_SETTINGS,
         ...(settings || {}),
         requestMode,
+        provider,
         characterReferences: refs,
+        novelai: {
+            ...DEFAULT_IMAGE_GENERATION_SETTINGS.novelai,
+            ...nai,
+            referenceImageDataUrl: naiRefImg,
+            styleStrength: Math.max(0, Math.min(1, naiStyleStrength)),
+            steps: Math.max(1, Math.min(150, naiSteps)),
+            cfgScale: Math.max(0, Math.min(30, naiCfgScale)),
+            sampler: naiSampler,
+            noiseSchedule: naiNoiseSchedule,
+            seed: naiSeed,
+            presetGroups: naiPresetGroups,
+            ucPreset: naiUcPreset,
+            qualityTags: naiQualityTags,
+            smea: naiSmea,
+            smeaDyn: naiSmeaDyn,
+            endpointMode: naiEndpointMode,
+            corsProxy: naiCorsProxy,
+        },
+        pollinations: {
+            ...DEFAULT_IMAGE_GENERATION_SETTINGS.pollinations,
+            ...poll,
+            apiKey: typeof poll.apiKey === "string" ? poll.apiKey : "",
+            model: typeof poll.model === "string" && poll.model ? poll.model : DEFAULT_IMAGE_GENERATION_SETTINGS.pollinations.model,
+            width: typeof poll.width === "number" ? Math.max(64, Math.min(2048, Math.floor(poll.width))) : DEFAULT_IMAGE_GENERATION_SETTINGS.pollinations.width,
+            height: typeof poll.height === "number" ? Math.max(64, Math.min(2048, Math.floor(poll.height))) : DEFAULT_IMAGE_GENERATION_SETTINGS.pollinations.height,
+            seed: typeof poll.seed === "string" ? poll.seed : "",
+            enhance: poll.enhance !== false,
+            nologo: poll.nologo !== false,
+        },
+        googleImagen: {
+            ...DEFAULT_IMAGE_GENERATION_SETTINGS.googleImagen,
+            ...gi,
+            apiKey: typeof gi.apiKey === "string" ? gi.apiKey : "",
+            model: typeof gi.model === "string" && gi.model ? gi.model : DEFAULT_IMAGE_GENERATION_SETTINGS.googleImagen.model,
+            width: typeof gi.width === "number" ? Math.max(64, Math.min(2048, Math.floor(gi.width))) : DEFAULT_IMAGE_GENERATION_SETTINGS.googleImagen.width,
+            height: typeof gi.height === "number" ? Math.max(64, Math.min(2048, Math.floor(gi.height))) : DEFAULT_IMAGE_GENERATION_SETTINGS.googleImagen.height,
+            negativePrompt: typeof gi.negativePrompt === "string" ? gi.negativePrompt : "",
+            aspectRatio: typeof gi.aspectRatio === "string" && gi.aspectRatio ? gi.aspectRatio : DEFAULT_IMAGE_GENERATION_SETTINGS.googleImagen.aspectRatio,
+            personGeneration: typeof gi.personGeneration === "string" && gi.personGeneration ? gi.personGeneration : DEFAULT_IMAGE_GENERATION_SETTINGS.googleImagen.personGeneration,
+        },
         imageHosting: {
             ...DEFAULT_IMAGE_GENERATION_SETTINGS.imageHosting,
             ...hosting,
-            provider,
+            provider: hostingProvider,
             defaultExpirationSeconds,
             maxUploadBytes,
             autoConvertToWebp: hosting.autoConvertToWebp !== false,

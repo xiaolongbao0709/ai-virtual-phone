@@ -144,6 +144,7 @@ export type VoiceApiConfig = {
 
 // --- Image Generation ---
 export type ImageGenerationRequestMode = "server" | "direct";
+export type ImageProvider = "openai" | "novelai" | "pollinations" | "google-imagen";
 
 export type ImageHostingProvider = "none" | "imgbb";
 
@@ -156,15 +157,137 @@ export type ImageHostingSettings = {
     allowMascotUpload: boolean;
 };
 
+/** NovelAI 专属配置 */
+export type NovelAIConfig = {
+    /** NovelAI API 地址（官方 https://api.novelai.net 或中转站） */
+    url: string;
+    /** NovelAI API Key（pst-... 或中转站 key） */
+    apiKey: string;
+    /** 模型名，默认 nai-diffusion-4-5-full */
+    model: string;
+    /** 尺寸预设 */
+    size: string;
+    /** 正向提示词前缀（如 {handsome}, {delicate features}） */
+    positivePrefix: string;
+    /** 正向质量词后缀（如 best quality, masterpiece） */
+    qualitySuffix: string;
+    /** 负面提示词 */
+    negativePrompt: string;
+    /** 提示词模板，{prompt} 会被替换为实际描述 */
+    promptTemplate: string;
+    /** 默认画风（留空 = 不套用） */
+    defaultStyle: string;
+    // ---- 截图中的高级参数 ----
+    /** 参考图数据（base64 data URL，用于风格迁移） */
+    referenceImageDataUrl: string;
+    /** 画风强度 0~1，越高越贴近参考画风（建议 0.5~0.7） */
+    styleStrength: number;
+    /** 采样步数 (Steps)，推荐值 28 */
+    steps: number;
+    /** 提示词相关性 (CFG Scale)，推荐值 5 */
+    cfgScale: number;
+    /** 采样器 (Sampler) */
+    sampler: string;
+    /** 噪声调度 (Noise Schedule) */
+    noiseSchedule: string;
+    /** 随机种子 (Seed)，留空则随机；-1 表示每次随机生成 */
+    seed: string | null;
+    /** 预设组列表 */
+    presetGroups: NaiPresetGroup[];
+    // ---- 截图中但之前缺失的字段 ----
+    /** 负面预设 (UC PRESET)：0=Heavy, 1=Light, 2=Off 等 */
+    ucPreset: number;
+    /** 自动添加质量标签 (Quality Tags)：是否自动在提示词末尾追加质量词 */
+    qualityTags: boolean;
+    /** SMEA(提升细节)：NAI v3 细节增强参数 */
+    smea: boolean;
+    /** SMEA DYN(动态优化)：NAI v3 动态优化参数 */
+    smeaDyn: boolean;
+    /** 出图接口模式：stream=流式(/ai/generate-image), normal=普通接口 */
+    endpointMode: "stream" | "normal";
+    /** CORS 跨域代理：本地开发时建议开启 */
+    corsProxy: boolean;
+};
+
+/** Pollinations 专属配置（免费、免 Key 即可用） */
+export type PollinationsConfig = {
+    /** 可选认证 token（去 pollinations.ai 注册后获得，提升额度/避免限流）；留空=匿名免费 */
+    apiKey: string;
+    /** 模型，默认 flux（可选 turbo / flux-realism / flux-anime 等） */
+    model: string;
+    /** 宽 */
+    width: number;
+    /** 高 */
+    height: number;
+    /** 随机种子，留空=每次随机 */
+    seed: string;
+    /** 提示词增强（让 AI 自动优化描述） */
+    enhance: boolean;
+    /** 去除 Pollinations 水印 logo */
+    nologo: boolean;
+};
+
+/** Google Imagen 专属配置 */
+export type GoogleImagenConfig = {
+    /** Google AI Studio / GCP API Key（必填） */
+    apiKey: string;
+    /** 模型名，如 imagen-3.0-generate-002 / imagen-4.0-generate-001 */
+    model: string;
+    /** 宽 */
+    width: number;
+    /** 高 */
+    height: number;
+    /** 负面提示词（排除不想要的内容） */
+    negativePrompt: string;
+    /** 宽高比预设（如 1:1 / 3:4 / 4:3 / 16:9 / 9:16） */
+    aspectRatio: string;
+    /** 是否允许生成人物（dont_allow / allow_adult / allow_all） */
+    personGeneration: string;
+};
+
+/** NAI 预设 */
+export type NaiPreset = {
+    id: string;
+    name: string;
+    positivePrefix: string;
+    negativePrompt: string;
+    styleStrength: number;
+    steps: number;
+    cfgScale: number;
+    sampler: string;
+    noiseSchedule: string;
+    size: string;
+    defaultStyle: string;
+    createdAt: number;
+};
+
+/** NAI 预设组 */
+export type NaiPresetGroup = {
+    id: string;
+    name: string;
+    presets: NaiPreset[];
+    activePresetId: string | null;
+};
+
 export type ImageGenerationSettings = {
     enabled: boolean;
     requestMode: ImageGenerationRequestMode;
+    /** 当前使用的生图 Provider */
+    provider: ImageProvider;
+    // --- OpenAI 兼容字段 ---
     apiKey: string;
     baseUrl: string;
     model: string;
     size: string;
     quality: string;
     extraPrompt: string;
+    // --- NovelAI 字段 ---
+    novelai: NovelAIConfig;
+    // --- Pollinations 字段 ---
+    pollinations: PollinationsConfig;
+    // --- Google Imagen 字段 ---
+    googleImagen: GoogleImagenConfig;
+    // --- 通用字段 ---
     characterReferences: Record<string, {
         assetId: string;
         updatedAt: number;

@@ -1,4 +1,4 @@
-import type { ImageGenerationSettings } from "./settings-types";
+import type { ImageGenerationSettings, ImageProvider } from "./settings-types";
 import { loadImageGenerationSettings } from "./settings-storage";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import { storeMediaBlob } from "./media-cache-storage";
@@ -304,7 +304,275 @@ export async function fetchImageGenerationModels(settings: Pick<ImageGenerationS
   return Array.isArray(data.models) ? data.models : [];
 }
 
-// 通用生图代理(Cloudflare Worker)。配置后,「服务端中转」模式改为:
+// ── NovelAI 专属逻辑 ──────────────────────────────────────────────
+
+/** NAI 尺寸预设 → [width, height] */
+const NAI_SIZE_MAP: Record<string, [number, number]> = {
+    "832x1216": [832, 1216],   // 竖图 (portrait)
+    "1216x832": [1216, 832],   // 横图 (landscape)
+    "1024x1024": [1024, 1024], // 正方形
+    "832x832": [832, 832],     // 小正方
+    "1280x720": [1280, 720],   // 16:9 横
+    "720x1280": [720, 1280],   // 9:16 竖
+};
+
+function parseNaiSize(sizeStr: string): [number, number] {
+    return NAI_SIZE_MAP[sizeStr] || ([832, 1216] as [number, number]);
+}
+
+/**
+ * 构建 NAI 最终提示词：
+ * 模板: {positive_prefix}, {prompt}, {quality_suffix}
+ * 支持 {prompt} 占位符替换为实际描述
+ */
+function buildNaiPrompt(description: string, nai: ImageGenerationSettings["novelai"]): string {
+    const template = nai.promptTemplate || "{prompt}";
+    return template
+        .replace(/\{positive_prefix\}/gi, nai.positivePrefix)
+        .replace(/\{quality_suffix\}/gi, nai.qualitySuffix)
+        .replace(/\{prompt\}/gi, description);
+}
+
+/**
+ * 调用 NovelAI /ai/generate-image 接口生图
+ * 协议参考：https://docs.novelai.net/en/image-generation/api/
+ */
+async function generateImageNovelAI(params: {
+    settings: ImageGenerationSettings;
+    prompt: string;
+    signal?: AbortSignal;
+}): Promise<ImageGenerationApiResponse> {
+    const { settings, signal } = params;
+    const nai = settings.novelai;
+    throwIfAborted(signal);
+
+    if (!nai.apiKey?.trim()) throw new Error("NovelAI API Key 未填写");
+    if (!nai.url?.trim()) throw new Error("NovelAI 地址未填写");
+
+    const baseUrl = nai.url.trim().replace(/\/+$/, "");
+    // 根据 endpointMode 选择接口
+    const apiUrl = nai.endpointMode === "normal"
+        ? `${baseUrl}/generate-image`
+        : `${baseUrl}/ai/generate-image`;
+    const [width, height] = parseNaiSize(nai.size);
+    const finalPrompt = buildNaiPrompt(params.prompt, nai);
+
+    // 如果开启 qualityTags 且模板中不含质量词，自动追加
+    let effectivePrompt = finalPrompt;
+    if (nai.qualityTags !== false && nai.qualitySuffix && !finalPrompt.toLowerCase().includes(nai.qualitySuffix.split(",")[0]?.trim().toLowerCase() || "zzz")) {
+        effectivePrompt = finalPrompt + ", " + nai.qualitySuffix;
+    }
+
+    const body = JSON.stringify({
+        input: effectivePrompt,
+        model: nai.model || "nai-diffusion-4-5-full",
+        action: "generate",
+        parameters: {
+            width,
+            height,
+            scale: typeof nai.cfgScale === "number" ? nai.cfgScale : 5,
+            sampler: (nai.sampler || "euler_ancestral").replace(/^k_/, "k_").replace("euler_ancestral", "k_euler_ancestral"),
+            steps: typeof nai.steps === "number" ? Math.max(1, Math.min(50, nai.steps)) : 28,
+            seed: typeof nai.seed === "string" && nai.seed ? parseInt(nai.seed, 10) || -1 : -1,
+            negative_prompt: nai.negativePrompt || "",
+            ucPreset: typeof nai.ucPreset === "number" ? nai.ucPreset : 0,
+            /* 以下为 NAI v3 完整参数 */
+            add_original_image: false,
+            cfg_rescale: 0,
+            controlnet_strength: 1,
+            dynamic_thresholding: false,
+            legacy: false,
+            quality_toggle: true,
+            sm: !!nai.smeaDyn,
+            sm_dyn: !!nai.smeaDyn,
+            uncond_scale: 1,
+            noise_schedule: nai.noiseSchedule || "native",
+            legacy_v3_extend: false,
+            smea_dy: !!nai.smeaDyn,
+            smea_static: !!nai.smea,
+            smea: !!nai.smea,
+            ref_sw: false,
+            decr_countdown: false,
+            /* 参考图（风格迁移） */
+            ...(nai.referenceImageDataUrl
+                ? { image: nai.referenceImageDataUrl.replace(/^data:image\/[^;]+;base64,/, "") }
+                : {}),
+            /* 画风强度 */
+            ...(typeof nai.styleStrength === "number" && nai.referenceImageDataUrl
+                ? { extra_noise_seed: Math.round(nai.styleStrength * 1000000) % 2147483647 }
+                : {}),
+        },
+    });
+
+    const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${nai.apiKey}`,
+    };
+
+    // 总超时 360s（NAI 生图可能较慢）
+    const controller = new AbortController();
+    const onOuterAbort = () => controller.abort();
+    if (signal) signal.addEventListener("abort", onOuterAbort, { once: true });
+    const totalTimer = setTimeout(() => controller.abort(), 360_000);
+
+    try {
+        const res = await fetch(apiUrl, {
+            method: "POST",
+            headers,
+            body,
+            signal: controller.signal,
+        });
+        throwIfAborted(signal);
+
+        if (!res.ok) {
+            const errText = await res.text().catch(() => "");
+            throw new Error(`NovelAI API 错误 ${res.status}: ${errText.slice(0, 600)}`);
+        }
+
+        const json = await res.json() as Record<string, unknown>;
+        throwIfAborted(signal);
+
+        // NAI 返回格式: { artifacts: [{ base64, seed, finishReason }] }
+        const artifacts = json.artifacts as Array<Record<string, unknown>> | undefined;
+        if (!artifacts || !artifacts.length) {
+            throw new Error(`NovelAI 返回格式异常：${JSON.stringify(Object.keys(json)).slice(0, 200)}`);
+        }
+
+        const artifact = artifacts[0];
+        const b64 = artifact.base64 as string | undefined;
+        if (!b64) throw new Error("NovelAI 返回的图片数据为空");
+
+        // NAI 默认返回 PNG
+        return {
+            b64,
+            mimeType: (artifact.type as string) || "image/png",
+            revisedPrompt: finalPrompt,
+        };
+    } catch (error) {
+        if (controller.signal.aborted && !signal?.aborted) {
+            throw new Error("NovelAI 生图超时（360 秒未返回）");
+        }
+        if (error instanceof TypeError) {
+            throw new Error("NovelAI 连接失败：该地址可能未允许跨域请求，或网络不通。");
+        }
+        throw error;
+    } finally {
+        clearTimeout(totalTimer);
+        if (signal) signal.removeEventListener("abort", onOuterAbort);
+    }
+}
+
+// ── Pollinations 生图（免费、免 Key，浏览器直连）────────────────────
+// GET https://image.pollinations.ai/prompt/{prompt}?width=&height=&model=&seed=&nologo=&enhance=
+async function generateImagePollinations(params: {
+    settings: ImageGenerationSettings;
+    prompt: string;
+    signal?: AbortSignal;
+}): Promise<ImageGenerationApiResponse> {
+    const { settings, prompt, signal } = params;
+    throwIfAborted(signal);
+    const cfg = settings.pollinations;
+    const width = typeof cfg.width === "number" ? cfg.width : 1024;
+    const height = typeof cfg.height === "number" ? cfg.height : 1024;
+    const model = cfg.model?.trim() || "flux";
+    const encoded = encodeURIComponent(prompt.trim());
+    const query = new URLSearchParams();
+    query.set("width", String(width));
+    query.set("height", String(height));
+    query.set("model", model);
+    query.set("nologo", cfg.nologo === false ? "false" : "true");
+    query.set("enhance", cfg.enhance === false ? "false" : "true");
+    if (cfg.seed?.trim()) query.set("seed", cfg.seed.trim());
+    const url = `https://image.pollinations.ai/prompt/${encoded}?${query.toString()}`;
+
+    const headers: Record<string, string> = {};
+    if (cfg.apiKey?.trim()) headers.Authorization = `Bearer ${cfg.apiKey.trim()}`;
+
+    // 总超时 120s
+    const controller = new AbortController();
+    const onOuterAbort = () => controller.abort();
+    if (signal) signal.addEventListener("abort", onOuterAbort, { once: true });
+    const totalTimer = setTimeout(() => controller.abort(), 120_000);
+    try {
+        const res = await fetch(url, { method: "GET", headers, signal: controller.signal });
+        throwIfAborted(signal);
+        if (!res.ok) {
+            const errText = await res.text().catch(() => "");
+            throw new Error(`Pollinations API 错误 ${res.status}: ${errText.slice(0, 400)}`);
+        }
+        const blob = await res.blob();
+        throwIfAborted(signal);
+        const dataUrl = await blobToDataUrl(blob);
+        const cleaned = cleanBase64(dataUrl);
+        if (!cleaned.b64) throw new Error("Pollinations 返回的图片数据为空");
+        return {
+            b64: cleaned.b64,
+            mimeType: cleaned.mimeType || blob.type || "image/jpeg",
+            revisedPrompt: prompt,
+        };
+    } catch (error) {
+        if (controller.signal.aborted && !signal?.aborted) {
+            throw new Error("Pollinations 生图超时（120 秒未返回）");
+        }
+        if (error instanceof TypeError) {
+            throw new Error("Pollinations 连接失败：请检查网络或代理设置。");
+        }
+        throw error;
+    } finally {
+        clearTimeout(totalTimer);
+        if (signal) signal.removeEventListener("abort", onOuterAbort);
+    }
+}
+
+// ── Google Imagen 生图（需 Key，经服务端转发，避免浏览器跨域/暴露密钥）──
+async function generateGoogleImagenViaServer(params: {
+    settings: ImageGenerationSettings;
+    prompt: string;
+    signal?: AbortSignal;
+}): Promise<ImageGenerationApiResponse> {
+    const { settings, prompt, signal } = params;
+    throwIfAborted(signal);
+    const gi = settings.googleImagen;
+    const controller = new AbortController();
+    const onOuterAbort = () => controller.abort();
+    if (signal) signal.addEventListener("abort", onOuterAbort, { once: true });
+    const totalTimer = setTimeout(() => controller.abort(), 180_000);
+    try {
+        const res = await fetch("/api/image-generation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                provider: "google-imagen",
+                prompt,
+                googleKey: gi.apiKey,
+                googleModel: gi.model,
+                googleWidth: gi.width,
+                googleHeight: gi.height,
+                googleNegativePrompt: gi.negativePrompt,
+                googleAspectRatio: gi.aspectRatio,
+                googlePersonGeneration: gi.personGeneration,
+            }),
+            signal: controller.signal,
+        });
+        throwIfAborted(signal);
+        const data = await res.json() as { b64?: string; mimeType?: string; revisedPrompt?: string; error?: string };
+        throwIfAborted(signal);
+        if (!res.ok || data.error || !data.b64) {
+            throw new Error(data.error || `Google Imagen 请求失败 ${res.status}`);
+        }
+        return { b64: data.b64, mimeType: data.mimeType, revisedPrompt: data.revisedPrompt };
+    } catch (error) {
+        if (controller.signal.aborted && !signal?.aborted) {
+            throw new Error("Google Imagen 生图超时（180 秒未返回）");
+        }
+        throw error;
+    } finally {
+        clearTimeout(totalTimer);
+        if (signal) signal.removeEventListener("abort", onOuterAbort);
+    }
+}
+
+// ── 原有 OpenAI 兼容逻辑 ───────────────────────────────────────────
 // 浏览器 → 本代理(带CORS、等待无时长限制) → 用户自己的生图API,
 // 不再经过 Netlify 函数(其流式响应有 60s 硬上限,慢生图必死且中转站照样计费)。
 // 留空 = 关闭,沿用 Netlify 心跳流式路由。自部署请配置自己的代理地址。
@@ -413,6 +681,9 @@ async function generateImageViaServer(params: {
       headers: { "Content-Type": "application/json", "x-stream-heartbeat": "1" },
       signal: controller.signal,
       body: JSON.stringify({
+        // Provider 路由信息
+        provider: settings.provider,
+        // OpenAI 兼容字段
         apiKey: settings.apiKey,
         baseUrl: settings.baseUrl,
         model: settings.model,
@@ -420,6 +691,28 @@ async function generateImageViaServer(params: {
         size: settings.size,
         quality: settings.quality,
         referenceImageDataUrl: referenceImageDataUrl || undefined,
+        // NovelAI 字段（provider=novelai 时服务端使用）
+        novelaiUrl: settings.novelai.url,
+        novelaiKey: settings.novelai.apiKey,
+        novelaiModel: settings.novelai.model,
+        novelaiSize: settings.novelai.size,
+        novelaiPositivePrefix: settings.novelai.positivePrefix,
+        novelaiQualitySuffix: settings.novelai.qualitySuffix,
+        novelaiNegativePrompt: settings.novelai.negativePrompt,
+        novelaiPromptTemplate: settings.novelai.promptTemplate,
+        // NAI 高级参数
+        novelaiSteps: settings.novelai.steps,
+        novelaiCfgScale: settings.novelai.cfgScale,
+        novelaiSampler: settings.novelai.sampler,
+        novelaiNoiseSchedule: settings.novelai.noiseSchedule,
+        novelaiSeed: settings.novelai.seed,
+        novelaiStyleStrength: settings.novelai.styleStrength,
+        // 新增字段
+        novelaiUcPreset: settings.novelai.ucPreset,
+        novelaiQualityTags: settings.novelai.qualityTags,
+        novelaiSmea: settings.novelai.smea,
+        novelaiSmeaDyn: settings.novelai.smeaDyn,
+        novelaiEndpointMode: settings.novelai.endpointMode,
       }),
     });
     throwIfAborted(signal);
@@ -490,6 +783,82 @@ export async function generateImageFromConfiguredApi(params: {
   if (!settings.enabled) return null;
 
   const description = params.description.trim();
+
+  // ── Provider 路由：NAI vs OpenAI 兼容 ──
+  if (settings.provider === "novelai") {
+    const nai = settings.novelai;
+    // NAI 校验
+    if (!description || !nai?.apiKey?.trim() || !nai?.url?.trim()) return null;
+
+    throwIfAborted(params.signal);
+    const data = await generateImageNovelAI({
+      settings,
+      prompt: description,
+      signal: params.signal,
+    });
+    throwIfAborted(params.signal);
+    const mimeType = data.mimeType || "image/png";
+    const blob = base64ToBlob(data.b64, mimeType);
+    throwIfAborted(params.signal);
+    const mediaRef = await storeMediaBlob(blob, mimeType, "image");
+    throwIfAborted(params.signal);
+    return {
+      mediaRef,
+      dataUrl: `data:${mimeType};base64,${data.b64}`,
+      blob,
+      mimeType,
+      prompt: description,
+      usedReferenceImage: false,
+      revisedPrompt: data.revisedPrompt,
+    };
+  }
+
+  // ── Pollinations（免费免 Key，浏览器直连）──
+  if (settings.provider === "pollinations") {
+    if (!description) return null;
+    throwIfAborted(params.signal);
+    const data = await generateImagePollinations({ settings, prompt: description, signal: params.signal });
+    throwIfAborted(params.signal);
+    const mimeType = data.mimeType || "image/jpeg";
+    const blob = base64ToBlob(data.b64, mimeType);
+    throwIfAborted(params.signal);
+    const mediaRef = await storeMediaBlob(blob, mimeType, "image");
+    throwIfAborted(params.signal);
+    return {
+        mediaRef,
+        dataUrl: `data:${mimeType};base64,${data.b64}`,
+        blob,
+        mimeType,
+        prompt: description,
+        usedReferenceImage: false,
+        revisedPrompt: data.revisedPrompt,
+    };
+  }
+
+  // ── Google Imagen（需 Key，经服务端转发）──
+  if (settings.provider === "google-imagen") {
+    const gi = settings.googleImagen;
+    if (!description || !gi?.apiKey?.trim()) return null;
+    throwIfAborted(params.signal);
+    const data = await generateGoogleImagenViaServer({ settings, prompt: description, signal: params.signal });
+    throwIfAborted(params.signal);
+    const mimeType = data.mimeType || "image/png";
+    const blob = base64ToBlob(data.b64, mimeType);
+    throwIfAborted(params.signal);
+    const mediaRef = await storeMediaBlob(blob, mimeType, "image");
+    throwIfAborted(params.signal);
+    return {
+        mediaRef,
+        dataUrl: `data:${mimeType};base64,${data.b64}`,
+        blob,
+        mimeType,
+        prompt: description,
+        usedReferenceImage: false,
+        revisedPrompt: data.revisedPrompt,
+    };
+  }
+
+  // ── OpenAI 兼容（原有逻辑）──
   if (!description || !settings.apiKey.trim() || !settings.baseUrl.trim() || !settings.model.trim()) return null;
 
   const reference = params.characterId ? settings.characterReferences[params.characterId] : undefined;
