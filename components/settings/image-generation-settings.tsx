@@ -24,12 +24,14 @@ const QUALITY_OPTIONS = ["auto", "low", "medium", "high"];
 
 /** NovelAI 尺寸选项 */
 const NAI_SIZE_OPTIONS = [
-    { value: "832x1216", label: "832x1216（2:3 竖图）" },
-    { value: "1216x832", label: "1216x832（3:2 横图）" },
-    { value: "1024x1536", label: "1024x1536（2:3 竖图）" },
-    { value: "1536x1024", label: "1536x1024（3:2 横图）" },
-    { value: "1024x1024", label: "1024x1024（正方）" },
-    { value: "1472x1472", label: "1472x1472（高清正方）" },
+    /* ── 免费额度可用（总像素 ≤ 1024×1024，Opus 订阅不消耗点数）── */
+    { value: "832x1216", label: "832×1216（2:3 竖图）✅免费" },
+    { value: "1216x832", label: "1216×832（3:2 横图）✅免费" },
+    { value: "1024x1024", label: "1024×1024（正方）✅免费" },
+    /* ── 超过免费额度，每张消耗 Anlas 点数 ── */
+    { value: "1024x1536", label: "1024×1536（高清竖）💰消耗点数" },
+    { value: "1536x1024", label: "1536×1024（高清横）💰消耗点数" },
+    { value: "1472x1472", label: "1472×1472（高清正方）💰消耗点数" },
 ];
 
 /** NAI 模型预设（均为 NAI 官方真实模型，与 Miya 小手机一致） */
@@ -709,7 +711,10 @@ export function ImageGenerationSettings() {
                                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                                 ))}
                             </Select>
-                            <p className="menu-desc ml-1 opacity-50 text-xs">图尺寸；聊天生图也会优先使用这里的选择。</p>
+                            <p className="menu-desc ml-1 opacity-50 text-xs">
+                                图尺寸；聊天生图也会优先使用这里的选择。<br />
+                                ✅免费 = 总像素 ≤ 1024×1024，Opus 订阅无限生成不扣点数；💰 项每张会扣 Anlas 点数。
+                            </p>
                         </div>
 
                         {/* ── 正向提示词前缀 ── */}
@@ -792,7 +797,12 @@ export function ImageGenerationSettings() {
 
                                 {/* Steps */}
                                 <div className="flex flex-col gap-1">
-                                    <label className="ts-13 font-medium opacity-70">采样步数 (Steps)：{settings.novelai.steps}</label>
+                                    <label className="ts-13 font-medium opacity-70">
+                                        采样步数 (Steps)：{settings.novelai.steps}
+                                        {settings.novelai.steps > 28 && (
+                                            <span className="ml-2 text-red-500 font-normal">💰 超过 28 步会扣点数</span>
+                                        )}
+                                    </label>
                                     <input
                                         type="range"
                                         min={1} max={50}
@@ -800,6 +810,7 @@ export function ImageGenerationSettings() {
                                         onChange={(e) => updateNai({ steps: parseInt(e.target.value, 10) || 28 })}
                                         className="w-full h-2 rounded-full appearance-none bg-gray-200 accent-purple-500"
                                     />
+                                    <p className="ts-11 opacity-40">免费额度上限为 28 步，超过即按 Anlas 点数计费。</p>
                                 </div>
 
                                 {/* CFG Scale */}
