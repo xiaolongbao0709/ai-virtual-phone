@@ -405,6 +405,27 @@ async function generateImageNovelAI(params: {
 
         if (!res.ok) {
             const errText = await res.text().catch(() => "");
+            // 402 = 点数不足。绝大多数情况是"参数超出免费额度"，给出可操作的中文指引。
+            if (res.status === 402) {
+                const px = width * height;
+                const reasons: string[] = [];
+                if (px > 1024 * 1024) {
+                    reasons.push(`• 当前尺寸 ${width}×${height}（${px.toLocaleString()} 像素）超过免费上限 1024×1024，请改选带「✅免费」的尺寸`);
+                }
+                const usedSteps = typeof nai.steps === "number" ? nai.steps : 28;
+                if (usedSteps > 28) {
+                    reasons.push(`• 当前步数 ${usedSteps} 超过免费上限 28，请把步数调回 28 或更低`);
+                }
+                if (!reasons.length) {
+                    reasons.push("• 参数已在免费范围内，说明你的 NAI 账号不是 Opus 订阅（只有 Opus 才有小图无限免费生成），需要订阅 Opus 或充值 Anlas 点数");
+                }
+                throw new Error(
+                    `NovelAI 提示点数不足（402）。免费生成的条件是：尺寸 ≤ 1024×1024 且步数 ≤ 28。\n${reasons.join("\n")}`
+                );
+            }
+            if (res.status === 401) {
+                throw new Error("NovelAI 鉴权失败（401）：API Key / Token 不正确，请到 NAI 官网重新复制。");
+            }
             throw new Error(`NovelAI API 错误 ${res.status}: ${errText.slice(0, 600)}`);
         }
 
