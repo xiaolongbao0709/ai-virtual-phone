@@ -3,6 +3,7 @@ import { loadImageGenerationSettings } from "./settings-storage";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import { storeMediaBlob } from "./media-cache-storage";
 import { throwIfAborted } from "./abort-utils";
+import JSZip from "jszip";
 
 export type ImageGenerationResult = {
   mediaRef: string;
@@ -306,14 +307,14 @@ export async function fetchImageGenerationModels(settings: Pick<ImageGenerationS
 
 // ── NovelAI 专属逻辑 ──────────────────────────────────────────────
 
-/** NAI 尺寸预设 → [width, height] */
+/** NAI 尺寸预设 → [width, height]（与 Miya 小手机一致） */
 const NAI_SIZE_MAP: Record<string, [number, number]> = {
-    "832x1216": [832, 1216],   // 竖图 (portrait)
-    "1216x832": [1216, 832],   // 横图 (landscape)
+    "832x1216": [832, 1216],   // 2:3 竖图
+    "1216x832": [1216, 832],   // 3:2 横图
     "1024x1024": [1024, 1024], // 正方形
-    "832x832": [832, 832],     // 小正方
-    "1280x720": [1280, 720],   // 16:9 横
-    "720x1280": [720, 1280],   // 9:16 竖
+    "1536x1024": [1536, 1024], // 3:2 横图（高清）
+    "1024x1536": [1024, 1536], // 2:3 竖图（高清）
+    "1472x1472": [1472, 1472], // 1:1 正方形（高清）
 };
 
 function parseNaiSize(sizeStr: string): [number, number] {
@@ -334,73 +335,51 @@ function buildNaiPrompt(description: string, nai: ImageGenerationSettings["novel
 }
 
 /**
- * 调用 NovelAI /ai/generate-image 接口生图
- * 协议参考：https://docs.novelai.net/en/image-generation/api/
+ * 调用 NovelAI /ai/generate-image 接口生图。
+ * 浏览器直连官方 image.novelai.net（与棉花糖机 / Miya 小手机同款方案：内置官方链接、无需梯子、无需服务器中转）。
+ * 请求体与参数严格参照 Miya 的实现；NAI 返回 ZIP 包（多图）或 JSON（单张 base64），两种形态都兼容。
  */
 async function generateImageNovelAI(params: {
     settings: ImageGenerationSettings;
     prompt: string;
     signal?: AbortSignal;
 }): Promise<ImageGenerationApiResponse> {
-    const { settings, signal } = params;
+    const { settings, prompt, signal } = params;
     const nai = settings.novelai;
     throwIfAborted(signal);
 
     if (!nai.apiKey?.trim()) throw new Error("NovelAI API Key 未填写");
-    if (!nai.url?.trim()) throw new Error("NovelAI 地址未填写");
 
-    const baseUrl = nai.url.trim().replace(/\/+$/, "");
-    // 根据 endpointMode 选择接口
-    const apiUrl = nai.endpointMode === "normal"
-        ? `${baseUrl}/generate-image`
-        : `${baseUrl}/ai/generate-image`;
+    // 空白 = 内置官方地址（同棉花糖机 / Miya：image.novelai.net，浏览器直连官网、无需梯子）
+    const baseUrl = (nai.url?.trim() || "https://image.novelai.net").replace(/\/+$/, "");
+    const apiUrl = /\/ai\/generate-image$/i.test(baseUrl) ? baseUrl : `${baseUrl}/ai/generate-image`;
+
     const [width, height] = parseNaiSize(nai.size);
-    const finalPrompt = buildNaiPrompt(params.prompt, nai);
+    const finalPrompt = buildNaiPrompt(prompt, nai);
 
-    // 如果开启 qualityTags 且模板中不含质量词，自动追加
-    let effectivePrompt = finalPrompt;
-    if (nai.qualityTags !== false && nai.qualitySuffix && !finalPrompt.toLowerCase().includes(nai.qualitySuffix.split(",")[0]?.trim().toLowerCase() || "zzz")) {
-        effectivePrompt = finalPrompt + ", " + nai.qualitySuffix;
-    }
+    // 种子：未填写则随机正整（NAI 接受随机种子；与 Miya 一致）
+    const seed = (typeof nai.seed === "string" && nai.seed.trim())
+        ? (parseInt(nai.seed, 10) || Math.floor(Math.random() * 999999999))
+        : Math.floor(Math.random() * 999999999);
 
+    // Miya 验证可用的 NAI v3 请求体
     const body = JSON.stringify({
-        input: effectivePrompt,
+        input: finalPrompt,
         model: nai.model || "nai-diffusion-4-5-full",
         action: "generate",
         parameters: {
             width,
             height,
             scale: typeof nai.cfgScale === "number" ? nai.cfgScale : 5,
-            sampler: (nai.sampler || "euler_ancestral").replace(/^k_/, "k_").replace("euler_ancestral", "k_euler_ancestral"),
+            sampler: nai.sampler || "k_euler_ancestral",
             steps: typeof nai.steps === "number" ? Math.max(1, Math.min(50, nai.steps)) : 28,
-            seed: typeof nai.seed === "string" && nai.seed ? parseInt(nai.seed, 10) || -1 : -1,
+            n_samples: 1,
+            seed,
             negative_prompt: nai.negativePrompt || "",
-            ucPreset: typeof nai.ucPreset === "number" ? nai.ucPreset : 0,
-            /* 以下为 NAI v3 完整参数 */
-            add_original_image: false,
-            cfg_rescale: 0,
-            controlnet_strength: 1,
-            dynamic_thresholding: false,
-            legacy: false,
-            quality_toggle: true,
-            sm: !!nai.smeaDyn,
+            sm: !!nai.smea,
             sm_dyn: !!nai.smeaDyn,
-            uncond_scale: 1,
-            noise_schedule: nai.noiseSchedule || "native",
-            legacy_v3_extend: false,
-            smea_dy: !!nai.smeaDyn,
-            smea_static: !!nai.smea,
-            smea: !!nai.smea,
-            ref_sw: false,
-            decr_countdown: false,
-            /* 参考图（风格迁移） */
-            ...(nai.referenceImageDataUrl
-                ? { image: nai.referenceImageDataUrl.replace(/^data:image\/[^;]+;base64,/, "") }
-                : {}),
-            /* 画风强度 */
-            ...(typeof nai.styleStrength === "number" && nai.referenceImageDataUrl
-                ? { extra_noise_seed: Math.round(nai.styleStrength * 1000000) % 2147483647 }
-                : {}),
+            qualityToggle: true,
+            ucPreset: typeof nai.ucPreset === "number" ? nai.ucPreset : 0,
         },
     });
 
@@ -429,37 +408,64 @@ async function generateImageNovelAI(params: {
             throw new Error(`NovelAI API 错误 ${res.status}: ${errText.slice(0, 600)}`);
         }
 
-        const json = await res.json() as Record<string, unknown>;
-        throwIfAborted(signal);
+        const contentType = (res.headers.get("content-type") || "").toLowerCase();
 
-        // NAI 返回格式: { artifacts: [{ base64, seed, finishReason }] }
-        const artifacts = json.artifacts as Array<Record<string, unknown>> | undefined;
-        if (!artifacts || !artifacts.length) {
-            throw new Error(`NovelAI 返回格式异常：${JSON.stringify(Object.keys(json)).slice(0, 200)}`);
+        // 1) JSON 形态：直接返回 base64 的 image 字段
+        if (contentType.includes("json")) {
+            const json = await res.json() as Record<string, unknown>;
+            const image = typeof json.image === "string" ? json.image : undefined;
+            if (!image) throw new Error(`NovelAI 返回格式异常：${JSON.stringify(Object.keys(json)).slice(0, 200)}`);
+            return { b64: image, mimeType: "image/png", revisedPrompt: finalPrompt };
         }
 
-        const artifact = artifacts[0];
-        const b64 = artifact.base64 as string | undefined;
-        if (!b64) throw new Error("NovelAI 返回的图片数据为空");
+        // 2) ZIP / 二进制流形态（NAI v3 标准返回）：解压取第一张图
+        const buf = await res.arrayBuffer();
+        throwIfAborted(signal);
+        if (contentType.includes("zip") || contentType.includes("octet-stream") || !contentType.includes("image/")) {
+            const b64 = await extractFirstImageBase64FromZip(buf);
+            return { b64, mimeType: "image/png", revisedPrompt: finalPrompt };
+        }
 
-        // NAI 默认返回 PNG
-        return {
-            b64,
-            mimeType: (artifact.type as string) || "image/png",
-            revisedPrompt: finalPrompt,
-        };
+        // 3) 直接就是图片字节
+        const mime = contentType.startsWith("image/") ? contentType : "image/png";
+        return { b64: arrayBufferToBase64(buf), mimeType: mime, revisedPrompt: finalPrompt };
     } catch (error) {
         if (controller.signal.aborted && !signal?.aborted) {
             throw new Error("NovelAI 生图超时（360 秒未返回）");
         }
         if (error instanceof TypeError) {
-            throw new Error("NovelAI 连接失败：该地址可能未允许跨域请求，或网络不通。");
+            throw new Error("NovelAI 连接失败：该地址可能未允许跨域请求，或网络不通（直连官网请确认网络可访问 image.novelai.net）。");
         }
         throw error;
     } finally {
         clearTimeout(totalTimer);
         if (signal) signal.removeEventListener("abort", onOuterAbort);
     }
+}
+
+/** ArrayBuffer → base64 字符串（浏览器环境） */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    let binary = "";
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+}
+
+/** 从 NAI 返回的 ZIP 包里解压出第一张图片，返回 base64 */
+async function extractFirstImageBase64FromZip(buffer: ArrayBuffer): Promise<string> {
+    const zip = await JSZip.loadAsync(buffer);
+    const names = Object.keys(zip.files).filter(
+        (n) => !zip.files[n].dir && /\.(png|jpe?g|webp)$/i.test(n),
+    );
+    if (!names.length) throw new Error("NovelAI 返回的 ZIP 中没有找到图片文件");
+    const blob = await zip.files[names[0]].async("blob");
+    const dataUrl = await blobToDataUrl(blob);
+    const cleaned = cleanBase64(dataUrl);
+    if (!cleaned.b64) throw new Error("NovelAI 解压后的图片数据为空");
+    return cleaned.b64;
 }
 
 // ── Pollinations 生图（免费、免 Key，浏览器直连）────────────────────
@@ -787,10 +793,12 @@ export async function generateImageFromConfiguredApi(params: {
   // ── Provider 路由：NAI vs OpenAI 兼容 ──
   if (settings.provider === "novelai") {
     const nai = settings.novelai;
-    // NAI 校验
-    if (!description || !nai?.apiKey?.trim() || !nai?.url?.trim()) return null;
+    // NAI 校验：只要求 Key，地址留空即内置官方（同棉花糖机 / Miya，image.novelai.net 直连官网、无需梯子）
+    if (!description || !nai?.apiKey?.trim()) return null;
 
     throwIfAborted(params.signal);
+    // 浏览器直连官方 NAI（image.novelai.net）：与棉花糖机 / Miya 同款方案，
+    // 无需服务器中转、无需梯子；若网络无法直连，可在地址栏手动填写中转站。
     const data = await generateImageNovelAI({
       settings,
       prompt: description,

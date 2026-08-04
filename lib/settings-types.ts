@@ -159,7 +159,7 @@ export type ImageHostingSettings = {
 
 /** NovelAI 专属配置 */
 export type NovelAIConfig = {
-    /** NovelAI API 地址（官方 https://api.novelai.net 或中转站） */
+    /** NovelAI API 地址（官方 https://image.novelai.net 或中转站；留空=内置官方、浏览器直连） */
     url: string;
     /** NovelAI API Key（pst-... 或中转站 key） */
     apiKey: string;

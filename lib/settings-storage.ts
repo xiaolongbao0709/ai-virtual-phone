@@ -636,7 +636,7 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
     extraPrompt: "",
     // --- NovelAI ---
     novelai: {
-        url: "https://api.novelai.net",
+        url: "https://image.novelai.net",
         apiKey: "",
         model: "nai-diffusion-4-5-full",
         size: "832x1216",
@@ -650,7 +650,7 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
         styleStrength: 0.6,
         steps: 28,
         cfgScale: 5,
-        sampler: "euler_ancestral",
+        sampler: "k_euler_ancestral",
         noiseSchedule: "karras",
         seed: null,
         presetGroups: [],
