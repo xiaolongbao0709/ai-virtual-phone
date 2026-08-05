@@ -178,6 +178,34 @@ function buildNaiPrompt(prompt: string, input: ImageGenerationRequest): string {
         .replace(/\{prompt\}/gi, prompt);
 }
 
+// ── 结构化场景提示词拼装（v19：NAI 与 OpenAI 共用）──
+// 顺序：背景 → 光源 → 各参与者(人物名(锚点形容) 动作) → 用户原文([照片:]内容)
+// 这样无论哪个 provider，提示词都是「谁是谁 + 在哪 + 什么光 + 在做什么」的统一格式。
+function buildStructuredChinesePrompt(input: ImageGenerationRequest): string {
+    const parts: string[] = [];
+    if (input.sceneBackground?.trim()) parts.push(input.sceneBackground.trim());
+    if (input.sceneLighting?.trim()) parts.push(input.sceneLighting.trim());
+    if (input.participants?.length) {
+        for (const p of input.participants) {
+            const name = (p.name || "").trim();
+            const anchor = (p.anchor || "").trim();
+            const action = (p.action || "").trim();
+            if (!name && !anchor && !action) continue;
+            let clause = name || "某人";
+            if (anchor) clause += `（${anchor}）`;
+            if (action) clause += ` ${action}`;
+            parts.push(clause);
+        }
+    }
+    // 用户原文（[照片:] 内容 = 动作 / 场景描述）；OAI 路径里此处已含 extraPrompt 质量标签
+    if (input.prompt?.trim()) parts.push(input.prompt.trim());
+    // 兼容旧字段 participantAppearance（未传结构化 participants 时）
+    if ((!input.participants || input.participants.length === 0) && input.participantAppearance?.trim()) {
+        parts.push(input.participantAppearance.trim());
+    }
+    return parts.join("。");
+}
+
 // 检测是否含中日韩字符（中文提示词需要翻译给 NAI）
 function containsCJK(text: string): boolean {
     return /[一-鿿぀-ヿ㐀-䶿豈-﫿ｦ-ﾟ]/.test(text);
@@ -247,30 +275,8 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     if (!naiKey) return { status: 400, body: { error: "缺少 NovelAI API Key" } };
     if (!rawPrompt) return { status: 400, body: { error: "缺少提示词" } };
 
-    // ── 结构化场景提示词拼装（v18：背景 + 光源 + 人物名(锚点) + 动作 + 用户原文）──
-    // 组件顺序：背景 → 光源 → 各参与者(人物名(锚点形容) 动作) → 用户原文([照片:]内容=场景/动作)
-    const rawChineseParts: string[] = [];
-    if (input.sceneBackground?.trim()) rawChineseParts.push(input.sceneBackground.trim());
-    if (input.sceneLighting?.trim()) rawChineseParts.push(input.sceneLighting.trim());
-    if (input.participants?.length) {
-        for (const p of input.participants) {
-            const name = (p.name || "").trim();
-            const anchor = (p.anchor || "").trim();
-            const action = (p.action || "").trim();
-            if (!name && !anchor && !action) continue;
-            let clause = name || "某人";
-            if (anchor) clause += `（${anchor}）`;
-            if (action) clause += ` ${action}`;
-            rawChineseParts.push(clause);
-        }
-    }
-    // 用户原文（[照片:] 内容 = 动作 / 场景描述）
-    if (input.prompt?.trim()) rawChineseParts.push(input.prompt.trim());
-    // 兼容旧字段 participantAppearance（未传结构化 participants 时）
-    if ((!input.participants || input.participants.length === 0) && input.participantAppearance?.trim()) {
-        rawChineseParts.push(input.participantAppearance.trim());
-    }
-    const rawChinese = rawChineseParts.join("。");
+    // ── 结构化场景提示词拼装（v19：NAI 与 OpenAI 共用 buildStructuredChinesePrompt）──
+    const rawChinese = buildStructuredChinesePrompt(input);
 
     // 整段中文翻译为英文（NAI 不识别中文 tag；翻译失败则保留原文）
     let finalUserPrompt = rawChinese;
@@ -381,7 +387,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
 
     // ── 诊断日志（Vercel Dashboard → Functions → Logs 可查看）──
     const diag = {
-      _codeVersion: "v18",  // v18=结构化场景提示词(背景+光源+人物名锚点+动作) + 参考图锁脸(character_reference)
+      _codeVersion: "v19",  // v19=结构化场景提示词(NAI/OAI共用) + 参考图锁脸；OAI 现与 NAI 对等
       ts: new Date().toISOString(),
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       size: `${width}x${height}`,
@@ -584,13 +590,34 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
     const apiKey = input.apiKey?.trim();
     const baseUrl = input.baseUrl?.trim();
     const model = input.model?.trim();
-    const prompt = input.prompt?.trim();
+    const rawPrompt = input.prompt?.trim();
+
+    if (!rawPrompt) return { status: 400, body: { error: "缺少提示词" } };
+
+    // ── 结构化场景提示词拼装（与 NAI 一致：背景 + 光源 + 人物名(锚点) + 动作 + 用户原文）──
+    // GPT(OpenAI) 同样吃中文，但翻译为英文质量更稳定，故整段翻译。
+    const rawChinese = buildStructuredChinesePrompt(input);
+    let finalPrompt = rawChinese;
+    const hasCJK = containsCJK(rawChinese);
+    if (hasCJK) {
+      try {
+        finalPrompt = await translateToEnglish(rawChinese);
+        console.log("[OAI-PROMPT] translated:", { from: rawChinese.slice(0, 80), to: finalPrompt.slice(0, 80) });
+      } catch (e) {
+        console.log("[OAI-PROMPT] translate error:", e);
+      }
+    }
+
     const hasReference = Boolean(input.referenceImages?.length) || Boolean(input.referenceImageDataUrl?.trim());
+    // 锁脸提示（GPT 尽力而为：用参考图保留每个人脸与身份；GPT 无 NAI 那种强锁脸，靠此提示+参考图）
+    if (hasReference) {
+      finalPrompt += ". Preserve each person's exact facial features and identity shown in the reference image(s).";
+    }
+    console.log("[OAI-PROMPT] final:", { hasReference, hasCJK, len: finalPrompt.length });
 
     if (!apiKey) return { status: 400, body: { error: "缺少 API Key" } };
     if (!baseUrl) return { status: 400, body: { error: "缺少 Base URL" } };
     if (!model) return { status: 400, body: { error: "缺少模型名" } };
-    if (!prompt) return { status: 400, body: { error: "缺少提示词" } };
 
     const url = buildImageUrl(baseUrl, hasReference ? "edits" : "generations");
     const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
@@ -602,7 +629,7 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
       if (!refImages.length) return { status: 400, body: { error: "参考图格式无效" } };
       const form = new FormData();
       form.set("model", model);
-      form.set("prompt", prompt);
+      form.set("prompt", finalPrompt);
       if (input.size && input.size !== "auto") form.set("size", input.size);
       if (input.quality && input.quality !== "auto") form.set("quality", input.quality);
       for (const ref of refImages) {
@@ -615,7 +642,7 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
       headers["Content-Type"] = "application/json";
       body = JSON.stringify({
         model,
-        prompt,
+        prompt: finalPrompt,
         ...(input.size && input.size !== "auto" ? { size: input.size } : {}),
         ...(input.quality && input.quality !== "auto" ? { quality: input.quality } : {}),
       });

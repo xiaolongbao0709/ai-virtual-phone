@@ -618,6 +618,10 @@ async function generateImageViaServerOrProxy(params: {
   settings: ImageGenerationSettings;
   prompt: string;
   referenceImageDataUrl: string | null;
+  participants?: Array<{ name: string; anchor?: string; action?: string }>;
+  referenceImages?: string[];
+  sceneBackground?: string;
+  sceneLighting?: string;
   signal?: AbortSignal;
 }): Promise<ImageGenerationApiResponse> {
   if (IMAGE_GEN_PROXY_URL) {
@@ -906,7 +910,17 @@ export async function generateImageFromConfiguredApi(params: {
   // 统一走 Vercel 服务器中转（与 NAI 分支一致）：浏览器只连国内 Vercel，
   // 由海外服务器调 api.openai.com，避免国内网络直连被墙（"不能跨境"）。
   // 仅当用户显式配置了通用代理(IMAGE_GEN_PROXY_URL)时走代理，否则走服务端路由。
-  const data = await generateImageViaServerOrProxy({ settings, prompt, referenceImageDataUrl, signal: params.signal });
+  // v19：与 NAI 对等 —— 透传 participants/场景/锁脸参考图，让 OAI 也享结构化提示词+参考图锁脸。
+  const data = await generateImageViaServerOrProxy({
+    settings,
+    prompt,
+    referenceImageDataUrl,
+    participants: params.participants,
+    referenceImages: params.referenceImages,
+    sceneBackground: params.sceneBackground,
+    sceneLighting: params.sceneLighting,
+    signal: params.signal,
+  });
 
   throwIfAborted(params.signal);
   const mimeType = data.mimeType || "image/png";
