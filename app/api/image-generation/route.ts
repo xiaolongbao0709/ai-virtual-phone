@@ -207,6 +207,30 @@ function buildNaiPrompt(prompt: string, input: ImageGenerationRequest): string {
         .replace(/\{prompt\}/gi, prompt);
 }
 
+/**
+ * 检测文本是否包含 CJK（中日韩）字符
+ */
+function containsCJK(text: string): boolean {
+    return /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff]/.test(text);
+}
+
+/**
+ * 使用 MyMemory 免费翻译 API 将中文翻译为英文（无需 API Key）
+ * 适用于 NAI 等只接受英文 tag 的生图服务
+ */
+async function translateToEnglish(text: string): Promise<string> {
+    try {
+        const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=zh|en`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        if (!res.ok) return text;
+        const data = (await res.json()) as { responseData?: { translatedText: string } };
+        const translated = data?.responseData?.translatedText;
+        return translated && translated !== text ? translated : text;
+    } catch {
+        return text; // 翻译失败时返回原文，不阻断出图
+    }
+}
+
 async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
   try {
     const naiKey = input.novelaiKey?.trim();
@@ -217,11 +241,14 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     if (!naiKey) return { status: 400, body: { error: "缺少 NovelAI API Key" } };
     if (!prompt) return { status: 400, body: { error: "缺少提示词" } };
 
+    // NAI 只识别英文 tag，中文提示词自动翻译为英文
+    const effectivePrompt = containsCJK(prompt) ? await translateToEnglish(prompt) : prompt;
+
     const baseUrl = naiUrl.replace(/\/+$/, "");
     const url = `${baseUrl}/ai/generate-image`;
     const sizeStr = input.novelaiSize || "832x1216";
     const [width, height] = NAI_SIZE_MAP[sizeStr] || ([832, 1216] as [number, number]);
-    const finalPrompt = buildNaiPrompt(prompt, input);
+    const finalPrompt = buildNaiPrompt(effectivePrompt, input);
 
     const body = JSON.stringify({
       input: finalPrompt,
