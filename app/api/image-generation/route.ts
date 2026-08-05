@@ -193,7 +193,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
         scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
         sampler: (input.novelaiSampler || "euler_ancestral").replace(/^k_/, "k_").replace("euler_ancestral", "k_euler_ancestral"),
         steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(150, input.novelaiSteps)) : 28,
-        seed: typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) || -1 : -1,
+        seed: (typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) : 0) || Math.floor(Math.random() * 2 ** 53),
         negative_prompt: input.novelaiNegativePrompt || "",
         ucPreset: typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0,
         add_original_image: false,
