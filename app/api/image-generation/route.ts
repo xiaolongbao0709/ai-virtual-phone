@@ -209,49 +209,72 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     const finalPrompt = buildNaiPrompt(finalUserPrompt, input);
 
     const seedValue = (typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) : 0) || Math.floor(Math.random() * 2 ** 53);
-    // ── 对齐 novelai-image-sdk（V4.5 官方格式）──
-    // 参考：https://github.com/gamer-mitsuha/novelai-image-sdk
-    //       https://github.com/7xrk/novelai-api
-    // 关键修正：params_version=3（不是1！）、必须带v4_prompt结构体、
-    //          必须有prefer_brownian/deliberate_euler_ancestral_bug/sm/sm_dyn
+    // ── 完全对齐 7xrk/novelai-api（权威SDK源码）──
+    // 参考：https://github.com/7xrk/novelai-api/blob/main/src/high_level/generateImage.ts
+    //       https://github.com/7xrk/novelai-api/blob/main/src/high_level/consts.ts
+    // v9: 逐字段对照SDK的getGenerateImageParams()，消除所有差异
+
+    // Sampler 名称映射（必须带 k_ 前缀）
+    const rawSampler = input.novelaiSampler || "euler_ancestral";
+    const samplerMap: Record<string, string> = {
+      "euler": "k_euler", "k_euler": "k_euler",
+      "euler_ancestral": "k_euler_ancestral", "k_euler_ancestral": "k_euler_ancestral",
+      "dpmpp_2m": "k_dpmpp_2m", "k_dpmpp_2m": "k_dpmpp_2m",
+      "dpmpp_2m_sde": "k_dpmpp_2m_sde", "k_dpmpp_2m_sde": "k_dpmpp_2m_sde",
+      "dpmpp_2s_ancestral": "k_dpmpp_2s_ancestral", "k_dpmpp_2s_ancestral": "k_dpmpp_2s_ancestral",
+    };
+    const apiSampler = samplerMap[rawSampler] || "k_euler";
+
+    // noise_schedule（小写）
+    const rawNoise = input.novelaiNoiseSchedule || "karras";
+    const noiseMap: Record<string, string> = {
+      "native": "native", "karras": "karras",
+      "exponential": "exponential", "polyexponential": "polyexponential",
+    };
+    let apiNoise = noiseMap[rawNoise] || "karras";
+    // SDK行为：V4X模型下native自动转karras
+    if (apiNoise === "native") apiNoise = "karras";
+
     const parameters: Record<string, unknown> = {
-      width,
-      height,
-      scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
-      sampler: input.novelaiSampler || "euler_ancestral",
-      steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(50, input.novelaiSteps)) : 28,
-      seed: seedValue,
+      // ── 基础参数（与SDK完全一致）──
+      cfg_rescale: 0,
+      controlnet_strength: 1,
+      dynamic_thresholding: true,
+      skip_cfg_above_sigma: null,
+      legacy: false,
+      legacy_uc: false,
+      legacy_v3_extend: false,
       n_samples: 1,
       negative_prompt: input.novelaiNegativePrompt || "",
-
-      // ── V4/V4.5 必需的结构化提示词 ──
-      v4_prompt: {
-        caption: { base_caption: finalPrompt, char_captions: [] },
-        use_coords: false,
-        use_order: true,
-        legacy_uc: false,
-      },
-      v4_negative_prompt: {
-        caption: { base_caption: input.novelaiNegativePrompt || "", char_captions: [] },
-        use_coords: false,
-        use_order: true,
-        legacy_uc: false,
-      },
-
-      // 质量与预设 — ⚠️ ucPreset 必须是数字(uint)，不能是字符串！
-      qualityToggle: true,
-      ucPreset: typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0,
-
-      // ── V4.5 核心参数 ──
       params_version: 3,
-      noise_schedule: input.novelaiNoiseSchedule || "karras",
-      sm: !!input.novelaiSmea,
-      sm_dyn: !!input.novelaiSmeaDyn,
-      dynamic_thresholding: false,
+      noise_schedule: apiNoise,
+      qualityToggle: false,
+      sampler: apiSampler,
+      scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
+      seed: seedValue,
+      sm: false,           // V4.5模型不支持smea
+      sm_dyn: false,
+      autoSmea: false,
+      steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(50, input.novelaiSteps)) : 28,
+      width,
+      height,
+
+      // ── V4/V4.5 模型额外参数 ──
+      use_coords: false,
       prefer_brownian: true,
-      deliberate_euler_ancestral_bug: true,
-      legacy: false,
-      legacy_v3_extend: false,
+      deliberate_euler_ancestral_bug: false,   // ⚠️ SDK用false，不是true！
+
+      // ── V4/V4.5 必需的结构化提示词（严格按SDK格式）──
+      v4_negative_prompt: {
+        legacy_uc: false,
+        caption: { base_caption: input.novelaiNegativePrompt || "", char_captions: [] },
+      },
+      v4_prompt: {
+        use_coords: false,
+        use_order: true,
+        caption: { base_caption: finalPrompt, char_captions: [] },
+      },
+      // ⚠️ 不发送ucPreset！SDK只在客户端用它拼接negative_prompt标签，不传给NAI API
     };
     const body = JSON.stringify({
       input: finalPrompt,
@@ -262,7 +285,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
 
     // ── 诊断日志（Vercel Dashboard → Functions → Logs 可查看）──
     const diag = {
-      _codeVersion: "v8",  // v8=修复ucPreset类型(string→uint数字), 删除sampler/noise映射直接传原始值
+      _codeVersion: "v9",  // v9=完全对齐7xrk SDK源码(删ucPreset/修sampler前缀/deliberate_bug=false/加全量字段)
       ts: new Date().toISOString(),
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       size: `${width}x${height}`,
@@ -272,8 +295,8 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       suffixLen: (input.novelaiQualitySuffix || "").length,
       bodySize: body.length,
       steps: typeof input.novelaiSteps === "number" ? input.novelaiSteps : 28,
-      sampler: input.novelaiSampler || "euler_ancestral",
-      noiseSchedule: input.novelaiNoiseSchedule || "karras",
+      sampler: apiSampler,
+      noiseSchedule: apiNoise,
       paramsV: 3,
     };
     console.log("[NAI-DIAG] request:", JSON.stringify(diag));
