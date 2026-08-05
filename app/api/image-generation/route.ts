@@ -209,28 +209,66 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     const finalPrompt = buildNaiPrompt(finalUserPrompt, input);
 
     const seedValue = (typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) : 0) || Math.floor(Math.random() * 2 ** 53);
-    // ── 对齐已验证可用的 ComfyUI NAI 插件（nai.py）──
-    // 参考：https://github.com/ComfyNodePRs/PR-comfyui_nai_api-de129384/blob/main/nai.py
-    // 关键差异：params_version=1（不是3）、不用v4_prompt结构、响应是ZIP文件不是JSON
+    // ── 对齐 novelai-image-sdk（V4.5 官方格式）──
+    // 参考：https://github.com/gamer-mitsuha/novelai-image-sdk
+    //       https://github.com/7xrk/novelai-api
+    // 关键修正：params_version=3（不是1！）、必须带v4_prompt结构体、
+    //          必须有prefer_brownian/deliberate_euler_ancestral_bug/sm/sm_dyn
+    const ucPresetMap: Record<number, string> = { 0: "None", 2: "Light", 3: "Heavy" };
+    const samplerMap: Record<string, string> = {
+      "euler_ancestral": "EulerAncestral", "k_euler_ancestral": "EulerAncestral",
+      "euler": "Euler", "k_euler": "Euler",
+      "dpmpp_2m": "DPM_2M", "k_dpmpp_2m": "DPM_2M",
+      "dpmpp_sde": "DPM_SDE", "k_dpmpp_sde": "DPM_SDE",
+      "ddim": "DDIM",
+    };
+    const noiseMap: Record<string, string> = {
+      "native": "Native", "karras": "Karras",
+      "exponential": "Exponential", "polyexponential": "Polyexponential",
+    };
+    const rawSampler = input.novelaiSampler || "k_euler_ancestral";
+    const apiSampler = samplerMap[rawSampler] || rawSampler;
+    const rawNoise = input.novelaiNoiseSchedule || "karras";
+    const apiNoise = noiseMap[rawNoise] || rawNoise;
+
     const parameters: Record<string, unknown> = {
-      params_version: 1,
       width,
       height,
       scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
-      sampler: input.novelaiSampler || "k_euler_ancestral",
-      steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(150, input.novelaiSteps)) : 28,
+      sampler: apiSampler,
+      steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(50, input.novelaiSteps)) : 28,
       seed: seedValue,
       n_samples: 1,
-      ucPreset: typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0,
-      qualityToggle: true,
-      dynamic_thresholding: false,
-      controlnet_strength: 1,
-      legacy: false,
-      add_original_image: false,
-      cfg_rescale: 0,
-      noise_schedule: input.novelaiNoiseSchedule || "native",
-      legacy_v3_extend: false,
       negative_prompt: input.novelaiNegativePrompt || "",
+
+      // ── V4/V4.5 必需的结构化提示词 ──
+      v4_prompt: {
+        caption: { base_caption: finalPrompt, char_captions: [] },
+        use_coords: false,
+        use_order: true,
+        legacy_uc: false,
+      },
+      v4_negative_prompt: {
+        caption: { base_caption: input.novelaiNegativePrompt || "", char_captions: [] },
+        use_coords: false,
+        use_order: true,
+        legacy_uc: false,
+      },
+
+      // 质量与预设
+      qualityToggle: true,
+      ucPreset: ucPresetMap[typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0] || "None",
+
+      // ── V4.5 核心参数 ──
+      params_version: 3,  // ⚠️ V4.5 必须是 3，不是 1！
+      noise_schedule: apiNoise,
+      sm: !!input.novelaiSmea,
+      sm_dyn: !!input.novelaiSmeaDyn,
+      dynamic_thresholding: false,
+      prefer_brownian: true,
+      deliberate_euler_ancestral_bug: true,
+      legacy: false,
+      legacy_v3_extend: false,
     };
     const body = JSON.stringify({
       input: finalPrompt,
@@ -240,9 +278,8 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     });
 
     // ── 诊断日志（Vercel Dashboard → Functions → Logs 可查看）──
-    const actualSampler = input.novelaiSampler || "k_euler_ancestral";
     const diag = {
-      _codeVersion: "v6",  // 版本标记：v6=对齐ComfyUI NAI插件(params_version:1, 无v4_prompt, ZIP响应)
+      _codeVersion: "v7",  // 版本标记：v7=对齐novelai-image-sdk(params_version:3, v4_prompt结构体, 完整V4.5参数)
       ts: new Date().toISOString(),
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       size: `${width}x${height}`,
@@ -252,9 +289,9 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       suffixLen: (input.novelaiQualitySuffix || "").length,
       bodySize: body.length,
       steps: typeof input.novelaiSteps === "number" ? input.novelaiSteps : 28,
-      sampler: actualSampler,
-      hasSm: !!input.novelaiSmeaDyn,
-      endpointMode: input.novelaiEndpointMode || "normal",
+      sampler: apiSampler,
+      noiseSchedule: apiNoise,
+      paramsV: 3,
     };
     console.log("[NAI-DIAG] request:", JSON.stringify(diag));
 
@@ -287,7 +324,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
         ...diag,
       }));
       return { status: 502, body: {
-        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: model=${diag.model} size=${diag.size} promptLen=${diag.promptLen} prefixLen=${diag.prefixLen} suffixLen=${diag.suffixLen} steps=${diag.steps} sampler=${diag.sampler} bodySize=${diag.bodySize} hasSm=${diag.hasSm}]`,
+        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: model=${diag.model} size=${diag.size} promptLen=${diag.promptLen} prefixLen=${diag.prefixLen} suffixLen=${diag.suffixLen} steps=${diag.steps} sampler=${diag.sampler} noise=${diag.noiseSchedule} paramsV=${diag.paramsV} bodySize=${diag.bodySize}]`,
         _diag: {
           promptPreview: finalPrompt.slice(0, 200),
           model: diag.model,
@@ -344,7 +381,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       return { status: 502, body: {
-        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: v${diag._codeVersion} model=${diag.model} size=${diag.size} sampler=${diag.sampler} bodySize=${diag.bodySize}]`,
+        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: v${diag._codeVersion} model=${diag.model} size=${diag.size} sampler=${diag.sampler} noise=${diag.noiseSchedule} paramsV=${diag.paramsV} bodySize=${diag.bodySize}]`,
       } };
     }
 
