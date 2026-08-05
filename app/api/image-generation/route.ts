@@ -173,18 +173,58 @@ function containsCJK(text: string): boolean {
     return /[一-鿿぀-ヿ㐀-䶿豈-﫿ｦ-ﾟ]/.test(text);
 }
 
-// 用 MyMemory 免费翻译把中文提示词翻成英文；失败则原样返回（不阻断生图）
+// ── 多源中文→英文翻译（NAI 不识别中文 tag）──
+// 优先级：Google Translate 免费接口 → MyMemory → 保留原文
+// 所有翻译失败都不阻断生图（返回原文让 NAI 尝试）
 async function translateToEnglish(text: string): Promise<string> {
+    // 源1：Google Translate 免费接口（非官方但广泛使用、速度快）
+    try {
+        const url = `https://translate.googleapis.com/translate_a/single?client=gsl&sl=zh-CN&tl=en&dt=t&q=${encodeURIComponent(text)}`;
+        const res = await externalFetch(url, { 
+            method: "GET",
+            headers: { "User-Agent": "Mozilla/5.0" },
+            signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+            const json = await res.json() as unknown;
+            // Google 返回格式：[[["translated text","original text",...],...],...]
+            if (Array.isArray(json) && Array.isArray(json[0])) {
+                const translated = (json[0] as unknown[][])
+                    .map((segment: unknown[]) => segment?.[0] as string)
+                    .filter(Boolean)
+                    .join("");
+                if (translated && translated !== text) {
+                    console.log("[TRANSLATE] google ok:", text.slice(0, 50), "→", translated.slice(0, 50));
+                    return translated.trim();
+                }
+            }
+        }
+    } catch (err) {
+        console.log("[TRANSLATE] google failed:", typeof err === "object" && err instanceof Error ? err.message : String(err));
+    }
+
+    // 源2：MyMemory 免费翻译（fallback）
     try {
         const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=zh|en`;
-        const res = await externalFetch(url, { method: "GET" });
-        if (!res.ok) return text;
-        const data = await res.json() as { responseData?: { translatedText?: string } };
-        const t = data.responseData?.translatedText;
-        return t ? t.trim() : text;
-    } catch {
-        return text;
+        const res = await externalFetch(url, { 
+            method: "GET", 
+            signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+            const data = await res.json() as { responseData?: { translatedText?: string } };
+            const t = data.responseData?.translatedText;
+            if (t && t.trim() && t.trim() !== text) {
+                console.log("[TRANSLATE] mymemory ok:", text.slice(0, 50), "→", t.trim().slice(0, 50));
+                return t.trim();
+            }
+        }
+    } catch (err) {
+        console.log("[TRANSLATE] mymemory failed:", typeof err === "object" && err instanceof Error ? err.message : String(err));
     }
+
+    // 全部失败，返回原文（不阻断）
+    console.log("[TRANSLATE] all failed, keeping original:", text.slice(0, 50));
+    return text;
 }
 
 async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -199,8 +239,14 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
 
     // 中文提示词自动翻译为英文（NAI 不识别中文 tag；翻译失败则保留原文）
     let finalUserPrompt = rawPrompt;
-    if (containsCJK(rawPrompt)) {
-        try { finalUserPrompt = await translateToEnglish(rawPrompt); } catch { /* 保留原文 */ }
+    const hasCJK = containsCJK(rawPrompt);
+    if (hasCJK) {
+        try {
+            finalUserPrompt = await translateToEnglish(rawPrompt);
+            console.log("[NAI-PROMPT] translated:", { from: rawPrompt.slice(0, 80), to: finalUserPrompt.slice(0, 80), changed: finalUserPrompt !== rawPrompt });
+        } catch (e) {
+            console.log("[NAI-PROMPT] translate error:", e);
+        }
     }
 
     const baseUrl = naiUrl.replace(/\/+$/, "");
@@ -286,11 +332,12 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
 
     // ── 诊断日志（Vercel Dashboard → Functions → Logs 可查看）──
     const diag = {
-      _codeVersion: "v9",  // v9=完全对齐7xrk SDK源码(删ucPreset/修sampler前缀/deliberate_bug=false/加全量字段)
+      _codeVersion: "v11",  // v11=修复翻译(Google Translate主+MyMemory fallback) + 诊断增强
       ts: new Date().toISOString(),
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       size: `${width}x${height}`,
       sizeStr,
+      rawPromptLen: rawPrompt.length,
       promptLen: finalPrompt.length,
       prefixLen: (input.novelaiPositivePrefix || "").length,
       suffixLen: (input.novelaiQualitySuffix || "").length,
@@ -299,6 +346,8 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       sampler: apiSampler,
       noiseSchedule: apiNoise,
       paramsV: 3,
+      hasCJK,
+      translated: hasCJK ? finalUserPrompt !== rawPrompt : undefined,
     };
     console.log("[NAI-DIAG] request:", JSON.stringify(diag));
 
@@ -331,7 +380,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
         ...diag,
       }));
       return { status: 502, body: {
-        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: model=${diag.model} size=${diag.size} promptLen=${diag.promptLen} prefixLen=${diag.prefixLen} suffixLen=${diag.suffixLen} steps=${diag.steps} sampler=${diag.sampler} noise=${diag.noiseSchedule} paramsV=${diag.paramsV} bodySize=${diag.bodySize}]`,
+        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: v${diag._codeVersion} model=${diag.model} size=${diag.size} sampler=${diag.sampler} noise=${diag.noiseSchedule} paramsV=${diag.paramsV} bodySize=${diag.bodySize} hasCJK=${diag.hasCJK} translated=${diag.translated}]`,
         _diag: {
           promptPreview: finalPrompt.slice(0, 200),
           model: diag.model,
@@ -354,7 +403,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       return { status: 502, body: {
-        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: v${diag._codeVersion} model=${diag.model} size=${diag.size} sampler=${diag.sampler} noise=${diag.noiseSchedule} paramsV=${diag.paramsV} bodySize=${diag.bodySize}]`,
+        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: v${diag._codeVersion} model=${diag.model} size=${diag.size} sampler=${diag.sampler} noise=${diag.noiseSchedule} paramsV=${diag.paramsV} bodySize=${diag.bodySize} hasCJK=${diag.hasCJK} translated=${diag.translated}]`,
       } };
     }
 
