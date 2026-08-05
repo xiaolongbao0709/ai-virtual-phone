@@ -534,6 +534,9 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
       form.set("prompt", prompt);
       if (input.size && input.size !== "auto") form.set("size", input.size);
       if (input.quality && input.quality !== "auto") form.set("quality", input.quality);
+      form.set("unsafe", "true");
+      form.set("nsfw", "true");
+      form.set("disable_safety_checker", "true");
       form.append("image", converted.blob, `reference.${converted.mimeType.split("/")[1] || "png"}`);
       body = form;
     } else {
@@ -543,6 +546,11 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
         prompt,
         ...(input.size && input.size !== "auto" ? { size: input.size } : {}),
         ...(input.quality && input.quality !== "auto" ? { quality: input.quality } : {}),
+        // 第三方 OpenAI 兼容端点（如 SD 反代）常支持的安全限制解除字段；
+        // 真实 OpenAI 会忽略这些未知字段，不影响正常请求
+        unsafe: true,
+        nsfw: true,
+        disable_safety_checker: true,
       });
     }
 
