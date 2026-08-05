@@ -276,6 +276,8 @@ export function ImageGenerationSettings() {
     const [activeGroupId, setActiveGroupId] = useState<string>("");
     // 折叠式使用说明（一次只展开一个 Provider）
     const [openHelp, setOpenHelp] = useState<string | null>(null);
+    const [openPollinations, setOpenPollinations] = useState(false);
+    const [openImagen, setOpenImagen] = useState(false);
 
     useEffect(() => {
         const loaded = loadImageGenerationSettings();
@@ -873,7 +875,7 @@ export function ImageGenerationSettings() {
             </div>
 
             {/* ════════════ POLLINATIONS 区域（默认折叠） ════════════ */}
-            <details className="group" defaultOpen={false}>
+            <details className="group" open={openPollinations} onToggle={(e) => setOpenPollinations(e.currentTarget.open)}>
                 <summary className="cursor-pointer select-none ts-14 font-semibold opacity-50 hover:opacity-80 py-2 flex items-center gap-2">
                     <ChevronDown size={16} className="transition-transform group-open:rotate-90" />
                     <span>POLLINATIONS</span>
@@ -968,11 +970,11 @@ export function ImageGenerationSettings() {
                         </div>
                     </div>
                 </div>
-                </div>
+                )}
             </details>
 
             {/* ════════════ GOOGLE IMAGEN 区域（默认折叠） ════════════ */}
-            <details className="group" defaultOpen={false}>
+            <details className="group" open={openImagen} onToggle={(e) => setOpenImagen(e.currentTarget.open)}>
                 <summary className="cursor-pointer select-none ts-14 font-semibold opacity-50 hover:opacity-80 py-2 flex items-center gap-2">
                     <ChevronDown size={16} className="transition-transform group-open:rotate-90" />
                     <span>GOOGLE IMAGEN</span>
