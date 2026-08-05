@@ -169,7 +169,7 @@ function buildNaiPrompt(prompt: string, input: ImageGenerationRequest): string {
 
 // 检测是否含中日韩字符（中文提示词需要翻译给 NAI）
 function containsCJK(text: string): boolean {
-    return /[一-鿿぀-ヿ㐀-䶿豈-﫿ｦ-ﾟ]/.test(text);
+    return /[一-鿿぀-ヿ㐀-䶿豈-﫿ｦ-ﾟ]/.test(text);
 }
 
 // 用 MyMemory 免费翻译把中文提示词翻成英文；失败则原样返回（不阻断生图）
@@ -208,38 +208,29 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     const [width, height] = NAI_SIZE_MAP[sizeStr] || ([832, 1216] as [number, number]);
     const finalPrompt = buildNaiPrompt(finalUserPrompt, input);
 
-    const isV4Model = /4/.test(input.novelaiModel || "nai-diffusion-4-5-full");
+        const isV4Model = /4/.test(input.novelaiModel || "nai-diffusion-4-5-full");
+    const seedValue = (typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) : 0) || Math.floor(Math.random() * 2 ** 53);
+    // 与已知可用的 nai-v4.5-api Python 脚本完全对齐（删除所有多余/可疑字段）
     const parameters: Record<string, unknown> = {
-      // ── NAI v4 / v4.5 必填的兼容参数（官方 SDK 默认补这些）──
       params_version: 3,
-      use_new_shared_trial: true,
-      prefer_brownian: true,
-      legacy: false,
-      legacy_uc: false,
-      legacy_v3_extend: false,
       width,
       height,
       scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
       sampler: (input.novelaiSampler || "euler_ancestral").replace(/^k_/, "k_").replace("euler_ancestral", "k_euler_ancestral"),
       steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(150, input.novelaiSteps)) : 28,
-      seed: (typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) : 0) || Math.floor(Math.random() * 2 ** 53),
-      negative_prompt: input.novelaiNegativePrompt || "",
+      seed: seedValue,
+      n_samples: 1,
       ucPreset: typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0,
+      qualityToggle: true,
+      dynamic_thresholding: false,
+      controlnet_strength: 1,
+      legacy: false,
       add_original_image: false,
       cfg_rescale: 0,
-      controlnet_strength: 1,
-      dynamic_thresholding: false,
-      quality_toggle: true,
-      sm: !!input.novelaiSmea,
-      sm_dyn: !!input.novelaiSmeaDyn,
-      uncond_scale: 1,
       noise_schedule: input.novelaiNoiseSchedule || "native",
-      smea_dy: !!input.novelaiSmeaDyn,
-      smea_static: !!input.novelaiSmea,
-      smea: !!input.novelaiSmea,
-      ref_sw: false,
-      decr_countdown: false,
-      unsafe: true, // 解除 NAI 内容过滤（NSFW）
+      legacy_v3_extend: false,
+      negative_prompt: input.novelaiNegativePrompt || "",
+      stream: "msgpack",
     };
     const naiRequestBody: Record<string, unknown> = {
       input: finalPrompt,
