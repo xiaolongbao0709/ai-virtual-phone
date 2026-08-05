@@ -293,7 +293,22 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      return { status: 502, body: { error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 600)}` } };
+      // 抓取完整响应头用于诊断
+      const resHeaders: Record<string, string> = {};
+      res.headers.forEach((v, k) => { resHeaders[k] = v; });
+      return {
+        status: 502,
+        body: {
+          error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 800)}`,
+          _debug: {
+            naiStatus: res.status,
+            naiStatusText: res.statusText,
+            naiHeaders: resHeaders,
+            naiBodyPreview: errText.slice(0, 500),
+            requestedUrl: url,
+          },
+        },
+      };
     }
 
     // NovelAI 成功时返回 ZIP 二进制（内含 image_0.png），不是 JSON
