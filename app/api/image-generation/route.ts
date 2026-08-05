@@ -170,11 +170,11 @@ function buildNaiPrompt(prompt: string, input: ImageGenerationRequest): string {
 async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
   try {
     const naiKey = input.novelaiKey?.trim();
-    const naiUrl = input.novelaiUrl?.trim();
+    // 空白 = 内置官方地址（与棉花糖机一致：地址写死、用户无需填写）
+    const naiUrl = (input.novelaiUrl?.trim() || "https://image.novelai.net");
     const prompt = input.prompt?.trim();
 
     if (!naiKey) return { status: 400, body: { error: "缺少 NovelAI API Key" } };
-    if (!naiUrl) return { status: 400, body: { error: "缺少 NovelAI 地址" } };
     if (!prompt) return { status: 400, body: { error: "缺少提示词" } };
 
     const baseUrl = naiUrl.replace(/\/+$/, "");
