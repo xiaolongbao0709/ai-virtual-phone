@@ -37,6 +37,14 @@ type ImageGenerationRequest = {
   novelaiEndpointMode?: "stream" | "normal";
   /** 参与者外观描述（中文），翻译后拼入 prompt，让 NAI 区分「谁是谁」 */
   participantAppearance?: string;
+  /** 结构化参与者（中文）：人物名 + 锚点形容 + 动作，用于拼装「人物名(锚点) 动作」格式 */
+  participants?: Array<{ name: string; anchor?: string; action?: string }>;
+  /** 背景描述（中文），如「樱花公园」 */
+  sceneBackground?: string;
+  /** 光源描述（中文），如「逆光、暖色夕阳」 */
+  sceneLighting?: string;
+  /** 参与者头像（data URL，base64），用于 NAI character_reference 锁脸 */
+  referenceImages?: string[];
   /** Google Imagen 专属配置（provider=google-imagen 时使用） */
   googleKey?: string;
   googleModel?: string;
@@ -239,29 +247,40 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     if (!naiKey) return { status: 400, body: { error: "缺少 NovelAI API Key" } };
     if (!rawPrompt) return { status: 400, body: { error: "缺少提示词" } };
 
-    // 中文提示词自动翻译为英文（NAI 不识别中文 tag；翻译失败则保留原文）
-    let finalUserPrompt = rawPrompt;
-    const hasCJK = containsCJK(rawPrompt);
-    if (hasCJK) {
-        try {
-            finalUserPrompt = await translateToEnglish(rawPrompt);
-            console.log("[NAI-PROMPT] translated:", { from: rawPrompt.slice(0, 80), to: finalUserPrompt.slice(0, 80), changed: finalUserPrompt !== rawPrompt });
-        } catch (e) {
-            console.log("[NAI-PROMPT] translate error:", e);
+    // ── 结构化场景提示词拼装（v18：背景 + 光源 + 人物名(锚点) + 动作 + 用户原文）──
+    // 组件顺序：背景 → 光源 → 各参与者(人物名(锚点形容) 动作) → 用户原文([照片:]内容=场景/动作)
+    const rawChineseParts: string[] = [];
+    if (input.sceneBackground?.trim()) rawChineseParts.push(input.sceneBackground.trim());
+    if (input.sceneLighting?.trim()) rawChineseParts.push(input.sceneLighting.trim());
+    if (input.participants?.length) {
+        for (const p of input.participants) {
+            const name = (p.name || "").trim();
+            const anchor = (p.anchor || "").trim();
+            const action = (p.action || "").trim();
+            if (!name && !anchor && !action) continue;
+            let clause = name || "某人";
+            if (anchor) clause += `（${anchor}）`;
+            if (action) clause += ` ${action}`;
+            rawChineseParts.push(clause);
         }
     }
+    // 用户原文（[照片:] 内容 = 动作 / 场景描述）
+    if (input.prompt?.trim()) rawChineseParts.push(input.prompt.trim());
+    // 兼容旧字段 participantAppearance（未传结构化 participants 时）
+    if ((!input.participants || input.participants.length === 0) && input.participantAppearance?.trim()) {
+        rawChineseParts.push(input.participantAppearance.trim());
+    }
+    const rawChinese = rawChineseParts.join("。");
 
-    // 参与者外观描述（中文）→ 翻译后拼到 prompt 末尾，让 NAI 区分「谁是谁」
-    if (input.participantAppearance?.trim()) {
+    // 整段中文翻译为英文（NAI 不识别中文 tag；翻译失败则保留原文）
+    let finalUserPrompt = rawChinese;
+    const hasCJK = containsCJK(rawChinese);
+    if (hasCJK) {
         try {
-            const paRaw = input.participantAppearance.trim().slice(0, 500);
-            const paTranslated = containsCJK(paRaw) ? await translateToEnglish(paRaw) : paRaw;
-            if (paTranslated && paTranslated !== paRaw) {
-                console.log("[NAI-PROMPT] participantAppearance translated:", { from: paRaw.slice(0, 60), to: paTranslated.slice(0, 60) });
-            }
-            if (paTranslated) finalUserPrompt = `${finalUserPrompt}. ${paTranslated}`;
+            finalUserPrompt = await translateToEnglish(rawChinese);
+            console.log("[NAI-PROMPT] translated scene:", { from: rawChinese.slice(0, 80), to: finalUserPrompt.slice(0, 80), changed: finalUserPrompt !== rawChinese });
         } catch (e) {
-            console.log("[NAI-PROMPT] participantAppearance translate error:", e);
+            console.log("[NAI-PROMPT] translate error:", e);
         }
     }
 
@@ -339,6 +358,20 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       },
       // ⚠️ 不发送ucPreset！SDK只在客户端用它拼接negative_prompt标签，不传给NAI API
     };
+
+    // ── 参考图锁脸（NAI V4.5 character_reference，仅 V4.5 模型生效）──
+    // 把参与者头像作为参考图注入，让 NAI 锁定各自外貌/脸。type="character" 只传外观、保留生图风格。
+    if (input.referenceImages?.length) {
+        const refs = input.referenceImages
+            .map((d) => (d && d.startsWith("data:") ? cleanBase64(d).b64 : null))
+            .filter(Boolean)
+            .slice(0, 4)
+            .map((b64) => ({ image: b64, type: "character", strength: 1, fidelity: 0.75 }));
+        if (refs.length) {
+            (parameters as Record<string, unknown>).character_reference = refs;
+            console.log("[NAI-PROMPT] character_reference 注入数量:", refs.length);
+        }
+    }
     const body = JSON.stringify({
       input: finalPrompt,
       model: input.novelaiModel || "nai-diffusion-4-5-full",
@@ -348,7 +381,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
 
     // ── 诊断日志（Vercel Dashboard → Functions → Logs 可查看）──
     const diag = {
-      _codeVersion: "v11",  // v11=修复翻译(Google Translate主+MyMemory fallback) + 诊断增强
+      _codeVersion: "v18",  // v18=结构化场景提示词(背景+光源+人物名锚点+动作) + 参考图锁脸(character_reference)
       ts: new Date().toISOString(),
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       size: `${width}x${height}`,
@@ -552,7 +585,7 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
     const baseUrl = input.baseUrl?.trim();
     const model = input.model?.trim();
     const prompt = input.prompt?.trim();
-    const hasReference = Boolean(input.referenceImageDataUrl?.trim());
+    const hasReference = Boolean(input.referenceImages?.length) || Boolean(input.referenceImageDataUrl?.trim());
 
     if (!apiKey) return { status: 400, body: { error: "缺少 API Key" } };
     if (!baseUrl) return { status: 400, body: { error: "缺少 Base URL" } };
@@ -564,14 +597,19 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
     let body: BodyInit;
 
     if (hasReference) {
-      const converted = dataUrlToBlob(input.referenceImageDataUrl || "");
-      if (!converted) return { status: 400, body: { error: "参考图格式无效" } };
+      const refImages = (input.referenceImages?.length ? input.referenceImages : [input.referenceImageDataUrl || ""])
+        .filter(Boolean);
+      if (!refImages.length) return { status: 400, body: { error: "参考图格式无效" } };
       const form = new FormData();
       form.set("model", model);
       form.set("prompt", prompt);
       if (input.size && input.size !== "auto") form.set("size", input.size);
       if (input.quality && input.quality !== "auto") form.set("quality", input.quality);
-      form.append("image", converted.blob, `reference.${converted.mimeType.split("/")[1] || "png"}`);
+      for (const ref of refImages) {
+        const converted = dataUrlToBlob(ref);
+        if (!converted) continue;
+        form.append("image", converted.blob, `reference.${converted.mimeType.split("/")[1] || "png"}`);
+      }
       body = form;
     } else {
       headers["Content-Type"] = "application/json";

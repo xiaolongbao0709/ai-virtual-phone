@@ -17,9 +17,17 @@ function guessGenderFromPersona(persona: string): string | null {
     return null;
 }
 
-// 收集参与合影的「你」和各个角色的外观描述，拼成中文串交给生图服务翻译后注入 prompt。
+// 参与者规格：人物名 + 锚点形容(外貌/性别) + 头像参考图 data URL
+export type ParticipantSpec = {
+    name: string;
+    anchor?: string;
+    avatar?: string | null;
+};
+
+// 收集参与合影的「你」和各个角色的外观 + 头像，返回结构化规格与兼容用的中文描述串。
 // characterIds: 参与合影的角色 id 列表（群聊=participantIds，单聊=[contactId]）
-export function buildParticipantAppearancePrompt(characterIds: string[]): string {
+export function buildParticipantSpecs(characterIds: string[]): { specs: ParticipantSpec[]; appearanceText: string } {
+    const specs: ParticipantSpec[] = [];
     const parts: string[] = [];
 
     // 1) 「你」（当前用户身份）
@@ -29,6 +37,7 @@ export function buildParticipantAppearancePrompt(characterIds: string[]): string
         userBits.push(identity.gender === "女" ? "女生" : identity.gender === "男" ? "男生" : identity.gender);
     }
     if (identity?.appearance?.trim()) userBits.push(identity.appearance.trim());
+    specs.push({ name: identity?.name?.trim() || "你", anchor: userBits.join("，") || undefined, avatar: identity?.avatarUrl || null });
     if (userBits.length) parts.push(`你（${userBits.join("，")}）`);
 
     // 2) 各角色
@@ -43,11 +52,44 @@ export function buildParticipantAppearancePrompt(characterIds: string[]): string
             const g = guessGenderFromPersona(c.persona || "");
             if (g) bits.push(g);
         }
+        specs.push({ name: c.name, anchor: bits.join("，") || undefined, avatar: c.avatar || null });
         parts.push(bits.length ? `${c.name}（${bits.join("，")}）` : `${c.name}`);
     }
 
-    if (!parts.length) return "";
-    return `画面中的人物设定：${parts.join("；")}。请按各自外貌与性别绘制，清晰区分不同人物的特征。`;
+    const appearanceText = parts.length
+        ? `画面中的人物设定：${parts.join("；")}。请按各自外貌与性别绘制，清晰区分不同人物的特征。`
+        : "";
+    return { specs, appearanceText };
+}
+
+// 兼容旧调用（朋友圈等）：仅返回中文外观描述串
+export function buildParticipantAppearancePrompt(characterIds: string[]): string {
+    return buildParticipantSpecs(characterIds).appearanceText;
+}
+
+// 浏览器内把头像压缩到最长边 maxSize，减小传给 NAI 的 base64 体积（NAI 参考图无需原图大小）
+function resizeImageDataUrl(dataUrl: string, maxSize = 512): Promise<string | null> {
+    return new Promise((resolve) => {
+        if (typeof window === "undefined" || typeof document === "undefined") { resolve(dataUrl); return; }
+        try {
+            const img = new Image();
+            img.onload = () => {
+                const scale = Math.min(1, maxSize / Math.max(img.width || maxSize, img.height || maxSize));
+                const w = Math.max(1, Math.round((img.width || maxSize) * scale));
+                const h = Math.max(1, Math.round((img.height || maxSize) * scale));
+                const canvas = document.createElement("canvas");
+                canvas.width = w; canvas.height = h;
+                const ctx = canvas.getContext("2d");
+                if (!ctx) { resolve(dataUrl); return; }
+                ctx.drawImage(img, 0, 0, w, h);
+                try { resolve(canvas.toDataURL("image/png")); } catch { resolve(dataUrl); }
+            };
+            img.onerror = () => resolve(dataUrl);
+            img.src = dataUrl;
+        } catch {
+            resolve(dataUrl);
+        }
+    });
 }
 
 function dispatchChatMessagesUpdated(sessionId: string, message: ChatMessage): void {
@@ -95,24 +137,35 @@ export async function generateAndApplyChatGeneratedImage(
     const participantIds = options?.participantIds && options.participantIds.length
         ? options.participantIds
         : (characterId ? [characterId] : []);
-    const participantAppearance = buildParticipantAppearancePrompt(participantIds) || undefined;
+    const { specs, appearanceText } = buildParticipantSpecs(participantIds);
+    const participantAppearance = appearanceText || undefined;
+    // 收集头像参考图（浏览器内压缩），用于 NAI character_reference 锁脸
+    const referenceImages = (await Promise.all(
+        specs.map((s) => (s.avatar ? resizeImageDataUrl(s.avatar, 512) : Promise.resolve(null))),
+    )).filter(Boolean) as string[];
 
     try {
         // 聊天流程中触发的生图：强制 enabled=true（与测试生图按钮行为一致）。
         // 用户已通过 [照片:] 指令明确要求生图，不应因前端开关未打开而静默失败。
         const settings = { ...loadImageGenerationSettings(), enabled: true };
-        console.log("[IMG-CHAT] 开始生图 v17", {
+        console.log("[IMG-CHAT] 开始生图 v18", {
             description: description.slice(0, 80),
             provider: settings.provider,
             hasNaiKey: Boolean(settings.novelai?.apiKey?.trim()),
             naiModel: settings.novelai?.model,
             naiKeyLen: settings.novelai?.apiKey?.length || 0,
             hasParticipantAppearance: Boolean(participantAppearance),
+            participantCount: specs.length,
+            referenceImageCount: referenceImages.length,
         });
         const generated = await generateImageFromConfiguredApi({
             description,
             characterId,
             participantAppearance,
+            participants: specs.map((s) => ({ name: s.name, anchor: s.anchor })),
+            referenceImages: referenceImages.length ? referenceImages : undefined,
+            sceneBackground: settings.sceneBackground?.trim() || undefined,
+            sceneLighting: settings.sceneLighting?.trim() || undefined,
             useReferenceImage: message.mediaData?.useReferenceImage === true,
             signal: options?.signal,
             settings,
@@ -179,15 +232,23 @@ export async function retryMomentGeneratedPhoto(post: MomentPost, nextDescriptio
     if (!description) throw new Error("缺少图片描述，无法重新生成");
 
     const momentParticipantIds = post.authorType === "character" && post.authorId ? [post.authorId] : [];
-    const momentAppearance = buildParticipantAppearancePrompt(momentParticipantIds) || undefined;
+    const { specs: momentSpecs, appearanceText: momentAppearance } = buildParticipantSpecs(momentParticipantIds);
+    const momentRefImages = (await Promise.all(
+        momentSpecs.map((s) => (s.avatar ? resizeImageDataUrl(s.avatar, 512) : Promise.resolve(null))),
+    )).filter(Boolean) as string[];
 
     try {
+        const settings = { ...loadImageGenerationSettings(), enabled: true };
         const generated = await generateImageFromConfiguredApi({
             description,
             characterId: post.authorType === "character" ? post.authorId : undefined,
-            participantAppearance: momentAppearance,
+            participantAppearance: momentAppearance || undefined,
+            participants: momentSpecs.map((s) => ({ name: s.name, anchor: s.anchor })),
+            referenceImages: momentRefImages.length ? momentRefImages : undefined,
+            sceneBackground: settings.sceneBackground?.trim() || undefined,
+            sceneLighting: settings.sceneLighting?.trim() || undefined,
             useReferenceImage: post.photoUseReferenceImage === true,
-            settings: { ...loadImageGenerationSettings(), enabled: true },
+            settings,
         });
         if (!generated) throw new Error("生图配置未启用或不完整");
 

@@ -281,6 +281,9 @@ export type ImageGenerationSettings = {
     size: string;
     quality: string;
     extraPrompt: string;
+    // --- 生图场景结构化字段（锁脸 + 结构化提示词用）---
+    sceneBackground: string;   // 背景描述（中文），如「樱花公园、樱花飞舞」
+    sceneLighting: string;     // 光源描述（中文），如「逆光、暖色夕阳、柔光」
     // --- NovelAI 字段 ---
     novelai: NovelAIConfig;
     // --- Pollinations 字段 ---

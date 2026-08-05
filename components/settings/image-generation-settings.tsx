@@ -750,6 +750,26 @@ export function ImageGenerationSettings() {
                             />
                         </div>
 
+                        {/* ── 生图场景：背景 / 光源（v18 结构化提示词）── */}
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1 font-medium">生图场景 · 背景（中文）</label>
+                            <Input
+                                type="text"
+                                value={settings.sceneBackground}
+                                onChange={(e) => updateSettings({ sceneBackground: e.target.value })}
+                                placeholder="例：樱花公园、夜景城市天台、温馨咖啡馆"
+                            />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1 font-medium">生图场景 · 光源（中文）</label>
+                            <Input
+                                type="text"
+                                value={settings.sceneLighting}
+                                onChange={(e) => updateSettings({ sceneLighting: e.target.value })}
+                                placeholder="例：逆光、暖色夕阳、柔光、霓虹灯"
+                            />
+                        </div>
+
                         {/* ═══ 高级选项（默认折叠） ═══ */}
                         <details className="group">
                             <summary className="cursor-pointer select-none ts-13 opacity-50 hover:opacity-80 py-1 flex items-center gap-1">

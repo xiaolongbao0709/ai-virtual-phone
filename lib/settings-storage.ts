@@ -634,6 +634,9 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
     size: "1024x1024",
     quality: "auto",
     extraPrompt: "",
+    // --- 生图场景结构化字段 ---
+    sceneBackground: "",
+    sceneLighting: "",
     // --- NovelAI ---
     novelai: {
         url: "https://image.novelai.net",

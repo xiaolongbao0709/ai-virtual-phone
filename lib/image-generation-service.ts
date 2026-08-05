@@ -639,6 +639,10 @@ async function generateImageViaServer(params: {
   prompt: string;
   participantAppearance?: string;
   referenceImageDataUrl: string | null;
+  participants?: Array<{ name: string; anchor?: string; action?: string }>;
+  referenceImages?: string[];
+  sceneBackground?: string;
+  sceneLighting?: string;
   signal?: AbortSignal;
 }): Promise<ImageGenerationApiResponse> {
   const { settings, prompt, referenceImageDataUrl, signal } = params;
@@ -691,6 +695,11 @@ async function generateImageViaServer(params: {
         novelaiEndpointMode: settings.novelai.endpointMode,
         // 参与者外观（中文），服务端翻译后注入 NAI prompt，让「谁是谁」可控
         participantAppearance: params.participantAppearance || undefined,
+        // v18：结构化参与者 + 锁脸参考图 + 场景
+        participants: params.participants && params.participants.length ? params.participants : undefined,
+        referenceImages: params.referenceImages && params.referenceImages.length ? params.referenceImages : undefined,
+        sceneBackground: params.sceneBackground?.trim() || undefined,
+        sceneLighting: params.sceneLighting?.trim() || undefined,
       }),
     });
     throwIfAborted(signal);
@@ -779,6 +788,14 @@ export async function generateImageFromConfiguredApi(params: {
   signal?: AbortSignal;
   /** 参与合影的角色/用户外观描述（中文），注入 prompt 让 NAI 区分「谁是谁」 */
   participantAppearance?: string;
+  /** 结构化参与者（人物名+锚点+动作），用于「人物名(锚点) 动作」格式 */
+  participants?: Array<{ name: string; anchor?: string; action?: string }>;
+  /** 参与者头像 data URL，用于 NAI character_reference 锁脸 */
+  referenceImages?: string[];
+  /** 背景描述（中文） */
+  sceneBackground?: string;
+  /** 光源描述（中文） */
+  sceneLighting?: string;
 }): Promise<ImageGenerationResult | null> {
   const settings = params.settings ?? loadImageGenerationSettings();
   if (!settings.enabled) return null;
@@ -803,6 +820,10 @@ export async function generateImageFromConfiguredApi(params: {
       settings,
       prompt: description,
       participantAppearance: params.participantAppearance,
+      referenceImages: params.referenceImages,
+      participants: params.participants,
+      sceneBackground: params.sceneBackground,
+      sceneLighting: params.sceneLighting,
       referenceImageDataUrl: null,
       signal: params.signal,
     }));
