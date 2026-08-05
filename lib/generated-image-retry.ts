@@ -144,6 +144,15 @@ export async function generateAndApplyChatGeneratedImage(
         specs.map((s) => (s.avatar ? resizeImageDataUrl(s.avatar, 512) : Promise.resolve(null))),
     )).filter(Boolean) as string[];
 
+    // 实时阶段回调：把生图进行中的状态写回消息 mediaData，让气泡显示「正在生成 / 并发锁等待中」
+    // 而不是一片空白让用户以为卡死了。
+    let liveMediaData: ChatMessage["mediaData"] = { ...message.mediaData };
+    const onStage = (text: string) => {
+        liveMediaData = { ...liveMediaData, imageGenerationStage: text };
+        const updated = updateChatMessage(message.id, { mediaData: liveMediaData });
+        if (updated) dispatchChatMessagesUpdated(updated.sessionId, updated);
+    };
+
     try {
         // 聊天流程中触发的生图：强制 enabled=true（与测试生图按钮行为一致）。
         // 用户已通过 [照片:] 指令明确要求生图，不应因前端开关未打开而静默失败。
@@ -169,6 +178,7 @@ export async function generateAndApplyChatGeneratedImage(
             useReferenceImage: message.mediaData?.useReferenceImage === true,
             signal: options?.signal,
             settings,
+            onStage,
         });
         if (!generated) {
             console.error("[IMG-CHAT] generateImageFromConfiguredApi 返回 null — 配置不完整?", {
@@ -193,6 +203,7 @@ export async function generateAndApplyChatGeneratedImage(
             imageGenerationUsedReference: generated.usedReferenceImage,
             imageGenerationStatus: "generated",
             imageGenerationError: undefined,
+            imageGenerationStage: undefined,
         };
         const updated = updateChatMessage(message.id, {
             content: fileName,
@@ -212,6 +223,7 @@ export async function generateAndApplyChatGeneratedImage(
                 label: description,
                 imageGenerationStatus: "failed",
                 imageGenerationError: errorToMessage(error),
+                imageGenerationStage: undefined,
             },
         });
         if (failed) dispatchChatMessagesUpdated(failed.sessionId, failed);

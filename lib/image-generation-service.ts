@@ -815,19 +815,24 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
 // 这通常是因为上一次生图被中断/关页面，但 NAI 任务还没跑完（锁约 10–30s）。
 // 这里自动等待锁释放后重试，用户无需手动反复点；被 abort 则立即放弃。
 async function generateImageViaServerWithRetry(
-  params: Parameters<typeof generateImageViaServer>[0],
+  params: Parameters<typeof generateImageViaServer>[0] & { onStage?: (text: string) => void },
 ): Promise<ImageGenerationApiResponse> {
+  const { onStage, ...rest } = params;
   const MAX_ATTEMPTS = 4;
   let lastErr: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
-      return await generateImageViaServer(params);
+      onStage?.(attempt === 0 ? "正在生成图片…" : "正在重试生成图片…");
+      return await generateImageViaServer(rest);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const isLock = /CONCURRENT_LOCK/.test(msg);
       if (isLock && attempt < MAX_ATTEMPTS - 1 && !params.signal?.aborted) {
+        const waitMs = 12_000 + attempt * 8_000; // 12s → 20s → 28s
+        const waitSec = Math.round(waitMs / 1000);
         console.warn("[IMG-SVC] NAI 并发锁，自动等待后重试", { attempt: attempt + 1, message: msg });
-        await sleepWithAbort(12_000 + attempt * 8_000, params.signal); // 12s → 20s → 28s
+        onStage?.(`NovelAI 正在处理上一张，自动等待中（约 ${waitSec} 秒）…`);
+        await sleepWithAbort(waitMs, params.signal);
         continue;
       }
       if (isLock) {
@@ -855,6 +860,8 @@ export async function generateImageFromConfiguredApi(params: {
   sceneBackground?: string;
   /** 光源描述（中文） */
   sceneLighting?: string;
+  /** 生图进行中的阶段回调（用于 UI 显示「正在生成 / 并发锁等待中」等，区分卡住还是正常等待） */
+  onStage?: (text: string) => void;
 }): Promise<ImageGenerationResult | null> {
   const settings = params.settings ?? loadImageGenerationSettings();
   if (!settings.enabled) return null;
@@ -885,6 +892,7 @@ export async function generateImageFromConfiguredApi(params: {
       sceneLighting: params.sceneLighting,
       referenceImageDataUrl: null,
       signal: params.signal,
+      onStage: params.onStage,
     }));
     throwIfAborted(params.signal);
     const mimeType = data.mimeType || "image/png";

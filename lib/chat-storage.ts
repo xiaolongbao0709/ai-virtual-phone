@@ -202,6 +202,7 @@ export type ChatMessage = {
         imageGenerationUsedReference?: boolean;
         imageGenerationStatus?: "pending" | "failed" | "generated";
         imageGenerationError?: string;
+        imageGenerationStage?: string; // 生图进行中的实时阶段提示（如「正在生成」「NAI 并发锁，自动等待中」），用于区分卡住 vs 正常等待
         mediaCompressedAt?: string;
         mediaCleanedAt?: string;
         readingBookTitle?: string; // 阅读讨论所属书名，用于 prompt 短期记忆边界

@@ -148,6 +148,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         if (prev.msg.mediaData?.imageGenerationPrompt !== next.msg.mediaData?.imageGenerationPrompt) return false;
         if (prev.msg.mediaData?.imageGenerationStatus !== next.msg.mediaData?.imageGenerationStatus) return false;
         if (prev.msg.mediaData?.imageGenerationError !== next.msg.mediaData?.imageGenerationError) return false;
+        if (prev.msg.mediaData?.imageGenerationStage !== next.msg.mediaData?.imageGenerationStage) return false;
         if (prev.msg.mediaUrl !== next.msg.mediaUrl) return false;
     }
     if (prev.charName !== next.charName) return false;
@@ -1312,7 +1313,7 @@ function ImageBubble({
                         <span className="chat-photo-card-loader-orbit" />
                         <span className="chat-photo-card-loader-core" />
                     </div>
-                    <div className="chat-photo-card-pending-text">图片接收中...</div>
+                    <div className="chat-photo-card-pending-text">{d?.imageGenerationStage || "图片生成中…"}</div>
                 </div>
             </div>
         );
