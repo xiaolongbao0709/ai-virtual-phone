@@ -746,14 +746,14 @@ async function generateImageViaServer(params: {
       }
       throwIfAborted(signal);
       if (data.error || !data.b64) {
-        throw new Error(humanizeImageError(data.error || `生图请求失败 ${data.httpStatus ?? res.status}`));
+        throw imageErrorToThrow(data.error || `生图请求失败 ${data.httpStatus ?? res.status}`);
       }
     } else {
       // 非流式回退(旧服务端等)
       data = await res.json().catch(() => ({})) as ServerImagePayload;
       throwIfAborted(signal);
       if (!res.ok || data.error || !data.b64) {
-        throw new Error(humanizeImageError(data.error || `生图请求失败 ${res.status}`));
+        throw imageErrorToThrow(data.error || `生图请求失败 ${res.status}`);
       }
     }
     return { b64: data.b64, mimeType: data.mimeType, revisedPrompt: data.revisedPrompt };
@@ -782,6 +782,61 @@ function humanizeImageError(raw: string): string {
     return "NovelAI 同一时间只能生成 1 张，请等当前这张完成后再试（约 10–30 秒）。";
   }
   return raw;
+}
+
+// 把服务端错误转成抛出的 Error；若为 NAI 并发锁，加 CONCURRENT_LOCK 标记便于上层自动重试
+function imageErrorToThrow(raw: string): never {
+  if (/concurrent generation|429/i.test(raw)) {
+    throw new Error("CONCURRENT_LOCK:" + raw);
+  }
+  throw new Error(humanizeImageError(raw));
+}
+
+// 等待（可被外部 abort 中断），用于并发锁自动重试的间隔
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+// NAI 并发锁自动重试：上一张生图在 NAI 服务端仍「在飞」时会返回 429 Concurrent generation is locked。
+// 这通常是因为上一次生图被中断/关页面，但 NAI 任务还没跑完（锁约 10–30s）。
+// 这里自动等待锁释放后重试，用户无需手动反复点；被 abort 则立即放弃。
+async function generateImageViaServerWithRetry(
+  params: Parameters<typeof generateImageViaServer>[0],
+): Promise<ImageGenerationApiResponse> {
+  const MAX_ATTEMPTS = 4;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      return await generateImageViaServer(params);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isLock = /CONCURRENT_LOCK/.test(msg);
+      if (isLock && attempt < MAX_ATTEMPTS - 1 && !params.signal?.aborted) {
+        console.warn("[IMG-SVC] NAI 并发锁，自动等待后重试", { attempt: attempt + 1, message: msg });
+        await sleepWithAbort(12_000 + attempt * 8_000, params.signal); // 12s → 20s → 28s
+        continue;
+      }
+      if (isLock) {
+        throw new Error(humanizeImageError(msg.replace(/^CONCURRENT_LOCK:/, "")));
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
 }
 
 export async function generateImageFromConfiguredApi(params: {
@@ -820,7 +875,7 @@ export async function generateImageFromConfiguredApi(params: {
     // 走服务端中转：浏览器只连我们自己 Vercel 服务器（国内合法），
     // 由 Vercel 海外服务器调 image.novelai.net（正确域名），
     // 解决浏览器 CORS + 境外网络双重拦截。
-    const data = await serializeNai(() => generateImageViaServer({
+    const data = await serializeNai(() => generateImageViaServerWithRetry({
       settings,
       prompt: description,
       participantAppearance: params.participantAppearance,
