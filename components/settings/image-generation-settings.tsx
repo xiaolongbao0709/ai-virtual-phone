@@ -24,12 +24,14 @@ const QUALITY_OPTIONS = ["auto", "low", "medium", "high"];
 
 /** NovelAI 尺寸选项 */
 const NAI_SIZE_OPTIONS = [
-    { value: "832x1216", label: "832x1216（2:3 竖图）" },
-    { value: "1216x832", label: "1216x832（3:2 横图）" },
-    { value: "1024x1536", label: "1024x1536（2:3 竖图）" },
-    { value: "1536x1024", label: "1536x1024（3:2 横图）" },
-    { value: "1024x1024", label: "1024x1024（正方）" },
-    { value: "1472x1472", label: "1472x1472（高清正方）" },
+    /* ── 免费额度可用（总像素 ≤ 1024×1024，Opus 订阅不消耗点数）── */
+    { value: "832x1216", label: "832×1216（2:3 竖图）✅免费" },
+    { value: "1216x832", label: "1216×832（3:2 横图）✅免费" },
+    { value: "1024x1024", label: "1024×1024（正方）✅免费" },
+    /* ── 超过免费额度，每张消耗 Anlas 点数 ── */
+    { value: "1024x1536", label: "1024×1536（高清竖）💰消耗点数" },
+    { value: "1536x1024", label: "1536×1024（高清横）💰消耗点数" },
+    { value: "1472x1472", label: "1472×1472（高清正方）💰消耗点数" },
 ];
 
 /** NAI 模型预设（均为 NAI 官方真实模型，与 Miya 小手机一致） */
@@ -276,8 +278,6 @@ export function ImageGenerationSettings() {
     const [activeGroupId, setActiveGroupId] = useState<string>("");
     // 折叠式使用说明（一次只展开一个 Provider）
     const [openHelp, setOpenHelp] = useState<string | null>(null);
-    const [openPollinations, setOpenPollinations] = useState(false);
-    const [openImagen, setOpenImagen] = useState(false);
 
     useEffect(() => {
         const loaded = loadImageGenerationSettings();
@@ -711,7 +711,10 @@ export function ImageGenerationSettings() {
                                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                                 ))}
                             </Select>
-                            <p className="menu-desc ml-1 opacity-50 text-xs">图尺寸；聊天生图也会优先使用这里的选择。</p>
+                            <p className="menu-desc ml-1 opacity-50 text-xs">
+                                图尺寸；聊天生图也会优先使用这里的选择。<br />
+                                ✅免费 = 总像素 ≤ 1024×1024，Opus 订阅无限生成不扣点数；💰 项每张会扣 Anlas 点数。
+                            </p>
                         </div>
 
                         {/* ── 正向提示词前缀 ── */}
@@ -794,7 +797,12 @@ export function ImageGenerationSettings() {
 
                                 {/* Steps */}
                                 <div className="flex flex-col gap-1">
-                                    <label className="ts-13 font-medium opacity-70">采样步数 (Steps)：{settings.novelai.steps}</label>
+                                    <label className="ts-13 font-medium opacity-70">
+                                        采样步数 (Steps)：{settings.novelai.steps}
+                                        {settings.novelai.steps > 28 && (
+                                            <span className="ml-2 text-red-500 font-normal">💰 超过 28 步会扣点数</span>
+                                        )}
+                                    </label>
                                     <input
                                         type="range"
                                         min={1} max={50}
@@ -802,6 +810,7 @@ export function ImageGenerationSettings() {
                                         onChange={(e) => updateNai({ steps: parseInt(e.target.value, 10) || 28 })}
                                         className="w-full h-2 rounded-full appearance-none bg-gray-200 accent-purple-500"
                                     />
+                                    <p className="ts-11 opacity-40">免费额度上限为 28 步，超过即按 Anlas 点数计费。</p>
                                 </div>
 
                                 {/* CFG Scale */}
@@ -874,14 +883,13 @@ export function ImageGenerationSettings() {
                 )}
             </div>
 
-            {/* ════════════ POLLINATIONS 区域（默认折叠） ════════════ */}
-            <details className="group" open={openPollinations} onToggle={(e) => setOpenPollinations(e.currentTarget.open)}>
-                <summary className="cursor-pointer select-none ts-14 font-semibold opacity-50 hover:opacity-80 py-2 flex items-center gap-2">
-                    <ChevronDown size={16} className="transition-transform group-open:rotate-90" />
-                    <span>POLLINATIONS</span>
+            {/* ════════════ POLLINATIONS 区域 ════════════ */}
+            <div className="flex flex-col gap-3">
+                <div className="flex items-center ml-2">
+                    <p className="menu-desc font-semibold opacity-60">POLLINATIONS</p>
                     <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); setOpenHelp(openHelp === "pollinations" ? null : "pollinations"); }}
+                        onClick={() => setOpenHelp(openHelp === "pollinations" ? null : "pollinations")}
                         className="ml-1 inline-flex items-center justify-center rounded-full"
                         style={{ width: 20, height: 20, border: "1px solid currentColor", opacity: 0.5 }}
                         aria-label="Pollinations 使用说明"
@@ -889,8 +897,7 @@ export function ImageGenerationSettings() {
                     >
                         <HelpCircle size={13} />
                     </button>
-                </summary>
-                <div className="flex flex-col gap-3 mt-1">
+                </div>
                 {openHelp === "pollinations" && <ProviderHelp which="pollinations" />}
                 <div className="menu-group">
                     <div className="menu-item">
@@ -969,28 +976,10 @@ export function ImageGenerationSettings() {
                             <Toggle checked={settings.pollinations.nologo} onChange={(c) => updatePollinations({ nologo: c })} className="settings-toggle-control" />
                         </div>
                     </div>
-                </div>
                 )}
-            </details>
+            </div>
 
-            {/* ════════════ GOOGLE IMAGEN 区域（默认折叠） ════════════ */}
-            <details className="group" open={openImagen} onToggle={(e) => setOpenImagen(e.currentTarget.open)}>
-                <summary className="cursor-pointer select-none ts-14 font-semibold opacity-50 hover:opacity-80 py-2 flex items-center gap-2">
-                    <ChevronDown size={16} className="transition-transform group-open:rotate-90" />
-                    <span>GOOGLE IMAGEN</span>
-                    <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setOpenHelp(openHelp === "google-imagen" ? null : "google-imagen"); }}
-                        className="ml-1 inline-flex items-center justify-center rounded-full"
-                        style={{ width: 20, height: 20, border: "1px solid currentColor", opacity: 0.5 }}
-                        aria-label="Google Imagen 使用说明"
-                        title="使用说明"
-                    >
-                        <HelpCircle size={13} />
-                    </button>
-                </summary>
-                <div className="flex flex-col gap-3 mt-1">
-                {openHelp === "google-imagen" && <ProviderHelp which="google-imagen" />}
+            {/* ════════════ GOOGLE IMAGEN 区域 ════════════ */}
             <div className="flex flex-col gap-3">
                 <div className="flex items-center ml-2">
                     <p className="menu-desc font-semibold opacity-60">GOOGLE IMAGEN</p>
@@ -1093,10 +1082,10 @@ export function ImageGenerationSettings() {
                         </div>
                     </div>
                 )}
-                </div>
-            </details>
+            </div>
 
-            {/* ════════════ OpenAI 兼容区域（始终显示）═════════════ */}
+            {/* ════════════ OpenAI 兼容区域（当不是 NAI/Pollinations/Imagen 时显示）═════════════ */}
+            {!isNai && !isPollinations && !isGoogleImagen && (
                 <div className="menu-group p-4 flex flex-col gap-4">
                     <p className="menu-desc ml-1 text-sky-700 font-semibold text-sm">OpenAI 兼容设置</p>
 
@@ -1204,6 +1193,7 @@ export function ImageGenerationSettings() {
                         </p>
                 </div>
             </div>
+            )}
 
             {/* ════════════ 测试生图（专门预览框，对所有 Provider 生效）═════════════ */}
             <div className="flex flex-col gap-3">
