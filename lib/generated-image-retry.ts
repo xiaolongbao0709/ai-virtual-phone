@@ -37,7 +37,7 @@ export function buildParticipantSpecs(characterIds: string[]): { specs: Particip
         userBits.push(identity.gender === "女" ? "女生" : identity.gender === "男" ? "男生" : identity.gender);
     }
     if (identity?.appearance?.trim()) userBits.push(identity.appearance.trim());
-    specs.push({ name: identity?.name?.trim() || "你", anchor: userBits.join("，") || undefined, avatar: identity?.avatarUrl || null });
+    specs.push({ name: identity?.name?.trim() || "你", anchor: userBits.join("，") || undefined, avatar: (identity?.faceLockUrl || identity?.avatarUrl) || null });
     if (userBits.length) parts.push(`你（${userBits.join("，")}）`);
 
     // 2) 各角色

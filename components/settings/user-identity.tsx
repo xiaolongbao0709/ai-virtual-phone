@@ -17,6 +17,7 @@ export type UserIdentity = {
     occupation: string;
     customSettings: string;
     appearance?: string; // 生图形象：用于 AI 生图时描述"你"长什么样（性别/发型/衣着等）
+    faceLockUrl?: string; // 锁脸参考图：用于 AI 生图时锁定「你」的脸（NAI character_reference / OAI edits 参考图），建议清晰正面单人照
 };
 
 const DEFAULT_IDENTITIES: UserIdentity[] = [
@@ -335,6 +336,59 @@ export function UserIdentitySettings() {
                                                 rows={2}
                                                 className="ui-textarea"
                                             />
+                                        </div>
+
+                                        {/* 锁脸参考图：用于 AI 生图时锁定「你」的脸 */}
+                                        <div className="flex flex-col gap-1">
+                                            <label className="menu-desc ml-1">锁脸参考图 (Face Lock)</label>
+                                            <div className="flex items-center gap-3">
+                                                <div
+                                                    onClick={() => {
+                                                        const input = document.createElement("input");
+                                                        input.type = "file";
+                                                        input.accept = "image/*";
+                                                        input.onchange = async () => {
+                                                            const file = input.files?.[0];
+                                                            if (!file) return;
+                                                            try {
+                                                                const dataUrl = await fileToDataUrl(file, 512, 0.85);
+                                                                updateIdentity(identity.id, { faceLockUrl: dataUrl });
+                                                            } catch { /* ignore */ }
+                                                        };
+                                                        input.click();
+                                                    }}
+                                                    className="ui-avatar-upload shrink-0"
+                                                    style={{ width: 64, height: 64 }}
+                                                >
+                                                    {identity.faceLockUrl ? (
+                                                        <>
+                                                            <img src={identity.faceLockUrl} alt="" className="w-full h-full object-cover" />
+                                                            <div className="absolute bottom-0 left-0 right-0 flex justify-center ui-avatar-upload-overlay">
+                                                                <Camera size={14} color="#fff" />
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Camera size={22} className="text-[var(--c-icon-active)]" />
+                                                            <span className="ts-10 mt-[2px] text-[var(--c-icon-active)]">上传</span>
+                                                        </>
+                                                    )}
+                                                </div>
+                                                <div className="flex flex-col gap-1 min-w-0">
+                                                    <span className="menu-desc leading-snug">
+                                                        与角色合影时，会用这张图锁定「你」的脸（NovelAI 参考图 / OpenAI 编辑参考图）。建议上传<b>清晰正面单人照</b>；留空则用上方头像。
+                                                    </span>
+                                                    {identity.faceLockUrl && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => updateIdentity(identity.id, { faceLockUrl: undefined })}
+                                                            className="ui-link-btn self-start"
+                                                        >
+                                                            移除锁脸图
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
                                         </div>
 
                                         <div className="flex flex-col gap-1">
