@@ -795,6 +795,42 @@ export function copyBlackMarketTheaterToVault(template: BlackMarketTheaterTempla
   return { ok: true, state: next, ownedTheater };
 }
 
+// ── 本机测试剧场 ─────────────────────────────────────
+// 从草稿本地上架、不发布市场、不扣钱。与购买的剧场一样走完整 scene 运行时
+// （写记忆、进回传记录），区别只是 localId 前缀，用于在工作室单独归类。
+export const BLACK_MARKET_LOCAL_TEST_PREFIX = "localtest_theater_";
+
+export function isLocalTestTheaterId(localId: string): boolean {
+  return localId.startsWith(BLACK_MARKET_LOCAL_TEST_PREFIX);
+}
+
+/** 从草稿创建/更新一个本机测试剧场（按 draftId 幂等，重复测试更新 snapshot 而非重复上架）。 */
+export function upsertLocalTestTheater(
+  draftId: string,
+  template: BlackMarketTheaterTemplate,
+): BlackMarketPurchaseResult {
+  const normalized = normalizeBlackMarketTheaterTemplate(template);
+  const state = loadBlackMarketState();
+  if (!normalized) return { ok: false, state, error: "夜间档案无效。" };
+  const localId = `${BLACK_MARKET_LOCAL_TEST_PREFIX}${draftId}`;
+  const existing = state.ownedTheaters.find(item => item.localId === localId);
+  const ownedTheater: BlackMarketOwnedTheater = existing
+    ? { ...existing, remoteTemplateId: normalized.id, templateSnapshot: normalized }
+    : {
+        localId,
+        remoteTemplateId: normalized.id,
+        purchasedAt: new Date().toISOString(),
+        templateSnapshot: normalized,
+        status: "unused",
+        useCount: 0,
+      };
+  const next = saveBlackMarketState({
+    ...state,
+    ownedTheaters: [ownedTheater, ...state.ownedTheaters.filter(item => item.localId !== localId)],
+  });
+  return { ok: true, state: next, ownedTheater };
+}
+
 export function copyOwnBlackMarketTheater(template: BlackMarketTheaterTemplate): BlackMarketPurchaseResult {
   const normalized = normalizeBlackMarketTheaterTemplate(template);
   const state = loadBlackMarketState();

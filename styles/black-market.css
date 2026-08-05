@@ -2084,6 +2084,16 @@
   gap: 8px;
 }
 
+.cp-black-market-studio-tabs.cp-black-market-studio-tabs-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cp-black-market-studio-tabs-4 button {
+  letter-spacing: 0.08em;
+  padding: 0 2px;
+}
+
 .cp-black-market-studio-tabs button {
   min-height: 36px;
   border: 1px solid var(--bm-line-soft);
