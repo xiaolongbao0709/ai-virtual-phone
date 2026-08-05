@@ -814,15 +814,17 @@ export async function generateImageFromConfiguredApi(params: {
   // ── Provider 路由：NAI vs OpenAI 兼容 ──
   if (settings.provider === "novelai") {
     const nai = settings.novelai;
-    // NAI 校验：只要求 Key，地址留空即内置官方（同棉花糖机 / Miya，image.novelai.net 直连官网、无需梯子）
+    // NAI 校验：只要求 Key，地址留空即内置官方
     if (!description || !nai?.apiKey?.trim()) return null;
 
     throwIfAborted(params.signal);
-    // 浏览器直连官方 NAI（image.novelai.net）：与棉花糖机 / Miya 同款方案，
-    // 无需服务器中转、无需梯子；若网络无法直连，可在地址栏手动填写中转站。
-    const data = await generateImageNovelAI({
+    // 走服务端中转：浏览器只连我们自己 Vercel 服务器（国内合法），
+    // 由 Vercel 海外服务器调 image.novelai.net（正确域名），
+    // 解决浏览器 CORS + 境外网络双重拦截。
+    const data = await generateImageViaServer({
       settings,
       prompt: description,
+      referenceImageDataUrl: null,
       signal: params.signal,
     });
     throwIfAborted(params.signal);
