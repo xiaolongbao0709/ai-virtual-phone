@@ -697,6 +697,7 @@ async function generateImageViaServer(params: {
         novelaiSmea: settings.novelai.smea,
         novelaiSmeaDyn: settings.novelai.smeaDyn,
         novelaiEndpointMode: settings.novelai.endpointMode,
+        novelaiNsfw: settings.novelai.nsfw === true,
         // 参与者外观（中文），服务端翻译后注入 NAI prompt，让「谁是谁」可控
         participantAppearance: params.participantAppearance || undefined,
         // v18：结构化参与者 + 锁脸参考图 + 场景

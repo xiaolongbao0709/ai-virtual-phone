@@ -664,6 +664,7 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
         smeaDyn: false,
         endpointMode: "stream",
         corsProxy: false,
+        nsfw: false,
     },
     // --- Pollinations ---
     pollinations: {
@@ -737,6 +738,7 @@ function normalizeImageGenerationSettings(settings: Partial<ImageGenerationSetti
     const naiSmeaDyn = typeof nai.smeaDyn === "boolean" ? nai.smeaDyn : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.smeaDyn;
     const naiEndpointMode = nai.endpointMode === "stream" || nai.endpointMode === "normal" ? nai.endpointMode : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.endpointMode;
     const naiCorsProxy = typeof nai.corsProxy === "boolean" ? nai.corsProxy : DEFAULT_IMAGE_GENERATION_SETTINGS.novelai.corsProxy;
+    const naiNsfw = nai.nsfw === true;
     // Pollinations / Google Imagen 配置 normalize
     const poll: Partial<PollinationsConfig> = settings?.pollinations && typeof settings.pollinations === "object" ? settings.pollinations : {};
     const gi: Partial<GoogleImagenConfig> = settings?.googleImagen && typeof settings.googleImagen === "object" ? settings.googleImagen : {};
@@ -763,6 +765,7 @@ function normalizeImageGenerationSettings(settings: Partial<ImageGenerationSetti
             smeaDyn: naiSmeaDyn,
             endpointMode: naiEndpointMode,
             corsProxy: naiCorsProxy,
+            nsfw: naiNsfw,
         },
         pollinations: {
             ...DEFAULT_IMAGE_GENERATION_SETTINGS.pollinations,

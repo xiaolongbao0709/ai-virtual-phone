@@ -207,6 +207,8 @@ export type NovelAIConfig = {
     endpointMode: "stream" | "normal";
     /** CORS 跨域代理：本地开发时建议开启 */
     corsProxy: boolean;
+    /** NSFW 模式：开启后向 NAI 发送 nsfw:true，允许生成成人内容（仅限成年人自愿内容；涉及未成年人的 prompt 由 NAI 自身硬性拦截，无法绕过） */
+    nsfw?: boolean;
 };
 
 /** Pollinations 专属配置（免费、免 Key 即可用） */

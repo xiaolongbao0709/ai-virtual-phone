@@ -35,6 +35,8 @@ type ImageGenerationRequest = {
   novelaiSmea?: boolean;
   novelaiSmeaDyn?: boolean;
   novelaiEndpointMode?: "stream" | "normal";
+  /** NovelAI NSFW 模式：true 时向 NAI 发送 nsfw:true，允许生成成人内容 */
+  novelaiNsfw?: boolean;
   /** 参与者外观描述（中文），翻译后拼入 prompt，让 NAI 区分「谁是谁」 */
   participantAppearance?: string;
   /** 结构化参与者（中文）：人物名 + 锚点形容 + 动作，用于拼装「人物名(锚点) 动作」格式 */
@@ -325,6 +327,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
 
     const parameters: Record<string, unknown> = {
       // ── 基础参数（与SDK完全一致）──
+      nsfw: input.novelaiNsfw === true,   // NSFW 模式：true 向 NAI 关闭内容过滤，允许成人内容（默认 false = 启用过滤）
       cfg_rescale: 0,
       controlnet_strength: 1,
       dynamic_thresholding: true,

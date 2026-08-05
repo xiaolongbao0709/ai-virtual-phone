@@ -1411,6 +1411,22 @@ export function ImageGenerationSettings() {
                             />
                         </span>
                     </div>
+                    <div className="menu-item">
+                        <span className="card-icon" style={imageGenerationIconStyle}>
+                            <Image size={22} strokeWidth={1.75} />
+                        </span>
+                        <span className="settings-tools-menu-copy">
+                            <span className="menu-label appearance-menu-item-label">NSFW 模式（成人内容）</span>
+                            <span className="menu-desc settings-tools-menu-desc">开启后向 NovelAI 发送 nsfw:true，关闭内容过滤以生成成人内容。仅限成年人自愿内容；涉及未成年人的内容由 NAI 自身硬性拦截，无法绕过。</span>
+                        </span>
+                        <span className="menu-right settings-tools-menu-toggle">
+                            <Toggle
+                                checked={!!settings.novelai.nsfw}
+                                onChange={(checked) => updateNai({ nsfw: checked })}
+                                className="settings-toggle-control"
+                            />
+                        </span>
+                    </div>
                 </div>
             </div>
 
