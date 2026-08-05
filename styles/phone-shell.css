@@ -1150,6 +1150,37 @@
   }
 }
 
+/* ── Landscape phones ──
+   横屏时视口高度很短（约 390px），而竖屏手机框高约 864px；
+   旧 (max-width:500px) 媒体查询在横屏下不命中 → 回退到桌面固定尺寸手机，
+   只露出顶部「一半」。这里改为：保持竖屏手机框，整体缩放铺满横屏高度，
+   完整可见、居中显示。仅触摸设备（手机/平板）横屏时生效，不影响竖屏与桌面。 */
+@media (orientation: landscape) and (hover: none) and (pointer: coarse) and (max-height: 560px) {
+  html,
+  body {
+    overflow: hidden;
+    height: 100dvh;
+  }
+
+  .app-root,
+  .app-root.splash-root {
+    width: 100vw;
+    height: 100dvh;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .phone-shell-wrap {
+    --phone-total-height: calc(var(--phone-screen-height) + 2 * (var(--phone-frame-size) + var(--phone-case-padding) + var(--phone-case-border-size)));
+    transform: scale(calc((100dvh - 16px) / var(--phone-total-height)));
+    transform-origin: center center;
+  }
+}
+
 .settings-main-menu,
 .appearance-main-menu {
   padding-bottom: calc(var(--safe-area-bottom, 0px) + 28px);
