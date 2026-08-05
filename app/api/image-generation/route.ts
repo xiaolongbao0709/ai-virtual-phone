@@ -188,6 +188,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       action: "generate",
       parameters: {
+        params_version: 3,
         width,
         height,
         scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
@@ -214,6 +215,15 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
         smea: !!input.novelaiSmea,
         ref_sw: false,
         decr_countdown: false,
+        v4_prompt: {
+          caption: { base_caption: finalPrompt, char_captions: [] },
+          use_coords: false,
+          use_order: true,
+        },
+        v4_negative_prompt: {
+          caption: { base_caption: input.novelaiNegativePrompt || "", char_captions: [] },
+          legacy_uc: false,
+        },
       },
     });
 
