@@ -44,6 +44,16 @@ const NAI_MODEL_OPTIONS = [
     { value: "nai-diffusion-furry-3", label: "nai-diffusion-furry-3（兽人）" },
 ];
 
+/** NAI 内置风格/质量预设：点击即填入「正向质量词（后缀）」，仍可手动再改 */
+const NAI_QUALITY_PRESETS = [
+    { id: "default", label: "默认", prompt: "best quality, very aesthetic, masterpiece" },
+    { id: "photo", label: "摄影写实", prompt: "photorealistic, highly detailed, 8k, sharp focus, real skin texture, cinematic lighting" },
+    { id: "cinematic", label: "电影感", prompt: "cinematic, film grain, dramatic lighting, anamorphic lens, depth of field, masterpiece" },
+    { id: "anime", label: "动漫插画", prompt: "anime style, vibrant colors, clean lineart, detailed, cel shading" },
+    { id: "romantic", label: "轻浪漫", prompt: "soft romantic atmosphere, tender mood, warm intimate lighting, gentle, artistic, emotional" },
+    { id: "portrait", label: "唯美写真", prompt: "aesthetic, elegant, soft lighting, delicate details, magazine photography, refined" },
+];
+
 /** NAI 采样器选项（NAI 真实 sampler 名，带 k_ 前缀） */
 const NAI_SAMPLER_OPTIONS = [
     { value: "k_euler_ancestral", label: "k_euler_ancestral（推荐）" },
@@ -726,6 +736,27 @@ export function ImageGenerationSettings() {
                                 placeholder="{{handsome}}, {{delicate features}}, {{matte skin}}, {{skin texture}}, {{soft shading}}"
                                 rows={3}
                             />
+                        </div>
+
+                        {/* ── 内置风格预设（点击即填入质量词）── */}
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1 font-medium">内置风格预设（点一下填入下方质量词）</label>
+                            <div className="flex flex-wrap gap-2 ml-1">
+                                {NAI_QUALITY_PRESETS.map((p) => {
+                                    const active = (settings.novelai.qualitySuffix || "").trim() === p.prompt;
+                                    return (
+                                        <button
+                                            key={p.id}
+                                            type="button"
+                                            onClick={() => updateNai({ qualitySuffix: p.prompt })}
+                                            className={`px-3 py-1 rounded-full text-xs border transition-colors ${active ? "border-pink-400 bg-pink-400/15 text-pink-200" : "border-white/15 text-white/70 hover:border-white/40"}`}
+                                            title={p.prompt}
+                                        >
+                                            {p.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         </div>
 
                         {/* ── 正向质量词（后缀）── */}
