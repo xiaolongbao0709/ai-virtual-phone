@@ -3,32 +3,32 @@
    全部变量 scope 在 .qa-app-shell 内，不污染全局。 */
 
 .qa-app-shell {
-  /* 暖调深色（Claude 风）：暖炭底 + 每层微提亮 */
-  --qa-bg-canvas: #1a1915;
-  --qa-bg-sidebar: #211f1b;
-  --qa-bg-surface: #262420;
-  --qa-bg-raised: #302d28;
-  --qa-bg-overlay: #38352f;
-  --qa-bg-code: #14130f;
-  /* 交互态 */
-  --qa-state-hover: rgba(255, 255, 255, 0.045);
-  --qa-state-active: rgba(255, 255, 255, 0.08);
-  /* 边框（暖白 alpha） */
-  --qa-border-subtle: rgba(240, 230, 210, 0.08);
-  --qa-border-strong: rgba(240, 230, 210, 0.16);
-  /* 文字层级（暖白，勿用纯白） */
-  --qa-text-primary: #f4f0e6;
-  --qa-text-secondary: #b0a99a;
-  --qa-text-tertiary: #837c6e;
-  --qa-text-inverse: #1a1915;
-  /* Accent：Claude 陶土橙 */
-  --qa-accent: #d97757;
-  --qa-accent-hover: #e08a6c;
-  --qa-accent-subtle: rgba(217, 119, 87, 0.14);
-  --qa-danger: #e0796b;
-  /* 衬线正文字体（Claude 标志） */
+  /* 浅色（暖米白，Claude Light 风）：干净、无厚玻璃 */
+  --qa-bg-canvas: #f7f6f1;
+  --qa-bg-sidebar: #f1efe8;
+  --qa-bg-surface: #ffffff;
+  --qa-bg-raised: #efede6;
+  --qa-bg-overlay: #ffffff;
+  --qa-bg-code: #2a2823;      /* 代码块保持深色（与参考图一致） */
+  /* 交互态（深 alpha 叠在浅底上） */
+  --qa-state-hover: rgba(60, 50, 30, 0.05);
+  --qa-state-active: rgba(60, 50, 30, 0.09);
+  /* 边框（深 alpha） */
+  --qa-border-subtle: rgba(40, 34, 20, 0.09);
+  --qa-border-strong: rgba(40, 34, 20, 0.16);
+  /* 文字层级（暖近黑） */
+  --qa-text-primary: #2b2a26;
+  --qa-text-secondary: #6a685f;
+  --qa-text-tertiary: #9a978c;
+  --qa-text-inverse: #ffffff;
+  /* Accent：品牌紫 */
+  --qa-accent: #7359e6;
+  --qa-accent-hover: #6246d8;
+  --qa-accent-subtle: rgba(115, 89, 230, 0.12);
+  --qa-danger: #d0564b;
+  /* 衬线正文字体 */
   --qa-font-serif: "Georgia", "Times New Roman", "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif;
-  --success: #7fb287;
+  --success: #4f9e63;
 
   position: absolute;
   inset: 0;
@@ -43,15 +43,15 @@
   line-height: 1.72;
 }
 
-/* 氛围光：暖橙极淡光晕 */
+/* 氛围光：品牌紫极淡光晕 */
 .qa-ambient {
   position: absolute;
-  top: -140px;
-  right: -90px;
+  top: -150px;
+  right: -100px;
   width: 340px;
   height: 340px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(217, 119, 87, 0.08) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(115, 89, 230, 0.07) 0%, transparent 70%);
   pointer-events: none;
   z-index: 0;
 }
@@ -105,21 +105,17 @@
   border-radius: 9999px;
   color: var(--qa-text-secondary);
   cursor: pointer;
-  /* 无色淡玻璃 */
-  background: rgba(255, 255, 255, 0.04);
-  -webkit-backdrop-filter: blur(12px) saturate(150%);
-  backdrop-filter: blur(12px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.16s ease;
+  background: transparent;
+  border: none;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.16s ease;
 }
 .qa-icon-btn:hover {
-  background: rgba(255, 255, 255, 0.085);
-  border-color: rgba(255, 255, 255, 0.16);
+  background: var(--qa-state-hover);
   color: var(--qa-text-primary);
 }
 .qa-icon-btn:active {
-  transform: scale(0.92);
+  background: var(--qa-state-active);
+  transform: scale(0.94);
 }
 
 /* ── 消息区 ── */
@@ -220,7 +216,7 @@
   margin: 2px 0 6px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: var(--qa-bg-code);
+  background: var(--qa-bg-raised);
   border: 1px solid var(--qa-border-subtle);
 }
 .qa-tool-row-label {
@@ -350,35 +346,34 @@
 }
 
 .qa-inline-code {
-  padding: 1px 6px;
+  padding: 1.5px 6px;
   border-radius: 5px;
-  background: var(--qa-bg-surface);
-  border: 1px solid var(--qa-border-subtle);
+  background: var(--qa-accent-subtle);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.88em;
-  color: var(--qa-text-primary);
+  font-size: 0.86em;
+  color: var(--qa-accent-hover);
 }
 
 /* 代码块：比正文更深一档 */
 .qa-codeblock {
   margin: 0.7em 0;
-  border: 1px solid var(--qa-border-subtle);
   border-radius: 10px;
   background: var(--qa-bg-code);
   overflow: hidden;
+  box-shadow: 0 2px 10px rgba(40, 34, 20, 0.1);
 }
 .qa-codeblock-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 5px 6px 5px 12px;
-  border-bottom: 1px solid var(--qa-border-subtle);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 .qa-codeblock-lang {
   font-size: 11px;
   letter-spacing: 0.05em;
   text-transform: lowercase;
-  color: var(--qa-text-tertiary);
+  color: rgba(255, 255, 255, 0.45);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .qa-codeblock-copy {
@@ -390,12 +385,12 @@
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--qa-text-tertiary);
+  color: rgba(255, 255, 255, 0.5);
   cursor: pointer;
 }
 .qa-codeblock-copy:hover {
-  background: var(--qa-state-hover);
-  color: var(--qa-text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
 }
 .qa-codeblock pre {
   margin: 0;
@@ -423,7 +418,7 @@
   border-radius: 13px;
   background: linear-gradient(135deg, var(--qa-bg-overlay), var(--qa-bg-surface));
   border: 1px solid var(--qa-border-strong);
-  box-shadow: 0 0 24px rgba(124, 138, 255, 0.14);
+  box-shadow: 0 4px 18px rgba(115, 89, 230, 0.14);
   margin-bottom: 18px;
 }
 .qa-welcome-title {
@@ -459,21 +454,15 @@
   color: var(--qa-text-secondary);
   font-size: 13px;
   cursor: pointer;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 100%),
-    rgba(255, 255, 255, 0.03);
-  -webkit-backdrop-filter: blur(12px) saturate(150%);
-  backdrop-filter: blur(12px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.16s ease;
+  background: var(--qa-bg-surface);
+  border: 1px solid var(--qa-border-subtle);
+  box-shadow: 0 1px 2px rgba(40, 34, 20, 0.04);
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.16s ease;
 }
 .qa-suggestion:hover {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 100%),
-    rgba(255, 255, 255, 0.05);
-  color: var(--qa-text-primary);
-  border-color: rgba(217, 119, 87, 0.35);
+  color: var(--qa-accent);
+  border-color: var(--qa-accent-subtle);
+  box-shadow: 0 2px 8px rgba(115, 89, 230, 0.1);
 }
 .qa-suggestion:active {
   transform: scale(0.96);
@@ -486,9 +475,10 @@
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 14px 12px calc(env(safe-area-inset-bottom, 0px) + 14px);
+  padding: 20px 12px calc(env(safe-area-inset-bottom, 0px) + 14px);
   z-index: 6;
   pointer-events: none;
+  background: linear-gradient(180deg, transparent 0%, var(--qa-bg-canvas) 55%);
 }
 .qa-composer {
   pointer-events: auto;
@@ -499,29 +489,14 @@
   margin: 0 auto;
   padding: 7px 7px 7px 18px;
   border-radius: 26px;
-  /* 玻璃底：上亮下透渐变高光 + 极低不透明度暖白 */
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.02) 45%, rgba(255, 255, 255, 0) 100%),
-    rgba(255, 255, 255, 0.035);
-  -webkit-backdrop-filter: blur(20px) saturate(165%);
-  backdrop-filter: blur(20px) saturate(165%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow:
-    0 12px 34px rgba(0, 0, 0, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    inset 0 -1px 1px rgba(0, 0, 0, 0.28);
-  transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+  background: var(--qa-bg-surface);
+  border: 1px solid var(--qa-border-strong);
+  box-shadow: 0 4px 20px rgba(40, 34, 20, 0.09), 0 1px 3px rgba(40, 34, 20, 0.05);
+  transition: border-color 0.22s ease, box-shadow 0.22s ease;
 }
 .qa-composer:focus-within {
-  border-color: rgba(217, 119, 87, 0.5);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.03) 45%, rgba(255, 255, 255, 0) 100%),
-    rgba(255, 255, 255, 0.05);
-  box-shadow:
-    0 12px 38px rgba(0, 0, 0, 0.55),
-    0 0 0 3px rgba(217, 119, 87, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    inset 0 -1px 1px rgba(0, 0, 0, 0.28);
+  border-color: var(--qa-accent);
+  box-shadow: 0 4px 22px rgba(40, 34, 20, 0.1), 0 0 0 3px var(--qa-accent-subtle);
 }
 .qa-composer-input {
   flex: 1;
@@ -541,9 +516,8 @@
   color: var(--qa-text-tertiary);
 }
 
-/* 主发送按钮：陶土橙 + 玻璃厚度 + 顶部镜面高光带 */
+/* 主发送按钮：品牌紫实心圆钮 */
 .qa-send-btn {
-  position: relative;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -554,58 +528,29 @@
   border-radius: 9999px;
   color: #fff;
   cursor: pointer;
-  overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.05) 42%, rgba(0, 0, 0, 0.12) 100%),
-    linear-gradient(180deg, #e08a6a 0%, #d97757 55%, #c9633f 100%);
-  box-shadow:
-    0 6px 18px rgba(201, 99, 63, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.45),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.2);
-  transition: transform 0.16s ease, box-shadow 0.25s ease, filter 0.2s ease;
-}
-.qa-send-btn::before {
-  content: "";
-  position: absolute;
-  inset: 2px 3px auto 3px;
-  height: 42%;
-  border-radius: 9999px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 100%);
-  opacity: 0.7;
-  pointer-events: none;
+  background: var(--qa-accent);
+  box-shadow: 0 2px 8px rgba(115, 89, 230, 0.32);
+  transition: background 0.18s ease, transform 0.16s ease, box-shadow 0.2s ease;
 }
 .qa-send-btn:hover {
+  background: var(--qa-accent-hover);
   transform: translateY(-1px);
-  filter: brightness(1.06);
+  box-shadow: 0 4px 12px rgba(115, 89, 230, 0.4);
 }
 .qa-send-btn:active {
   transform: scale(0.93);
-  filter: brightness(0.98);
 }
 .qa-send-btn:disabled {
   cursor: default;
-  filter: grayscale(0.4) brightness(0.62);
+  background: var(--qa-border-strong);
+  color: var(--qa-text-tertiary);
+  box-shadow: none;
 }
 .qa-send-btn.is-stop {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 60%),
-    rgba(255, 255, 255, 0.06);
-  -webkit-backdrop-filter: blur(12px) saturate(150%);
-  backdrop-filter: blur(12px) saturate(150%);
+  background: var(--qa-bg-raised);
   color: var(--qa-text-primary);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 2px 8px rgba(0, 0, 0, 0.3);
-}
-.qa-send-btn.is-stop::before {
-  display: none;
-}
-
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .qa-composer {
-    background: rgba(44, 41, 35, 0.94);
-  }
+  border: 1px solid var(--qa-border-strong);
+  box-shadow: none;
 }
 
 /* ── 开发中弹层 ── */
@@ -767,7 +712,7 @@
   outline: none;
 }
 .qa-input:focus {
-  border-color: rgba(124, 138, 255, 0.45);
+  border-color: var(--qa-accent);
   box-shadow: 0 0 0 3px var(--qa-accent-subtle);
 }
 .qa-verify {
