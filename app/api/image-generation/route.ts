@@ -208,15 +208,16 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     const [width, height] = NAI_SIZE_MAP[sizeStr] || ([832, 1216] as [number, number]);
     const finalPrompt = buildNaiPrompt(finalUserPrompt, input);
 
-        const isV4Model = /4/.test(input.novelaiModel || "nai-diffusion-4-5-full");
     const seedValue = (typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) : 0) || Math.floor(Math.random() * 2 ** 53);
-    // 与已知可用的 nai-v4.5-api Python 脚本完全对齐（删除所有多余/可疑字段）
+    // ── 对齐已验证可用的 ComfyUI NAI 插件（nai.py）──
+    // 参考：https://github.com/ComfyNodePRs/PR-comfyui_nai_api-de129384/blob/main/nai.py
+    // 关键差异：params_version=1（不是3）、不用v4_prompt结构、响应是ZIP文件不是JSON
     const parameters: Record<string, unknown> = {
-      params_version: 3,
+      params_version: 1,
       width,
       height,
       scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
-      sampler: input.novelaiSampler || "k_dpmpp_2m",
+      sampler: input.novelaiSampler || "k_euler_ancestral",
       steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(150, input.novelaiSteps)) : 28,
       seed: seedValue,
       n_samples: 1,
@@ -227,36 +228,21 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       legacy: false,
       add_original_image: false,
       cfg_rescale: 0,
-      noise_schedule: input.novelaiNoiseSchedule || "exponential",
+      noise_schedule: input.novelaiNoiseSchedule || "native",
       legacy_v3_extend: false,
-      skip_cfg_above_sigma: 58,
       negative_prompt: input.novelaiNegativePrompt || "",
-      // 关键：必须用非流式（stream:false），NAI 才返回标准 JSON {artifacts:[{base64}]}
-      // 与下方 res.json() 解析匹配。若用 "msgpack" 会返回二进制流导致解析崩溃 500。
-      stream: false,
     };
-    const naiRequestBody: Record<string, unknown> = {
+    const body = JSON.stringify({
       input: finalPrompt,
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       action: "generate",
       parameters,
-    };
-    if (isV4Model) {
-      // v4 / v4.5 模型必须用 v4_prompt 结构包裹提示词，否则生成阶段报错
-      naiRequestBody.v4_prompt = {
-        caption: { base_caption: finalPrompt, char_captions: [] },
-        use_coords: false,
-        use_order: true,
-      };
-      naiRequestBody.v4_negative_prompt = {
-        caption: { base_caption: input.novelaiNegativePrompt || "", char_captions: [] },
-        legacy_uc: false,
-      };
-    }
-    const body = JSON.stringify(naiRequestBody);
+    });
 
     // ── 诊断日志（Vercel Dashboard → Functions → Logs 可查看）──
+    const actualSampler = input.novelaiSampler || "k_euler_ancestral";
     const diag = {
+      _codeVersion: "v6",  // 版本标记：v6=对齐ComfyUI NAI插件(params_version:1, 无v4_prompt, ZIP响应)
       ts: new Date().toISOString(),
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       size: `${width}x${height}`,
@@ -266,7 +252,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       suffixLen: (input.novelaiQualitySuffix || "").length,
       bodySize: body.length,
       steps: typeof input.novelaiSteps === "number" ? input.novelaiSteps : 28,
-      sampler: input.novelaiSampler || "euler_ancestral",
+      sampler: actualSampler,
       hasSm: !!input.novelaiSmeaDyn,
       endpointMode: input.novelaiEndpointMode || "normal",
     };
@@ -312,25 +298,72 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       } };
     }
 
-    const json = await res.json() as Record<string, unknown>;
-    const artifacts = json.artifacts as Array<Record<string, unknown>> | undefined;
-    if (!artifacts || !artifacts.length) {
-      return { status: 502, body: { error: `NovelAI 返回格式异常：${JSON.stringify(Object.keys(json)).slice(0, 200)}` } };
+    // ── NAI 响应解析：可能是 ZIP（默认）或 JSON（带 stream:false 时部分情况）──
+    const contentType = (res.headers.get("content-type") || "").toLowerCase();
+    console.log("[NAI-DIAG] response:", JSON.stringify({
+      ...diag,
+      naiStatus: res.status,
+      contentType,
+      contentLength: res.headers.get("content-length"),
+    }));
+
+    // 情况1：ZIP 文件（ComfyUI 插件确认的默认返回格式）
+    if (
+      res.ok &&
+      (contentType.includes("application/zip") ||
+        contentType.includes("application/octet-stream") ||
+        !contentType.startsWith("application/json"))
+    ) {
+      try {
+        const arrayBuffer = await res.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        // ZIP 魔数：PK\x03\x04
+        if (buffer[0] === 0x50 && buffer[1] === 0x4b) {
+          // 在服务端解压 ZIP 取 image_0.png
+          // 注意：Node.js 18+ 没有内置 zip，用简单方式提取
+          // ZIP 中 PNG 文件通常在固定偏移位置，我们直接找 PNG 魔数
+          const pngStart = buffer.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+          if (pngStart >= 0) {
+            const pngData = buffer.subarray(pngStart);
+            const b64 = pngData.toString("base64");
+            console.log("[NAI-DIAG] success ZIP:", JSON.stringify({ ...diag, imgSize: pngData.length }));
+            return { status: 200, body: { b64, mimeType: "image/png", revisedPrompt: finalPrompt } };
+          }
+        }
+        // 如果不是 ZIP 也不是有 PNG 的二进制，尝试整个 buffer 当图片
+        const b64 = buffer.toString("base64");
+        console.log("[NAI-DIAG] success binary:", JSON.stringify({ ...diag, imgSize: buffer.length }));
+        return { status: 200, body: { b64, mimeType: contentType.startsWith("image/") ? contentType.split(";")[0] : "image/png", revisedPrompt: finalPrompt } };
+      } catch (parseErr) {
+        console.log("[NAI-DIAG] zip_parse_err:", String(parseErr));
+        // ZIP 解析失败，降级尝试 JSON
+      }
     }
 
-    const b64 = artifacts[0].base64 as string | undefined;
-    if (!b64) return { status: 502, body: { error: "NovelAI 返回的图片数据为空" } };
+    // 情况2：JSON 响应 {artifacts:[{base64}]}
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      return { status: 502, body: {
+        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: v${diag._codeVersion} model=${diag.model} size=${diag.size} sampler=${diag.sampler} bodySize=${diag.bodySize}]`,
+      } };
+    }
 
-    console.log("[NAI-DIAG] success:", JSON.stringify({ ...diag, imgSize: (b64.length * 3 / 4) >>> 0 }));
-
-    return {
-      status: 200,
-      body: {
-        b64,
-        mimeType: (artifacts[0].type as string) || "image/png",
-        revisedPrompt: finalPrompt,
-      },
-    };
+    try {
+      const json = await res.json() as Record<string, unknown>;
+      const artifacts = json.artifacts as Array<Record<string, unknown>> | undefined;
+      if (artifacts && artifacts.length) {
+        const b64 = artifacts[0].base64 as string | undefined;
+        if (b64) {
+          console.log("[NAI-DIAG] success JSON:", JSON.stringify({ ...diag, imgSize: (b64.length * 3 / 4) >>> 0 }));
+          return { status: 200, body: { b64, mimeType: (artifacts[0].type as string) || "image/png", revisedPrompt: finalPrompt } };
+        }
+      }
+      // JSON 但没有 artifacts — 可能是其他格式
+      return { status: 502, body: { error: `NovelAI 返回格式异常：${JSON.stringify(Object.keys(json)).slice(0, 200)}` } };
+    } catch {
+      // JSON 解析失败且上面 ZIP 也失败了，返回原始错误
+      return { status: 502, body: { error: `NovelAI 响应无法解析 [contentType=${contentType}]` } };
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const status = message.toLowerCase().includes("abort") ? 504 : 502;
