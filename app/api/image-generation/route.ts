@@ -216,7 +216,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       width,
       height,
       scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
-      sampler: (input.novelaiSampler || "euler_ancestral").replace(/^k_/, "k_").replace("euler_ancestral", "k_euler_ancestral"),
+      sampler: input.novelaiSampler || "k_dpmpp_2m",
       steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(150, input.novelaiSteps)) : 28,
       seed: seedValue,
       n_samples: 1,
@@ -227,10 +227,13 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       legacy: false,
       add_original_image: false,
       cfg_rescale: 0,
-      noise_schedule: input.novelaiNoiseSchedule || "native",
+      noise_schedule: input.novelaiNoiseSchedule || "exponential",
       legacy_v3_extend: false,
+      skip_cfg_above_sigma: 58,
       negative_prompt: input.novelaiNegativePrompt || "",
-      stream: "msgpack",
+      // 关键：必须用非流式（stream:false），NAI 才返回标准 JSON {artifacts:[{base64}]}
+      // 与下方 res.json() 解析匹配。若用 "msgpack" 会返回二进制流导致解析崩溃 500。
+      stream: false,
     };
     const naiRequestBody: Record<string, unknown> = {
       input: finalPrompt,
