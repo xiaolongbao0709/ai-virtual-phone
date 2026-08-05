@@ -272,8 +272,8 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       suffixLen: (input.novelaiQualitySuffix || "").length,
       bodySize: body.length,
       steps: typeof input.novelaiSteps === "number" ? input.novelaiSteps : 28,
-      sampler: apiSampler,
-      noiseSchedule: apiNoise,
+      sampler: input.novelaiSampler || "euler_ancestral",
+      noiseSchedule: input.novelaiNoiseSchedule || "karras",
       paramsV: 3,
     };
     console.log("[NAI-DIAG] request:", JSON.stringify(diag));
