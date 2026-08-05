@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ProxyAgent, type Dispatcher } from "undici";
 import zlib from "node:zlib";
+import https from "node:https";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -268,42 +268,58 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       },
     });
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 300_000); // 5min
-    let res: Response;
-    try {
-      res = await externalFetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${naiKey}`,
-          // NovelAI 服务端会校验来源，缺失这两个头会直接 500
-          Origin: "https://novelai.net",
-          Referer: "https://novelai.net/",
-          Accept: "*/*",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+    // 使用原生 Node.js https 模块（绕过 undici，避免 HTTP/2 导致 NAI 500）
+    const naiResponse = await new Promise<{
+      status: number;
+      headers: Record<string, string>;
+      body: Buffer;
+    }>((resolve, reject) => {
+      const urlObj = new URL(url);
+      const req = https.request(
+        urlObj,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": String(Buffer.byteLength(body)),
+            Authorization: `Bearer ${naiKey}`,
+            Origin: "https://novelai.net",
+            Referer: "https://novelai.net/",
+            Accept: "*/*",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+          },
         },
-        body,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.on("end", () => {
+            const resHeaders: Record<string, string> = {};
+            res.headers.forEach((v, k) => { resHeaders[k] = String(v); });
+            resolve({
+              status: res.statusCode || 500,
+              headers: resHeaders,
+              body: Buffer.concat(chunks),
+            });
+          });
+          res.on("error", reject);
+        },
+      );
+      req.setTimeout(300_000, () => { req.destroy(new Error("NAI 请求超时")); });
+      req.on("error", reject);
+      req.write(body);
+      req.end();
+    });
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      // 抓取完整响应头用于诊断
-      const resHeaders: Record<string, string> = {};
-      res.headers.forEach((v, k) => { resHeaders[k] = v; });
+    if (naiResponse.status !== 200) {
+      const errText = naiResponse.body.toString("utf-8", 0, 800);
       return {
         status: 502,
         body: {
-          error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 800)}`,
+          error: `NovelAI API 错误 ${naiResponse.status}: ${errText.slice(0, 800)}`,
           _debug: {
-            naiStatus: res.status,
-            naiStatusText: res.statusText,
-            naiHeaders: resHeaders,
+            naiStatus: naiResponse.status,
+            naiHeaders: naiResponse.headers,
             naiBodyPreview: errText.slice(0, 500),
             requestedUrl: url,
           },
@@ -312,7 +328,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     }
 
     // NovelAI 成功时返回 ZIP 二进制（内含 image_0.png），不是 JSON
-    const buffer = Buffer.from(await res.arrayBuffer());
+    const buffer = naiResponse.body;
 
     // 情况一：标准 ZIP 包
     if (buffer.length >= 4 && buffer.readUInt32LE(0) === 0x04034b50) {
