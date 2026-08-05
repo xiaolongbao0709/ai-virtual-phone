@@ -1,47 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import zlib from "node:zlib";
+import { ProxyAgent, type Dispatcher } from "undici";
 
-export const runtime = "nodejs";
 export const maxDuration = 120;
-
-/**
- * NovelAI /ai/generate-image 返回的是一个 ZIP 二进制（内含 image_0.png），
- * 不是 JSON。这里做最小 ZIP 解包：支持 stored(0) 与 deflate(8)。
- */
-function extractFirstFileFromZip(buf: Buffer): Buffer | null {
-  if (buf.length < 30 || buf.readUInt32LE(0) !== 0x04034b50) return null;
-
-  const flags = buf.readUInt16LE(6);
-  const method = buf.readUInt16LE(8);
-  const fnlen = buf.readUInt16LE(26);
-  const exlen = buf.readUInt16LE(28);
-  const start = 30 + fnlen + exlen;
-
-  let csize = buf.readUInt32LE(18);
-
-  // 使用 data descriptor 时 local header 内的大小为 0，需回退到中央目录
-  const cdSig = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
-  if ((flags & 0x08) !== 0 || csize === 0 || start + csize > buf.length) {
-    const cdIdx = buf.indexOf(cdSig);
-    if (cdIdx > start) {
-      const fromCd = buf.readUInt32LE(cdIdx + 20);
-      csize = fromCd > 0 && start + fromCd <= buf.length ? fromCd : cdIdx - start;
-    } else {
-      csize = buf.length - start;
-    }
-  }
-
-  const raw = buf.subarray(start, start + csize);
-  if (method === 0) return raw;
-  if (method === 8) {
-    try {
-      return zlib.inflateRawSync(raw);
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
 
 type ImageGenerationRequest = {
   apiKey?: string;
@@ -207,30 +167,6 @@ function buildNaiPrompt(prompt: string, input: ImageGenerationRequest): string {
         .replace(/\{prompt\}/gi, prompt);
 }
 
-/**
- * 检测文本是否包含 CJK（中日韩）字符
- */
-function containsCJK(text: string): boolean {
-    return /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff]/.test(text);
-}
-
-/**
- * 使用 MyMemory 免费翻译 API 将中文翻译为英文（无需 API Key）
- * 适用于 NAI 等只接受英文 tag 的生图服务
- */
-async function translateToEnglish(text: string): Promise<string> {
-    try {
-        const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=zh|en`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-        if (!res.ok) return text;
-        const data = (await res.json()) as { responseData?: { translatedText: string } };
-        const translated = data?.responseData?.translatedText;
-        return translated && translated !== text ? translated : text;
-    } catch {
-        return text; // 翻译失败时返回原文，不阻断出图
-    }
-}
-
 async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
   try {
     const naiKey = input.novelaiKey?.trim();
@@ -241,29 +177,23 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     if (!naiKey) return { status: 400, body: { error: "缺少 NovelAI API Key" } };
     if (!prompt) return { status: 400, body: { error: "缺少提示词" } };
 
-    // NAI 只识别英文 tag，中文提示词自动翻译为英文
-    const effectivePrompt = containsCJK(prompt) ? await translateToEnglish(prompt) : prompt;
-
     const baseUrl = naiUrl.replace(/\/+$/, "");
     const url = `${baseUrl}/ai/generate-image`;
     const sizeStr = input.novelaiSize || "832x1216";
     const [width, height] = NAI_SIZE_MAP[sizeStr] || ([832, 1216] as [number, number]);
-    const finalPrompt = buildNaiPrompt(effectivePrompt, input);
+    const finalPrompt = buildNaiPrompt(prompt, input);
 
     const body = JSON.stringify({
       input: finalPrompt,
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       action: "generate",
       parameters: {
-        params_version: 3,
         width,
         height,
         scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
         sampler: (input.novelaiSampler || "euler_ancestral").replace(/^k_/, "k_").replace("euler_ancestral", "k_euler_ancestral"),
         steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(150, input.novelaiSteps)) : 28,
-        seed: (typeof input.novelaiSeed === "string" && input.novelaiSeed?.trim())
-            ? (parseInt(input.novelaiSeed, 10) || Math.floor(Math.random() * 999999999))
-            : Math.floor(Math.random() * 999999999),
+        seed: typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) || -1 : -1,
         negative_prompt: input.novelaiNegativePrompt || "",
         ucPreset: typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0,
         add_original_image: false,
@@ -272,7 +202,6 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
         dynamic_thresholding: false,
         legacy: false,
         quality_toggle: true,
-        unsafe: true,
         sm: !!input.novelaiSmeaDyn,
         sm_dyn: !!input.novelaiSmeaDyn,
         uncond_scale: 1,
@@ -283,156 +212,85 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
         smea: !!input.novelaiSmea,
         ref_sw: false,
         decr_countdown: false,
-        v4_prompt: {
-          caption: { base_caption: finalPrompt, char_captions: [] },
-          use_coords: false,
-          use_order: true,
-        },
-        v4_negative_prompt: {
-          caption: { base_caption: input.novelaiNegativePrompt || "", char_captions: [] },
-          legacy_uc: false,
-        },
       },
     });
 
-    // 使用全局 fetch（底层 undici，自动协商 HTTP/2）。
-    // 关键：NAI 在 Vercel 上对 HTTP/1.1（原生 https 模块）会静默挂起，
-    // 必须走 HTTP/2 通道才能拿到响应。
-    const t0 = Date.now();
-    let tHead = 0, tFirstByte = 0, received = 0;
-    let naiResponse: {
-      status: number;
-      headers: Record<string, string>;
-      body: Buffer;
-      timeline?: Record<string, number>;
-      error?: string;
-    } = { status: 0, headers: {}, body: Buffer.alloc(0) };
+    // ── 诊断日志（Vercel Dashboard → Functions → Logs 可查看）──
+    const diag = {
+      ts: new Date().toISOString(),
+      model: input.novelaiModel || "nai-diffusion-4-5-full",
+      size: `${width}x${height}`,
+      sizeStr,
+      promptLen: finalPrompt.length,
+      prefixLen: (input.novelaiPositivePrefix || "").length,
+      suffixLen: (input.novelaiQualitySuffix || "").length,
+      bodySize: body.length,
+      steps: typeof input.novelaiSteps === "number" ? input.novelaiSteps : 28,
+      sampler: input.novelaiSampler || "euler_ancestral",
+      hasSm: !!input.novelaiSmeaDyn,
+      endpointMode: input.novelaiEndpointMode || "normal",
+    };
+    console.log("[NAI-DIAG] request:", JSON.stringify(diag));
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 300_000); // 5min
+    let res: Response;
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 100_000);
-      const resp = await fetch(url, {
+      res = await externalFetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${naiKey}`,
-          Accept: "*/*",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
         },
         body,
         signal: controller.signal,
       });
-      tHead = Date.now();
-      const ab = await resp.arrayBuffer();
-      received = ab.byteLength;
-      tFirstByte = tHead;
-      naiResponse = {
-        status: resp.status,
-        headers: {},
-        body: Buffer.from(ab),
-        timeline: { t0, tConnect: 0, tHead, tFirstByte },
-      };
-      clearTimeout(timer);
-    } catch (err) {
-      naiResponse = {
-        status: 0,
-        headers: {},
-        body: Buffer.alloc(0),
-        timeline: { t0, tConnect: 0, tHead, tFirstByte },
-        error: (err as Error).message,
-      };
+    } finally {
+      clearTimeout(timeout);
     }
 
-    if (naiResponse.error || naiResponse.status === 0) {
-      return {
-        status: 502,
-        body: {
-          error: `NovelAI 连接失败: ${naiResponse.error || "无响应"}`,
-          _debug: {
-            timeline: naiResponse.timeline,
-            tConnectMs: tConnect ? tConnect - t0 : null,
-            tHeadMs: tHead ? tHead - t0 : null,
-            tFirstByteMs: tFirstByte ? tFirstByte - t0 : null,
-            receivedBytes: received,
-            requestedUrl: url,
-          },
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      // 收集 NAI 响应头辅助诊断
+      const respHeaders: Record<string, string> = {};
+      res.headers.forEach((v, k) => { respHeaders[k] = v; });
+      console.log("[NAI-DIAG] error:", JSON.stringify({
+        naiStatus: res.status,
+        naiHeaders: respHeaders,
+        errBody: errText.slice(0, 1000),
+        ...diag,
+      }));
+      return { status: 502, body: {
+        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 600)}`,
+        _diag: {
+          promptPreview: finalPrompt.slice(0, 200),
+          model: diag.model,
+          size: diag.size,
+          bodySize: diag.bodySize,
+          naiResponseHeaders: respHeaders,
         },
-      };
+      } };
     }
 
-    if (naiResponse.status !== 200) {
-      const errText = naiResponse.body.toString("utf-8", 0, 800);
-      return {
-        status: 502,
-        body: {
-          error: `NovelAI API 错误 ${naiResponse.status}: ${errText.slice(0, 800)}`,
-          _debug: {
-            naiStatus: naiResponse.status,
-            naiHeaders: naiResponse.headers,
-            naiBodyPreview: errText.slice(0, 500),
-            requestedUrl: url,
-          },
-        },
-      };
+    const json = await res.json() as Record<string, unknown>;
+    const artifacts = json.artifacts as Array<Record<string, unknown>> | undefined;
+    if (!artifacts || !artifacts.length) {
+      return { status: 502, body: { error: `NovelAI 返回格式异常：${JSON.stringify(Object.keys(json)).slice(0, 200)}` } };
     }
 
-    // NovelAI 成功时返回 ZIP 二进制（内含 image_0.png），不是 JSON
-    const buffer = naiResponse.body;
+    const b64 = artifacts[0].base64 as string | undefined;
+    if (!b64) return { status: 502, body: { error: "NovelAI 返回的图片数据为空" } };
 
-    // 情况一：标准 ZIP 包
-    if (buffer.length >= 4 && buffer.readUInt32LE(0) === 0x04034b50) {
-      const png = extractFirstFileFromZip(buffer);
-      if (!png || png.length === 0) {
-        return { status: 502, body: { error: "NovelAI 返回的 ZIP 解包失败" } };
-      }
-      return {
-        status: 200,
-        body: {
-          b64: png.toString("base64"),
-          mimeType: "image/png",
-          revisedPrompt: finalPrompt,
-        },
-      };
-    }
+    console.log("[NAI-DIAG] success:", JSON.stringify({ ...diag, imgSize: (b64.length * 3 / 4) >>> 0 }));
 
-    // 情况二：直接返回裸 PNG
-    if (buffer.length > 8 && buffer.subarray(0, 8).toString("hex") === "89504e470d0a1a0a") {
-      return {
-        status: 200,
-        body: {
-          b64: buffer.toString("base64"),
-          mimeType: "image/png",
-          revisedPrompt: finalPrompt,
-        },
-      };
-    }
-
-    // 情况三：兼容旧版 / 反代返回的 JSON 结构
-    try {
-      const json = JSON.parse(buffer.toString("utf-8")) as Record<string, unknown>;
-      const artifacts = json.artifacts as Array<Record<string, unknown>> | undefined;
-      const b64 = artifacts?.[0]?.base64 as string | undefined;
-      if (b64) {
-        return {
-          status: 200,
-          body: {
-            b64,
-            mimeType: (artifacts?.[0]?.type as string) || "image/png",
-            revisedPrompt: finalPrompt,
-          },
-        };
-      }
-      return {
-        status: 502,
-        body: { error: `NovelAI 返回格式异常：${JSON.stringify(Object.keys(json)).slice(0, 200)}` },
-      };
-    } catch {
-      return {
-        status: 502,
-        body: { error: `NovelAI 返回未知格式，前16字节：${buffer.subarray(0, 16).toString("hex")}` },
-      };
-    }
+    return {
+      status: 200,
+      body: {
+        b64,
+        mimeType: (artifacts[0].type as string) || "image/png",
+        revisedPrompt: finalPrompt,
+      },
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const status = message.toLowerCase().includes("abort") ? 504 : 502;
@@ -534,9 +392,6 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
       form.set("prompt", prompt);
       if (input.size && input.size !== "auto") form.set("size", input.size);
       if (input.quality && input.quality !== "auto") form.set("quality", input.quality);
-      form.set("unsafe", "true");
-      form.set("nsfw", "true");
-      form.set("disable_safety_checker", "true");
       form.append("image", converted.blob, `reference.${converted.mimeType.split("/")[1] || "png"}`);
       body = form;
     } else {
@@ -546,11 +401,6 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
         prompt,
         ...(input.size && input.size !== "auto" ? { size: input.size } : {}),
         ...(input.quality && input.quality !== "auto" ? { quality: input.quality } : {}),
-        // 第三方 OpenAI 兼容端点（如 SD 反代）常支持的安全限制解除字段；
-        // 真实 OpenAI 会忽略这些未知字段，不影响正常请求
-        unsafe: true,
-        nsfw: true,
-        disable_safety_checker: true,
       });
     }
 
