@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import zlib from "node:zlib";
-import https from "node:https";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -268,48 +267,71 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       },
     });
 
-    // 使用原生 Node.js https 模块（绕过 undici，避免 HTTP/2 导致 NAI 500）
-    const naiResponse = await new Promise<{
+    // 使用全局 fetch（底层 undici，自动协商 HTTP/2）。
+    // 关键：NAI 在 Vercel 上对 HTTP/1.1（原生 https 模块）会静默挂起，
+    // 必须走 HTTP/2 通道才能拿到响应。
+    const t0 = Date.now();
+    let tHead = 0, tFirstByte = 0, received = 0;
+    let naiResponse: {
       status: number;
       headers: Record<string, string>;
       body: Buffer;
-    }>((resolve, reject) => {
-      const urlObj = new URL(url);
-      const req = https.request(
-        urlObj,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Content-Length": String(Buffer.byteLength(body)),
-            Authorization: `Bearer ${naiKey}`,
-            Origin: "https://novelai.net",
-            Referer: "https://novelai.net/",
-            Accept: "*/*",
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      timeline?: Record<string, number>;
+      error?: string;
+    } = { status: 0, headers: {}, body: Buffer.alloc(0) };
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 100_000);
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${naiKey}`,
+          Accept: "*/*",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        },
+        body,
+        signal: controller.signal,
+      });
+      tHead = Date.now();
+      const ab = await resp.arrayBuffer();
+      received = ab.byteLength;
+      tFirstByte = tHead;
+      naiResponse = {
+        status: resp.status,
+        headers: {},
+        body: Buffer.from(ab),
+        timeline: { t0, tConnect: 0, tHead, tFirstByte },
+      };
+      clearTimeout(timer);
+    } catch (err) {
+      naiResponse = {
+        status: 0,
+        headers: {},
+        body: Buffer.alloc(0),
+        timeline: { t0, tConnect: 0, tHead, tFirstByte },
+        error: (err as Error).message,
+      };
+    }
+
+    if (naiResponse.error || naiResponse.status === 0) {
+      return {
+        status: 502,
+        body: {
+          error: `NovelAI 连接失败: ${naiResponse.error || "无响应"}`,
+          _debug: {
+            timeline: naiResponse.timeline,
+            tConnectMs: tConnect ? tConnect - t0 : null,
+            tHeadMs: tHead ? tHead - t0 : null,
+            tFirstByteMs: tFirstByte ? tFirstByte - t0 : null,
+            receivedBytes: received,
+            requestedUrl: url,
           },
         },
-        (res) => {
-          const chunks: Buffer[] = [];
-          res.on("data", (chunk: Buffer) => chunks.push(chunk));
-          res.on("end", () => {
-            const resHeaders: Record<string, string> = {};
-            res.headers.forEach((v, k) => { resHeaders[k] = String(v); });
-            resolve({
-              status: res.statusCode || 500,
-              headers: resHeaders,
-              body: Buffer.concat(chunks),
-            });
-          });
-          res.on("error", reject);
-        },
-      );
-      req.setTimeout(300_000, () => { req.destroy(new Error("NAI 请求超时")); });
-      req.on("error", reject);
-      req.write(body);
-      req.end();
-    });
+      };
+    }
 
     if (naiResponse.status !== 200) {
       const errText = naiResponse.body.toString("utf-8", 0, 800);
