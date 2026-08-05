@@ -14,7 +14,7 @@ const QA_STATE_KEY = "state";
 const MAX_SESSIONS = 30;
 const MAX_MESSAGES_PER_SESSION = 200;
 
-export type QaToolStatus = { name: string; running: boolean; success?: boolean };
+export type QaToolStatus = { name: string; running: boolean; success?: boolean; detail?: string; result?: string };
 
 export type QaPendingCommit = {
     proposal: QaProposedCommit;
@@ -290,15 +290,16 @@ export async function sendQaMessage(text: string): Promise<void> {
                     streamedReasoning += delta;
                     paintAssistant({ reasoning: streamedReasoning }, { persist: false });
                 },
-                onToolStart: (name) => {
-                    toolStatuses = [...toolStatuses, { name: toolLabel(name), running: true }];
+                onToolStart: (name, args) => {
+                    const detail = args && Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : undefined;
+                    toolStatuses = [...toolStatuses, { name: toolLabel(name), running: true, detail }];
                     paintAssistant({ tools: toolStatuses }, { force: true, persist: false });
                 },
-                onToolDone: (name, success) => {
+                onToolDone: (name, success, result) => {
                     let patched = false;
                     toolStatuses = toolStatuses.map((t) =>
                         !patched && t.running && t.name === toolLabel(name)
-                            ? ((patched = true), { ...t, running: false, success })
+                            ? ((patched = true), { ...t, running: false, success, result })
                             : t,
                     );
                     paintAssistant({ tools: toolStatuses }, { force: true, persist: false });

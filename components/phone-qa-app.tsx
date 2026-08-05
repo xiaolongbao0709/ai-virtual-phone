@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
-import { Check, ChevronLeft, Copy, Github, History, Loader2, Plus, Send, Square, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, Github, History, Loader2, Plus, Send, Square, Trash2, Wrench, X } from "lucide-react";
 import {
   applyQaCommit,
   cancelQaCommit,
@@ -20,6 +20,7 @@ import {
   switchQaSession,
   type QaMsg,
   type QaSession,
+  type QaToolStatus,
 } from "@/lib/qa-chat-store";
 import { resolveQaApiConfig } from "@/lib/qa-agent-engine";
 import {
@@ -172,6 +173,43 @@ function QaCommitCard({ msg }: { msg: QaMsg }) {
 
 // ── 消息渲染 ─────────────────────────────────────────
 
+// 工具调用行：折叠的单行摘要，点开展开参数与结果（Claude Code 风格）
+function QaToolRow({ tool }: { tool: QaToolStatus }) {
+  const [open, setOpen] = useState(false);
+  const hasDetail = Boolean(tool.detail || tool.result);
+  const summary = tool.running ? `正在${tool.name}…` : tool.success === false ? `${tool.name}失败` : tool.name;
+  return (
+    <div className={`qa-tool-row ${tool.running ? "is-running" : tool.success === false ? "is-fail" : "is-done"}`}>
+      <button
+        type="button"
+        className="qa-tool-row-head"
+        onClick={() => hasDetail && setOpen((v) => !v)}
+        disabled={!hasDetail}
+      >
+        {tool.running ? <Loader2 size={13} className="qa-spin" /> : <Wrench size={13} />}
+        <span className="qa-tool-row-summary">{summary}</span>
+        {hasDetail && <ChevronRight size={14} className={`qa-tool-row-chevron ${open ? "is-open" : ""}`} />}
+      </button>
+      {open && hasDetail && (
+        <div className="qa-tool-row-body">
+          {tool.detail && (
+            <>
+              <div className="qa-tool-row-label">参数</div>
+              <pre className="qa-tool-row-pre">{tool.detail}</pre>
+            </>
+          )}
+          {tool.result && (
+            <>
+              <div className="qa-tool-row-label">结果</div>
+              <pre className="qa-tool-row-pre">{tool.result}</pre>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function QaMessageItem({ msg, isStreaming, onRetry }: { msg: QaMsg; isStreaming: boolean; onRetry: (id: string) => void }) {
   if (msg.role === "user") {
     return (
@@ -187,10 +225,7 @@ function QaMessageItem({ msg, isStreaming, onRetry }: { msg: QaMsg; isStreaming:
       {msg.tools && msg.tools.length > 0 && (
         <div className="qa-tools">
           {msg.tools.map((tool, i) => (
-            <span key={`${tool.name}-${i}`} className={`qa-tool-pill ${tool.running ? "is-running" : tool.success === false ? "is-fail" : "is-done"}`}>
-              <span className="qa-tool-dot" />
-              {tool.running ? `正在${tool.name}…` : tool.success === false ? `${tool.name}失败` : tool.name}
-            </span>
+            <QaToolRow key={`${tool.name}-${i}`} tool={tool} />
           ))}
         </div>
       )}
@@ -477,6 +512,7 @@ export function PhoneQaApp({ onClose }: PhoneQaAppProps) {
         </div>
         <div className="qa-header-center">
           <span className="qa-header-title">工坊</span>
+          {repoConnected && <span className="qa-header-sub">已连接仓库</span>}
         </div>
         <div className="qa-header-right">
           <button

@@ -275,8 +275,8 @@ export type QaAgentCallbacks = {
     onDelta?: (text: string) => void | Promise<void>;
     onReasoningDelta?: (text: string) => void | Promise<void>;
     onStreamFallback?: (reason: string) => void | Promise<void>;
-    onToolStart?: (name: string) => void | Promise<void>;
-    onToolDone?: (name: string, success: boolean) => void | Promise<void>;
+    onToolStart?: (name: string, args?: Record<string, unknown>) => void | Promise<void>;
+    onToolDone?: (name: string, success: boolean, result?: string) => void | Promise<void>;
     /** 确认模式下写工具生成提案时回调（由 store 存到消息上供 UI 确认）。 */
     onStageCommit?: (proposal: QaProposedCommit) => void;
 };
@@ -328,13 +328,13 @@ export async function callQaAgent(
         const resultBlocks: string[] = [];
         for (const call of toolCalls) {
             if (options?.signal?.aborted) throw new DOMException("aborted", "AbortError");
-            await callbacks?.onToolStart?.(call.name);
+            await callbacks?.onToolStart?.(call.name, call.args);
             const toolResult = await runQaToolCall(call, {
                 signal: options?.signal,
                 autoCommit: options?.autoCommit,
                 onStageCommit: callbacks?.onStageCommit,
             });
-            await callbacks?.onToolDone?.(call.name, toolResult.success);
+            await callbacks?.onToolDone?.(call.name, toolResult.success, toolResult.resultForModel);
             resultBlocks.push(`【${toolResult.name}】${toolResult.success ? "" : "（失败）"}\n${toolResult.resultForModel}`);
         }
         working.push({
