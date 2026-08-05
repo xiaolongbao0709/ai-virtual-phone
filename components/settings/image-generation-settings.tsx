@@ -45,13 +45,52 @@ const NAI_MODEL_OPTIONS = [
 ];
 
 /** NAI 内置风格/质量预设：点击即填入「正向质量词（后缀）」，仍可手动再改 */
+// 每个预设同时携带「正向质量词 + 负面提示词」。
+// 规则：用户自己填了（两个框都不匹配任何预设）→ 自动归为「自定义」，使用用户自己的提示词；
+//       用户点某个预设 → 同时套用该预设的正向与负面提示词。
 const NAI_QUALITY_PRESETS = [
-    { id: "default", label: "默认", prompt: "best quality, very aesthetic, masterpiece" },
-    { id: "photo", label: "摄影写实", prompt: "photorealistic, highly detailed, 8k, sharp focus, real skin texture, cinematic lighting" },
-    { id: "cinematic", label: "电影感", prompt: "cinematic, film grain, dramatic lighting, anamorphic lens, depth of field, masterpiece" },
-    { id: "anime", label: "动漫插画", prompt: "anime style, vibrant colors, clean lineart, detailed, cel shading" },
-    { id: "romantic", label: "轻浪漫", prompt: "soft romantic atmosphere, tender mood, warm intimate lighting, gentle, artistic, emotional" },
-    { id: "portrait", label: "唯美写真", prompt: "aesthetic, elegant, soft lighting, delicate details, magazine photography, refined" },
+    {
+        id: "default",
+        label: "默认",
+        qualitySuffix: "best quality, very aesthetic, masterpiece",
+        negativePrompt:
+            "lowres, bad anatomy, worst quality, low quality, full body, wide shot, distant shot, small face, angular face, blocky face, long neck, mutated hands, poorly drawn face, mutation, deformed, extra limbs, ugly, blurry, amputation",
+    },
+    {
+        id: "photo",
+        label: "摄影写实",
+        qualitySuffix: "photorealistic, highly detailed, 8k, sharp focus, real skin texture, cinematic lighting",
+        negativePrompt:
+            "lowres, bad anatomy, worst quality, low quality, full body, wide shot, distant shot, small face, angular face, blocky face, long neck, mutated hands, poorly drawn face, mutation, deformed, extra limbs, ugly, blurry, amputation, watermark, text, signature",
+    },
+    {
+        id: "cinematic",
+        label: "电影感",
+        qualitySuffix: "cinematic, film grain, dramatic lighting, anamorphic lens, depth of field, masterpiece",
+        negativePrompt:
+            "lowres, bad anatomy, worst quality, low quality, full body, wide shot, distant shot, small face, angular face, blocky face, long neck, mutated hands, poorly drawn face, mutation, deformed, extra limbs, ugly, blurry, amputation, watermark, text, signature",
+    },
+    {
+        id: "anime",
+        label: "动漫插画",
+        qualitySuffix: "anime style, vibrant colors, clean lineart, detailed, cel shading",
+        negativePrompt:
+            "lowres, bad anatomy, worst quality, low quality, blurry, mutated hands, poorly drawn face, deformed, extra limbs, ugly, watermark, text, signature, 3d, cgi, realistic photo",
+    },
+    {
+        id: "romantic",
+        label: "轻浪漫",
+        qualitySuffix: "soft romantic atmosphere, tender mood, warm intimate lighting, gentle, artistic, emotional",
+        negativePrompt:
+            "lowres, bad anatomy, worst quality, low quality, full body, wide shot, distant shot, small face, angular face, blocky face, long neck, mutated hands, poorly drawn face, mutation, deformed, extra limbs, ugly, blurry, amputation, watermark, text, signature",
+    },
+    {
+        id: "portrait",
+        label: "唯美写真",
+        qualitySuffix: "aesthetic, elegant, soft lighting, delicate details, magazine photography, refined",
+        negativePrompt:
+            "lowres, bad anatomy, worst quality, low quality, full body, wide shot, distant shot, small face, angular face, blocky face, long neck, mutated hands, poorly drawn face, mutation, deformed, extra limbs, ugly, blurry, amputation, watermark, text, signature",
+    },
 ];
 
 /** NAI 采样器选项（NAI 真实 sampler 名，带 k_ 前缀） */
@@ -738,25 +777,52 @@ export function ImageGenerationSettings() {
                             />
                         </div>
 
-                        {/* ── 内置风格预设（点击即填入质量词）── */}
+                        {/* ── 内置风格预设（选中即同时套用正+负提示词；自己手写则归「自定义」）── */}
                         <div className="flex flex-col gap-1">
-                            <label className="menu-desc ml-1 font-medium">内置风格预设（点一下填入下方质量词）</label>
+                            <label className="menu-desc ml-1 font-medium">内置风格预设</label>
                             <div className="flex flex-wrap gap-2 ml-1">
-                                {NAI_QUALITY_PRESETS.map((p) => {
-                                    const active = (settings.novelai.qualitySuffix || "").trim() === p.prompt;
-                                    return (
-                                        <button
-                                            key={p.id}
-                                            type="button"
-                                            onClick={() => updateNai({ qualitySuffix: p.prompt })}
-                                            className={`px-3 py-1 rounded-full text-xs border transition-colors ${active ? "border-pink-400 bg-pink-400/15 text-pink-200" : "border-white/15 text-white/70 hover:border-white/40"}`}
-                                            title={p.prompt}
-                                        >
-                                            {p.label}
-                                        </button>
+                                {(() => {
+                                    const qs = (settings.novelai.qualitySuffix || "").trim();
+                                    const np = (settings.novelai.negativePrompt || "").trim();
+                                    const matched = NAI_QUALITY_PRESETS.find(
+                                        (p) => p.qualitySuffix.trim() === qs && p.negativePrompt.trim() === np,
                                     );
-                                })}
+                                    return (
+                                        <>
+                                            {!matched && (
+                                                <span
+                                                    className="px-3 py-1 rounded-full text-xs border border-amber-400/60 bg-amber-400/15 text-amber-200"
+                                                    title="你正在使用自己填写的正/负提示词"
+                                                >
+                                                    自定义
+                                                </span>
+                                            )}
+                                            {NAI_QUALITY_PRESETS.map((p) => {
+                                                const active = matched?.id === p.id;
+                                                return (
+                                                    <button
+                                                        key={p.id}
+                                                        type="button"
+                                                        onClick={() =>
+                                                            updateNai({
+                                                                qualitySuffix: p.qualitySuffix,
+                                                                negativePrompt: p.negativePrompt,
+                                                            })
+                                                        }
+                                                        className={`px-3 py-1 rounded-full text-xs border transition-colors ${active ? "border-pink-400 bg-pink-400/15 text-pink-200" : "border-white/15 text-white/70 hover:border-white/40"}`}
+                                                        title={`正向：${p.qualitySuffix}\n负面：${p.negativePrompt}`}
+                                                    >
+                                                        {p.label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </>
+                                    );
+                                })()}
                             </div>
+                            <p className="menu-desc ml-1 opacity-50 text-[11px]">
+                                选中即采用该预设的正向与负面提示词；你在下方手动修改任一框，会自动变为「自定义」并保留你自己的内容。
+                            </p>
                         </div>
 
                         {/* ── 正向质量词（后缀）── */}
