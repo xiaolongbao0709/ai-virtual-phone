@@ -380,7 +380,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
         ...diag,
       }));
       return { status: 502, body: {
-        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: v${diag._codeVersion} model=${diag.model} size=${diag.size} sampler=${diag.sampler} noise=${diag.noiseSchedule} paramsV=${diag.paramsV} bodySize=${diag.bodySize} hasCJK=${diag.hasCJK} translated=${diag.translated}]`,
+        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: ${diag._codeVersion} model=${diag.model} size=${diag.size} sampler=${diag.sampler} noise=${diag.noiseSchedule} paramsV=${diag.paramsV} bodySize=${diag.bodySize} hasCJK=${diag.hasCJK} translated=${diag.translated}]`,
         _diag: {
           promptPreview: finalPrompt.slice(0, 200),
           model: diag.model,
@@ -403,7 +403,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       return { status: 502, body: {
-        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: v${diag._codeVersion} model=${diag.model} size=${diag.size} sampler=${diag.sampler} noise=${diag.noiseSchedule} paramsV=${diag.paramsV} bodySize=${diag.bodySize} hasCJK=${diag.hasCJK} translated=${diag.translated}]`,
+        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: ${diag._codeVersion} model=${diag.model} size=${diag.size} sampler=${diag.sampler} noise=${diag.noiseSchedule} paramsV=${diag.paramsV} bodySize=${diag.bodySize} hasCJK=${diag.hasCJK} translated=${diag.translated}]`,
       } };
     }
 
