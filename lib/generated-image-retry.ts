@@ -53,16 +53,33 @@ export async function generateAndApplyChatGeneratedImage(
     try {
         // 聊天流程中触发的生图：强制 enabled=true（与测试生图按钮行为一致）。
         // 用户已通过 [照片:] 指令明确要求生图，不应因前端开关未打开而静默失败。
+        const settings = { ...loadImageGenerationSettings(), enabled: true };
+        console.log("[IMG-CHAT] 开始生图 v14", {
+            description: description.slice(0, 80),
+            provider: settings.provider,
+            hasNaiKey: Boolean(settings.novelai?.apiKey?.trim()),
+            naiModel: settings.novelai?.model,
+            naiKeyLen: settings.novelai?.apiKey?.length || 0,
+        });
         const generated = await generateImageFromConfiguredApi({
             description,
             characterId,
             useReferenceImage: message.mediaData?.useReferenceImage === true,
             signal: options?.signal,
-            settings: { ...loadImageGenerationSettings(), enabled: true },
+            settings,
         });
-        if (!generated) throw new Error("生图配置未启用或不完整");
+        if (!generated) {
+            console.error("[IMG-CHAT] generateImageFromConfiguredApi 返回 null — 配置不完整?", {
+                provider: settings.provider,
+                hasNaiKey: Boolean(settings.novelai?.apiKey?.trim()),
+                hasOaiKey: Boolean(settings.apiKey?.trim()),
+                enabled: settings.enabled,
+            });
+            throw new Error("生图配置未启用或不完整");
+        }
 
         const fileName = generatedImageFilename(description, generated.mimeType);
+        console.log("[IMG-CHAT] 生图成功", { fileName, mimeType: generated.mimeType, b64Len: generated.dataUrl.length });
         const previousData = message.mediaData ?? {};
         const nextData: ChatMessage["mediaData"] = {
             ...previousData,
@@ -85,6 +102,8 @@ export async function generateAndApplyChatGeneratedImage(
         dispatchChatMessagesUpdated(updated.sessionId, updated);
         return updated;
     } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        console.error("[IMG-CHAT] 生图失败", { error: errMsg, messageId: message.id, description: description.slice(0, 80) });
         const failed = updateChatMessage(message.id, {
             mediaData: {
                 ...message.mediaData,

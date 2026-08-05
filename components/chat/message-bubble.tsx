@@ -1242,6 +1242,8 @@ function ImageBubble({
     const [regenerating, setRegenerating] = useState(false);
     const [retryError, setRetryError] = useState("");
     const isPending = d?.imageGenerationStatus === "pending";
+    const isFailed = d?.imageGenerationStatus === "failed";
+    const initialError = isFailed ? (d?.imageGenerationError || "生图失败") : "";
     const canRetry = (!msg.mediaUrl || refExpired)
         && !isPending
         && Boolean(d?.label?.trim());
@@ -1339,7 +1341,7 @@ function ImageBubble({
                     </button>
                 )}
             </div>
-            {retryError && <div className="chat-generated-image-retry-error">生成失败：{retryError}</div>}
+            {(retryError || initialError) && <div className="chat-generated-image-retry-error">生成失败：{retryError || initialError}</div>}
             {showPromptEditor && typeof document !== "undefined" && createPortal(
                 <GeneratedImagePromptDialog
                     value={promptDraft}

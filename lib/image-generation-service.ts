@@ -763,9 +763,13 @@ export async function generateImageFromConfiguredApi(params: {
   if (settings.provider === "novelai") {
     const nai = settings.novelai;
     // NAI 校验：只要求 Key，地址留空即内置官方
-    if (!description || !nai?.apiKey?.trim()) return null;
+    if (!description || !nai?.apiKey?.trim()) {
+      console.warn("[IMG-SVC] NAI 路径返回 null", { hasDescription: Boolean(description), hasKey: Boolean(nai?.apiKey?.trim()), keyLen: nai?.apiKey?.length || 0 });
+      return null;
+    }
 
     throwIfAborted(params.signal);
+    console.log("[IMG-SVC] NAI 开始请求服务端中转", { promptLen: description.length, model: nai.model });
     // 走服务端中转：浏览器只连我们自己 Vercel 服务器（国内合法），
     // 由 Vercel 海外服务器调 image.novelai.net（正确域名），
     // 解决浏览器 CORS + 境外网络双重拦截。
