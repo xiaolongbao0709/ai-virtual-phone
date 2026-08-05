@@ -167,52 +167,80 @@ function buildNaiPrompt(prompt: string, input: ImageGenerationRequest): string {
         .replace(/\{prompt\}/gi, prompt);
 }
 
+// 检测是否含中日韩字符（中文提示词需要翻译给 NAI）
+function containsCJK(text: string): boolean {
+    return /[一-鿿぀-ヿ㐀-䶿豈-﫿ｦ-ﾟ]/.test(text);
+}
+
+// 用 MyMemory 免费翻译把中文提示词翻成英文；失败则原样返回（不阻断生图）
+async function translateToEnglish(text: string): Promise<string> {
+    try {
+        const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=zh|en`;
+        const res = await externalFetch(url, { method: "GET" });
+        if (!res.ok) return text;
+        const data = await res.json() as { responseData?: { translatedText?: string } };
+        const t = data.responseData?.translatedText;
+        return t ? t.trim() : text;
+    } catch {
+        return text;
+    }
+}
+
 async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
   try {
     const naiKey = input.novelaiKey?.trim();
     // 空白 = 内置官方地址（与棉花糖机一致：地址写死、用户无需填写）
     const naiUrl = (input.novelaiUrl?.trim() || "https://image.novelai.net");
-    const prompt = input.prompt?.trim();
+    const rawPrompt = input.prompt?.trim();
 
     if (!naiKey) return { status: 400, body: { error: "缺少 NovelAI API Key" } };
-    if (!prompt) return { status: 400, body: { error: "缺少提示词" } };
+    if (!rawPrompt) return { status: 400, body: { error: "缺少提示词" } };
+
+    // 中文提示词自动翻译为英文（NAI 不识别中文 tag；翻译失败则保留原文）
+    let finalUserPrompt = rawPrompt;
+    if (containsCJK(rawPrompt)) {
+        try { finalUserPrompt = await translateToEnglish(rawPrompt); } catch { /* 保留原文 */ }
+    }
 
     const baseUrl = naiUrl.replace(/\/+$/, "");
     const url = `${baseUrl}/ai/generate-image`;
     const sizeStr = input.novelaiSize || "832x1216";
     const [width, height] = NAI_SIZE_MAP[sizeStr] || ([832, 1216] as [number, number]);
-    const finalPrompt = buildNaiPrompt(prompt, input);
+    const finalPrompt = buildNaiPrompt(finalUserPrompt, input);
 
+    const isV4Model = /4/.test(input.novelaiModel || "nai-diffusion-4-5-full");
+    const parameters: Record<string, unknown> = {
+      width,
+      height,
+      scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
+      sampler: (input.novelaiSampler || "euler_ancestral").replace(/^k_/, "k_").replace("euler_ancestral", "k_euler_ancestral"),
+      steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(150, input.novelaiSteps)) : 28,
+      seed: (typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) : 0) || Math.floor(Math.random() * 2 ** 53),
+      negative_prompt: input.novelaiNegativePrompt || "",
+      ucPreset: typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0,
+      add_original_image: false,
+      cfg_rescale: 0,
+      controlnet_strength: 1,
+      dynamic_thresholding: false,
+      legacy: false,
+      quality_toggle: true,
+      sm: !!input.novelaiSmea,
+      sm_dyn: !!input.novelaiSmeaDyn,
+      uncond_scale: 1,
+      noise_schedule: input.novelaiNoiseSchedule || "native",
+      legacy_v3_extend: false,
+      smea_dy: !!input.novelaiSmeaDyn,
+      smea_static: !!input.novelaiSmea,
+      smea: !!input.novelaiSmea,
+      ref_sw: false,
+      decr_countdown: false,
+      unsafe: true, // 解除 NAI 内容过滤（NSFW）
+    };
     const body = JSON.stringify({
       input: finalPrompt,
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       action: "generate",
-      parameters: {
-        width,
-        height,
-        scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
-        sampler: (input.novelaiSampler || "euler_ancestral").replace(/^k_/, "k_").replace("euler_ancestral", "k_euler_ancestral"),
-        steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(150, input.novelaiSteps)) : 28,
-        seed: (typeof input.novelaiSeed === "string" && input.novelaiSeed ? parseInt(input.novelaiSeed, 10) : 0) || Math.floor(Math.random() * 2 ** 53),
-        negative_prompt: input.novelaiNegativePrompt || "",
-        ucPreset: typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0,
-        add_original_image: false,
-        cfg_rescale: 0,
-        controlnet_strength: 1,
-        dynamic_thresholding: false,
-        legacy: false,
-        quality_toggle: true,
-        sm: !!input.novelaiSmeaDyn,
-        sm_dyn: !!input.novelaiSmeaDyn,
-        uncond_scale: 1,
-        noise_schedule: input.novelaiNoiseSchedule || "native",
-        legacy_v3_extend: false,
-        smea_dy: !!input.novelaiSmeaDyn,
-        smea_static: !!input.novelaiSmea,
-        smea: !!input.novelaiSmea,
-        ref_sw: false,
-        decr_countdown: false,
-      },
+      parameters,
     });
 
     // ── 诊断日志（Vercel Dashboard → Functions → Logs 可查看）──
