@@ -210,6 +210,13 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
 
     const isV4Model = /4/.test(input.novelaiModel || "nai-diffusion-4-5-full");
     const parameters: Record<string, unknown> = {
+      // ── NAI v4 / v4.5 必填的兼容参数（官方 SDK 默认补这些）──
+      params_version: 3,
+      use_new_shared_trial: true,
+      prefer_brownian: true,
+      legacy: false,
+      legacy_uc: false,
+      legacy_v3_extend: false,
       width,
       height,
       scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
@@ -222,13 +229,11 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       cfg_rescale: 0,
       controlnet_strength: 1,
       dynamic_thresholding: false,
-      legacy: false,
       quality_toggle: true,
       sm: !!input.novelaiSmea,
       sm_dyn: !!input.novelaiSmeaDyn,
       uncond_scale: 1,
       noise_schedule: input.novelaiNoiseSchedule || "native",
-      legacy_v3_extend: false,
       smea_dy: !!input.novelaiSmeaDyn,
       smea_static: !!input.novelaiSmea,
       smea: !!input.novelaiSmea,
@@ -236,12 +241,25 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       decr_countdown: false,
       unsafe: true, // 解除 NAI 内容过滤（NSFW）
     };
-    const body = JSON.stringify({
+    const naiRequestBody: Record<string, unknown> = {
       input: finalPrompt,
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       action: "generate",
       parameters,
-    });
+    };
+    if (isV4Model) {
+      // v4 / v4.5 模型必须用 v4_prompt 结构包裹提示词，否则生成阶段报错
+      naiRequestBody.v4_prompt = {
+        caption: { base_caption: finalPrompt, char_captions: [] },
+        use_coords: false,
+        use_order: true,
+      };
+      naiRequestBody.v4_negative_prompt = {
+        caption: { base_caption: input.novelaiNegativePrompt || "", char_captions: [] },
+        legacy_uc: false,
+      };
+    }
+    const body = JSON.stringify(naiRequestBody);
 
     // ── 诊断日志（Vercel Dashboard → Functions → Logs 可查看）──
     const diag = {
