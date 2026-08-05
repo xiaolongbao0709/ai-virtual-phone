@@ -129,12 +129,6 @@ function buildImageUrl(baseUrl: string, mode: "generations" | "edits"): string {
   return `${normalizeBaseUrl(trimmed)}/images/${mode}`;
 }
 
-function buildModelsUrl(baseUrl: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  if (/\/models$/i.test(trimmed)) return trimmed;
-  return `${normalizeBaseUrl(trimmed)}/models`;
-}
-
 function cleanBase64(value: string): { b64: string; mimeType?: string } {
   const match = /^data:([^;]+);base64,([\s\S]+)$/.exec(value.trim());
   if (match) return { mimeType: match[1], b64: match[2] };
@@ -184,34 +178,6 @@ function extractFromObject(data: unknown): ExtractedImage | null {
   }
 
   return null;
-}
-
-function extractModels(data: unknown): string[] {
-  const results: string[] = [];
-  const push = (value: unknown) => {
-    if (typeof value !== "string") return;
-    const normalized = value.replace(/^models\//, "").trim();
-    if (normalized) results.push(normalized);
-  };
-
-  if (Array.isArray(data)) {
-    data.forEach(item => {
-      if (typeof item === "string") push(item);
-      else if (item && typeof item === "object") {
-        const row = item as Record<string, unknown>;
-        push(row.id ?? row.name ?? row.model);
-      }
-    });
-  } else if (data && typeof data === "object") {
-    const row = data as Record<string, unknown>;
-    for (const key of ["data", "models", "items"]) {
-      const value = row[key];
-      if (Array.isArray(value)) results.push(...extractModels(value));
-    }
-    push(row.id ?? row.name ?? row.model);
-  }
-
-  return Array.from(new Set(results));
 }
 
 async function fetchImageUrlAsBase64(url: string, signal?: AbortSignal): Promise<{ b64: string; mimeType: string }> {
@@ -271,25 +237,7 @@ export function filterLikelyImageModels(models: string[]): string[] {
 }
 
 export async function fetchImageGenerationModels(settings: Pick<ImageGenerationSettings, "apiKey" | "baseUrl" | "requestMode">): Promise<string[]> {
-  if (settings.requestMode === "direct") {
-    try {
-      const res = await fetch(buildModelsUrl(settings.baseUrl), {
-        method: "GET",
-        headers: { Authorization: `Bearer ${settings.apiKey}` },
-      });
-      const text = await res.text();
-      if (!res.ok) {
-        throw new Error(`模型列表 API 错误 ${res.status}: ${text.slice(0, 400)}`);
-      }
-      return extractModels(JSON.parse(text));
-    } catch (error) {
-      if (error instanceof TypeError) {
-        throw new Error("浏览器直连失败：该 API 可能未允许跨域请求。");
-      }
-      throw error;
-    }
-  }
-
+  // 始终走 Vercel 服务器中转获取模型列表（与生成一致），避免浏览器直连 api.openai.com 被墙。
   const res = await fetch("/api/image-generation/models", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -903,9 +851,10 @@ export async function generateImageFromConfiguredApi(params: {
   throwIfAborted(params.signal);
   const prompt = mergePrompt(description, settings.extraPrompt);
 
-  const data = settings.requestMode === "direct"
-    ? await generateImageDirect({ settings, prompt, referenceImageDataUrl, signal: params.signal })
-    : await generateImageViaServerOrProxy({ settings, prompt, referenceImageDataUrl, signal: params.signal });
+  // 统一走 Vercel 服务器中转（与 NAI 分支一致）：浏览器只连国内 Vercel，
+  // 由海外服务器调 api.openai.com，避免国内网络直连被墙（"不能跨境"）。
+  // 仅当用户显式配置了通用代理(IMAGE_GEN_PROXY_URL)时走代理，否则走服务端路由。
+  const data = await generateImageViaServerOrProxy({ settings, prompt, referenceImageDataUrl, signal: params.signal });
 
   throwIfAborted(params.signal);
   const mimeType = data.mimeType || "image/png";
