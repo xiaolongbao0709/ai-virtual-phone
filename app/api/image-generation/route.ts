@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ProxyAgent, type Dispatcher } from "undici";
+import JSZip from "jszip";
 
 export const maxDuration = 120;
 
@@ -341,7 +342,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       } };
     }
 
-    // ── NAI 响应解析：可能是 ZIP（默认）或 JSON（带 stream:false 时部分情况）──
+    // ── NAI 响应解析 ──
     const contentType = (res.headers.get("content-type") || "").toLowerCase();
     console.log("[NAI-DIAG] response:", JSON.stringify({
       ...diag,
@@ -350,40 +351,6 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       contentLength: res.headers.get("content-length"),
     }));
 
-    // 情况1：ZIP 文件（ComfyUI 插件确认的默认返回格式）
-    if (
-      res.ok &&
-      (contentType.includes("application/zip") ||
-        contentType.includes("application/octet-stream") ||
-        !contentType.startsWith("application/json"))
-    ) {
-      try {
-        const arrayBuffer = await res.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        // ZIP 魔数：PK\x03\x04
-        if (buffer[0] === 0x50 && buffer[1] === 0x4b) {
-          // 在服务端解压 ZIP 取 image_0.png
-          // 注意：Node.js 18+ 没有内置 zip，用简单方式提取
-          // ZIP 中 PNG 文件通常在固定偏移位置，我们直接找 PNG 魔数
-          const pngStart = buffer.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-          if (pngStart >= 0) {
-            const pngData = buffer.subarray(pngStart);
-            const b64 = pngData.toString("base64");
-            console.log("[NAI-DIAG] success ZIP:", JSON.stringify({ ...diag, imgSize: pngData.length }));
-            return { status: 200, body: { b64, mimeType: "image/png", revisedPrompt: finalPrompt } };
-          }
-        }
-        // 如果不是 ZIP 也不是有 PNG 的二进制，尝试整个 buffer 当图片
-        const b64 = buffer.toString("base64");
-        console.log("[NAI-DIAG] success binary:", JSON.stringify({ ...diag, imgSize: buffer.length }));
-        return { status: 200, body: { b64, mimeType: contentType.startsWith("image/") ? contentType.split(";")[0] : "image/png", revisedPrompt: finalPrompt } };
-      } catch (parseErr) {
-        console.log("[NAI-DIAG] zip_parse_err:", String(parseErr));
-        // ZIP 解析失败，降级尝试 JSON
-      }
-    }
-
-    // 情况2：JSON 响应 {artifacts:[{base64}]}
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       return { status: 502, body: {
@@ -391,6 +358,39 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
       } };
     }
 
+    const arrayBuffer = await res.arrayBuffer();
+
+    // 情况1：ZIP 文件（NAI 默认返回格式，内含 image_0.png）
+    if (
+      contentType.includes("application/zip") ||
+      contentType.includes("application/octet-stream") ||
+      !contentType.startsWith("application/json")
+    ) {
+      try {
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        // 优先找 image_0.png，其次首个 png 文件
+        let pngFile =
+          zip.file("image_0.png") ||
+          Object.values(zip.files).find(
+            (f) => !f.dir && /\.png$/i.test(f.name)
+          );
+        if (pngFile) {
+          const pngBuffer = await pngFile.async("nodebuffer");
+          const b64 = pngBuffer.toString("base64");
+          console.log("[NAI-DIAG] success ZIP:", JSON.stringify({ ...diag, imgSize: pngBuffer.length, fileName: pngFile.name }));
+          return { status: 200, body: { b64, mimeType: "image/png", revisedPrompt: finalPrompt } };
+        }
+        // ZIP 里没有 png — 尝试把整个 ZIP 当二进制图片（罕见情况）
+        const b64 = Buffer.from(arrayBuffer).toString("base64");
+        console.log("[NAI-DIAG] success binary:", JSON.stringify({ ...diag, imgSize: arrayBuffer.byteLength }));
+        return { status: 200, body: { b64, mimeType: "image/png", revisedPrompt: finalPrompt } };
+      } catch (zipErr) {
+        console.log("[NAI-DIAG] zip_parse_err:", String(zipErr));
+        // ZIP 解析失败，降级尝试 JSON
+      }
+    }
+
+    // 情况2：JSON 响应 {artifacts:[{base64}]}
     try {
       const json = await res.json() as Record<string, unknown>;
       const artifacts = json.artifacts as Array<Record<string, unknown>> | undefined;
@@ -401,10 +401,8 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
           return { status: 200, body: { b64, mimeType: (artifacts[0].type as string) || "image/png", revisedPrompt: finalPrompt } };
         }
       }
-      // JSON 但没有 artifacts — 可能是其他格式
       return { status: 502, body: { error: `NovelAI 返回格式异常：${JSON.stringify(Object.keys(json)).slice(0, 200)}` } };
     } catch {
-      // JSON 解析失败且上面 ZIP 也失败了，返回原始错误
       return { status: 502, body: { error: `NovelAI 响应无法解析 [contentType=${contentType}]` } };
     }
   } catch (err) {
