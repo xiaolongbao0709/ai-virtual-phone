@@ -730,14 +730,14 @@ async function generateImageViaServer(params: {
       }
       throwIfAborted(signal);
       if (data.error || !data.b64) {
-        throw new Error(data.error || `生图请求失败 ${data.httpStatus ?? res.status}`);
+        throw new Error(humanizeImageError(data.error || `生图请求失败 ${data.httpStatus ?? res.status}`));
       }
     } else {
       // 非流式回退(旧服务端等)
       data = await res.json().catch(() => ({})) as ServerImagePayload;
       throwIfAborted(signal);
       if (!res.ok || data.error || !data.b64) {
-        throw new Error(data.error || `生图请求失败 ${res.status}`);
+        throw new Error(humanizeImageError(data.error || `生图请求失败 ${res.status}`));
       }
     }
     return { b64: data.b64, mimeType: data.mimeType, revisedPrompt: data.revisedPrompt };
@@ -745,6 +745,27 @@ async function generateImageViaServer(params: {
     clearTimeout(totalTimer);
     if (signal) signal.removeEventListener("abort", onOuterAbort);
   }
+}
+
+// ── 全局单飞锁（仅 NovelAI）──
+// NAI 普通账号同一时刻只允许 1 张生图，聊天自动生图 / 测试按钮 / 🔄重roll
+// 只要同时发起就会触发 429 "Concurrent generation is locked"。
+// 用一个模块级串行队列，保证整个 app（同一标签页）任意时刻最多 1 个 NAI 生图在飞，
+// 后续请求排队而非并发撞车。两个标签页各有一份模块状态，故跨标签仍需服务端兜底。
+let naiGenChain: Promise<unknown> = Promise.resolve();
+function serializeNai<T>(task: () => Promise<T>): Promise<T> {
+  const run = naiGenChain.catch(() => undefined).then(task);
+  // 无论前一个成功或失败，都让它从链上脱离，避免 reject 传导到后续
+  naiGenChain = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+// 把服务端透传的生图错误转成中文友好提示
+function humanizeImageError(raw: string): string {
+  if (/concurrent generation|429/i.test(raw)) {
+    return "NovelAI 同一时间只能生成 1 张，请等当前这张完成后再试（约 10–30 秒）。";
+  }
+  return raw;
 }
 
 export async function generateImageFromConfiguredApi(params: {
@@ -773,12 +794,12 @@ export async function generateImageFromConfiguredApi(params: {
     // 走服务端中转：浏览器只连我们自己 Vercel 服务器（国内合法），
     // 由 Vercel 海外服务器调 image.novelai.net（正确域名），
     // 解决浏览器 CORS + 境外网络双重拦截。
-    const data = await generateImageViaServer({
+    const data = await serializeNai(() => generateImageViaServer({
       settings,
       prompt: description,
       referenceImageDataUrl: null,
       signal: params.signal,
-    });
+    }));
     throwIfAborted(params.signal);
     const mimeType = data.mimeType || "image/png";
     const blob = base64ToBlob(data.b64, mimeType);
