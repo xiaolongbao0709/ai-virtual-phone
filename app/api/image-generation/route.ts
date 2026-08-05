@@ -214,28 +214,11 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
     //       https://github.com/7xrk/novelai-api
     // 关键修正：params_version=3（不是1！）、必须带v4_prompt结构体、
     //          必须有prefer_brownian/deliberate_euler_ancestral_bug/sm/sm_dyn
-    const ucPresetMap: Record<number, string> = { 0: "None", 2: "Light", 3: "Heavy" };
-    const samplerMap: Record<string, string> = {
-      "euler_ancestral": "EulerAncestral", "k_euler_ancestral": "EulerAncestral",
-      "euler": "Euler", "k_euler": "Euler",
-      "dpmpp_2m": "DPM_2M", "k_dpmpp_2m": "DPM_2M",
-      "dpmpp_sde": "DPM_SDE", "k_dpmpp_sde": "DPM_SDE",
-      "ddim": "DDIM",
-    };
-    const noiseMap: Record<string, string> = {
-      "native": "Native", "karras": "Karras",
-      "exponential": "Exponential", "polyexponential": "Polyexponential",
-    };
-    const rawSampler = input.novelaiSampler || "k_euler_ancestral";
-    const apiSampler = samplerMap[rawSampler] || rawSampler;
-    const rawNoise = input.novelaiNoiseSchedule || "karras";
-    const apiNoise = noiseMap[rawNoise] || rawNoise;
-
     const parameters: Record<string, unknown> = {
       width,
       height,
       scale: typeof input.novelaiCfgScale === "number" ? input.novelaiCfgScale : 5,
-      sampler: apiSampler,
+      sampler: input.novelaiSampler || "euler_ancestral",
       steps: typeof input.novelaiSteps === "number" ? Math.max(1, Math.min(50, input.novelaiSteps)) : 28,
       seed: seedValue,
       n_samples: 1,
@@ -255,13 +238,13 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
         legacy_uc: false,
       },
 
-      // 质量与预设
+      // 质量与预设 — ⚠️ ucPreset 必须是数字(uint)，不能是字符串！
       qualityToggle: true,
-      ucPreset: ucPresetMap[typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0] || "None",
+      ucPreset: typeof input.novelaiUcPreset === "number" ? input.novelaiUcPreset : 0,
 
       // ── V4.5 核心参数 ──
-      params_version: 3,  // ⚠️ V4.5 必须是 3，不是 1！
-      noise_schedule: apiNoise,
+      params_version: 3,
+      noise_schedule: input.novelaiNoiseSchedule || "karras",
       sm: !!input.novelaiSmea,
       sm_dyn: !!input.novelaiSmeaDyn,
       dynamic_thresholding: false,
@@ -279,7 +262,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
 
     // ── 诊断日志（Vercel Dashboard → Functions → Logs 可查看）──
     const diag = {
-      _codeVersion: "v7",  // 版本标记：v7=对齐novelai-image-sdk(params_version:3, v4_prompt结构体, 完整V4.5参数)
+      _codeVersion: "v8",  // v8=修复ucPreset类型(string→uint数字), 删除sampler/noise映射直接传原始值
       ts: new Date().toISOString(),
       model: input.novelaiModel || "nai-diffusion-4-5-full",
       size: `${width}x${height}`,
