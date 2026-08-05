@@ -4518,3 +4518,17 @@
 .game-bottom-tabs button.is-active:active {
   transform: scale(0.98);
 }
+
+/* 创作工坊：三 tab（草稿箱 / 已发布 / 本机测试） */
+.game-studio-tabs.game-studio-tabs-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.game-studio-tabs.game-studio-tabs-3::before {
+  left: calc(16.666% - 17px);
+}
+.game-studio-tabs.game-studio-tabs-3[data-active-index="1"]::before {
+  left: calc(50% - 17px);
+}
+.game-studio-tabs.game-studio-tabs-3[data-active-index="2"]::before {
+  left: calc(83.333% - 17px);
+}

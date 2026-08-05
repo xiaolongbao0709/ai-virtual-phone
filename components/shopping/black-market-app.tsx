@@ -61,6 +61,7 @@ import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import type { BlackMarketOwnedTheater, BlackMarketRenderRule, BlackMarketSceneSession, BlackMarketState, BlackMarketTheaterProjectionEntry, BlackMarketTheaterTemplate } from "@/lib/black-market-types";
+import { IFRAME_ERROR_CAPTURE_SCRIPT } from "@/lib/qa-iframe-error-bridge";
 
 type BlackMarketAppProps = {
   onClose: () => void;
@@ -316,7 +317,7 @@ html,body{
 })();
 </script>`;
 
-  return /<\/body>/i.test(base) ? base.replace(/<\/body>/i, `${bridge}</body>`) : `${base}${bridge}`;
+  return /<\/body>/i.test(base) ? base.replace(/<\/body>/i, `${IFRAME_ERROR_CAPTURE_SCRIPT}${bridge}</body>`) : `${base}${IFRAME_ERROR_CAPTURE_SCRIPT}${bridge}`;
 }
 
 function createBlackMarketReplyFrameSrcDoc(html: string, frameId: string): string {
@@ -395,7 +396,7 @@ ${body}
 })();
 </script>`;
 
-  return /<\/body>/i.test(base) ? base.replace(/<\/body>/i, `${bridge}</body>`) : `${base}${bridge}`;
+  return /<\/body>/i.test(base) ? base.replace(/<\/body>/i, `${IFRAME_ERROR_CAPTURE_SCRIPT}${bridge}</body>`) : `${base}${IFRAME_ERROR_CAPTURE_SCRIPT}${bridge}`;
 }
 
 function BlackMarketTheaterHtmlFrame({

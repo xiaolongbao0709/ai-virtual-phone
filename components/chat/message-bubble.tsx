@@ -11,6 +11,7 @@ import { CHAT_OPEN_SESSION_EVENT, dispatchOpenAddContact } from "@/lib/chat-noti
 import { ContactCardGenerateFlow } from "@/components/chat/contact-card-generate-flow";
 import { findStickerByName } from "@/lib/sticker-data";
 import { splitBilingualText } from "@/lib/bilingual-text";
+import { isInvisibleOrWhitespaceOnly } from "@/lib/rich-message-parser";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
@@ -188,13 +189,16 @@ function splitChatContent(text: string): { type: "md" | "html"; content: string 
 }
 
 export function normalizeTextBubbleContent(content: string): string {
-    return content
+    const cleaned = content
         .replace(/\[音乐(?:分享)?(?:[：:][^\]]*)?\]/g, "")
         .replace(/\[[^\]]+拍了拍[^\]]+\]/g, "")
         .replace(/\[[^\]]*?(?:获取指令|获取工具)[:：][^\]]*\]/g, "")
         .replace(/\[[^\]]*?(?:执行动作|工具调用)[:：][^\]]*?[（(][\s\S]*?[)）]\]/g, "")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
+    // 只剩零宽字符/BOM 等不可见内容时按空处理，否则会渲染出一个空气泡
+    //（也让历史脏数据在显示层直接被隐藏）
+    return isInvisibleOrWhitespaceOnly(cleaned) ? "" : cleaned;
 }
 
 export function isStandaloneHtmlPreviewContent(content: string): boolean {

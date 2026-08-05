@@ -354,6 +354,43 @@ export function saveGameCollectionFolders(collectionFolders: GameCollectionFolde
   });
 }
 
+// ── 本机测试游戏 ─────────────────────────────────────
+// 从草稿本地安装、但不发布到市场。与市场安装的游戏一样走完整运行时
+// （写记忆、进回传记录），区别只是 localId 前缀，用于在创作工坊单独归类。
+export const GAME_LOCAL_TEST_PREFIX = "localtest_game_";
+
+export function isLocalTestGameId(localId: string): boolean {
+  return localId.startsWith(GAME_LOCAL_TEST_PREFIX);
+}
+
+/** 从草稿创建/更新一个本机测试游戏（按 draftId 幂等，重复测试更新而非重复安装）。 */
+export function upsertLocalTestGame(
+  draftId: string,
+  template: GameTemplate,
+): { ok: boolean; state: GameState; installedGame?: GameInstalledItem; error?: string } {
+  const normalized = normalizeGameTemplate(template);
+  const state = loadGameState();
+  if (!normalized) return { ok: false, state, error: "游戏包无效。" };
+  const localId = `${GAME_LOCAL_TEST_PREFIX}${draftId}`;
+  const existing = state.installedGames.find(item => item.localId === localId);
+  const installedGame: GameInstalledItem = existing
+    ? { ...existing, remoteTemplateId: normalized.id, templateSnapshot: normalized }
+    : {
+        localId,
+        remoteTemplateId: normalized.id,
+        installedAt: new Date().toISOString(),
+        templateSnapshot: normalized,
+        roleAssignments: [],
+        status: "installed",
+        playCount: 0,
+      };
+  const next = saveGameState({
+    ...state,
+    installedGames: [installedGame, ...state.installedGames.filter(item => item.localId !== localId)],
+  });
+  return { ok: true, state: next, installedGame };
+}
+
 export function deleteInstalledGame(localId: string): { ok: boolean; state: GameState; error?: string } {
   const state = loadGameState();
   const existing = state.installedGames.find(item => item.localId === localId);

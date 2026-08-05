@@ -53,6 +53,8 @@ import {
   deleteInstalledGame,
   getGameCatalog,
   installGameTemplate,
+  isLocalTestGameId,
+  upsertLocalTestGame,
   loadGameDrafts,
   loadGameSave,
   loadGameState,
@@ -86,9 +88,10 @@ import type { LLMMessage } from "@/lib/llm-prompt-assembler";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { incrementEventCounter } from "@/lib/memory-storage";
 import { maybeRunSummarization } from "@/lib/memory-summarizer";
+import { IFRAME_ERROR_CAPTURE_SCRIPT } from "@/lib/qa-iframe-error-bridge";
 
 type GameMainView = "hall" | "library" | "studio";
-type GameStudioMode = "published" | "drafts";
+type GameStudioMode = "published" | "drafts" | "localtest";
 type GameNotice = { id: number; tone: "success" | "error" | "info"; text: string };
 type RuntimeStage = "permission" | "picker" | "game";
 type RuntimeTitleBarMaterial = "clear" | "solid" | "glass";
@@ -504,9 +507,9 @@ ${body}
 </script>`;
 
   if (/<body[\s>]/i.test(base)) {
-    return base.replace(/<body([^>]*)>/i, `<body$1>${bridge}`);
+    return base.replace(/<body([^>]*)>/i, `<body$1>${IFRAME_ERROR_CAPTURE_SCRIPT}${bridge}`);
   }
-  return `${bridge}${base}`;
+  return `${IFRAME_ERROR_CAPTURE_SCRIPT}${bridge}${base}`;
 }
 
 function GameIframe({
@@ -789,6 +792,12 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
       .slice(0, 20),
     [state.gameEvents],
+  );
+  const localTestGames = useMemo(
+    () => state.installedGames
+      .filter(item => isLocalTestGameId(item.localId))
+      .sort((a, b) => installedGameActivityTime(b).localeCompare(installedGameActivityTime(a))),
+    [state.installedGames],
   );
   const libraryCollections = useMemo<GameLibraryCollection[]>(() => {
     const sortedInstalled = [...state.installedGames]
@@ -1439,22 +1448,27 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
     return localId.startsWith(GAME_PREVIEW_LOCAL_ID_PREFIX);
   }
 
-  function previewDraft(): void {
+  function localTestDraft(): void {
     try {
-      const template = createTemplateFromDraft(draft, state, editingTemplate);
       const now = new Date().toISOString();
-      previewGameSaveRef.current = null;
-      openRuntime({
-        localId: `${GAME_PREVIEW_LOCAL_ID_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-        remoteTemplateId: template.id,
-        installedAt: now,
-        templateSnapshot: { ...template, source: "local", updatedAt: now },
-        roleAssignments: [],
-        status: "installed",
-        playCount: 0,
-      });
+      const template = { ...createTemplateFromDraft(draft, state, editingTemplate), source: "local" as const, updatedAt: now };
+      // 稳定 key：优先用草稿 id；若是未保存的新草稿，先存草稿再测，保证重复测试幂等
+      let draftId = editingDraftId;
+      if (!draftId) {
+        draftId = createDraftId();
+        const title = draft.title.trim() || "未命名游戏";
+        setEditingDraftId(draftId);
+        setDrafts(current => saveGameDrafts([{ id: draftId as string, title, draft, createdAt: now, updatedAt: now }, ...current]));
+      }
+      const result = upsertLocalTestGame(draftId, template);
+      if (!result.ok || !result.installedGame) {
+        showNotice("error", result.error || "当前草稿无法测试");
+        return;
+      }
+      setState(result.state);
+      openRuntime(result.installedGame);
     } catch (err) {
-      showNotice("error", err instanceof Error ? err.message : "当前草稿无法试玩");
+      showNotice("error", err instanceof Error ? err.message : "当前草稿无法测试");
     }
   }
 
@@ -2320,6 +2334,65 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
     );
   }
 
+  function deleteLocalTestGame(localId: string): void {
+    setStudioMenuId(null);
+    const result = deleteInstalledGame(localId);
+    if (result.ok) {
+      setState(result.state);
+      showNotice("success", "已删除本机测试游戏");
+    }
+  }
+
+  function renderLocalTestStudioCard(item: GameInstalledItem, index: number) {
+    const menuId = `localtest:${item.localId}`;
+    const menuOpen = studioMenuId === menuId;
+    const linkedDraftId = item.localId.slice("localtest_game_".length);
+    const linkedDraft = drafts.find(d => d.id === linkedDraftId);
+    return (
+      <article
+        key={item.localId}
+        className={`game-studio-list-card ${menuOpen ? "is-menu-open" : ""}`}
+        role="button"
+        tabIndex={0}
+        style={{ animationDelay: `${index * 0.06}s` }}
+        onClick={() => openRuntime(item)}
+        onKeyDown={event => handleStudioCardKeyDown(event, () => openRuntime(item))}
+      >
+        <div className="game-studio-list-icon">
+          <Play size={18} strokeWidth={2.5} />
+        </div>
+        <div className="game-studio-list-copy">
+          <div>
+            <strong>{item.templateSnapshot.title}</strong>
+            <span>本机测试{item.playCount > 0 ? ` · 玩过 ${item.playCount} 次` : ""}</span>
+          </div>
+          <time>{formatGameDate(installedGameActivityTime(item))}</time>
+        </div>
+        <div className="game-studio-card-menu">
+          <button
+            type="button"
+            aria-label="打开操作菜单"
+            onClick={event => {
+              event.stopPropagation();
+              setStudioMenuId(current => current === menuId ? null : menuId);
+            }}
+          >
+            <MoreHorizontal size={17} />
+          </button>
+          {menuOpen ? (
+            <div className="game-studio-card-menu-pop" onClick={event => event.stopPropagation()}>
+              <button type="button" onClick={() => { setStudioMenuId(null); openRuntime(item); }}>开始玩</button>
+              {linkedDraft ? (
+                <button type="button" onClick={() => { setStudioMenuId(null); editDraft(linkedDraft); }}>编辑草稿</button>
+              ) : null}
+              <button type="button" className="is-danger" onClick={() => deleteLocalTestGame(item.localId)}>删除</button>
+            </div>
+          ) : null}
+        </div>
+      </article>
+    );
+  }
+
   function renderGameCommentItem(template: GameTemplate, item: GameCommentDisplayItem) {
     const { comment, replyTargetName, visualDepth } = item;
     const replyToComment = () => {
@@ -2715,9 +2788,10 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
                 </div>
               </section>
 
-              <div className="game-studio-tabs" role="tablist" aria-label="游戏发布管理" data-active-index={studioMode === "drafts" ? 0 : 1}>
+              <div className="game-studio-tabs game-studio-tabs-3" role="tablist" aria-label="游戏发布管理" data-active-index={studioMode === "drafts" ? 0 : studioMode === "published" ? 1 : 2}>
                 <button type="button" className={studioMode === "drafts" ? "is-active" : ""} onClick={() => setStudioMode("drafts")}>草稿箱</button>
                 <button type="button" className={studioMode === "published" ? "is-active" : ""} onClick={() => setStudioMode("published")}>已发布</button>
+                <button type="button" className={studioMode === "localtest" ? "is-active" : ""} onClick={() => setStudioMode("localtest")}>本机测试</button>
               </div>
 
               {studioMode === "published" ? (
@@ -2736,6 +2810,16 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
                 ) : (
                   <div className="game-published-list">
                     {drafts.map(renderDraftStudioCard)}
+                  </div>
+                )
+              ) : null}
+
+              {studioMode === "localtest" ? (
+                localTestGames.length === 0 ? (
+                  <div className="game-empty">还没有本机测试的游戏。<br />在草稿里点「本机测试」，就会安装到这里，可反复玩，且会写入记忆、进入回传记录，但不会发布到市场。</div>
+                ) : (
+                  <div className="game-published-list">
+                    {localTestGames.map(renderLocalTestStudioCard)}
                   </div>
                 )
               ) : null}
@@ -2888,7 +2972,7 @@ export function GameHubApp({ onClose }: { onClose: () => void }) {
                 </div>
                 <div className="game-studio-panel game-publish-actions-panel">
                   <div className="game-studio-actions">
-                    <button type="button" onClick={previewDraft}><Play size={14} /> 试玩</button>
+                    <button type="button" onClick={localTestDraft}><Play size={14} /> 本机测试</button>
                     <button type="button" onClick={saveDraft}><Archive size={14} /> 存草稿</button>
                     <button type="button" className="is-primary" disabled={publishing} onClick={() => void publishDraft()}>
                       <Send size={14} />
