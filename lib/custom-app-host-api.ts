@@ -629,6 +629,7 @@ function serializeUserProfile(identity: NonNullable<ReturnType<typeof resolveUse
     gender: identity.gender,
     age: identity.age,
     occupation: identity.occupation,
+    appearance: identity.appearance,
   };
 }
 

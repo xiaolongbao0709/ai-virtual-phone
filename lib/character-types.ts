@@ -3,6 +3,7 @@ export type Character = {
   name: string;
   avatar: string | null; // data URL 或外部 URL
   persona: string;       // 人设
+  appearance?: string;   // 生图形象：用于 AI 生图时描述该角色长什么样（性别/发型/衣着等），让"谁是谁"更可控
   briefPersona?: string; // 简量版人设：注入到同世界有关系角色的「角色关系」marker，供对方了解 TA（防 OOC）
   briefPersonaUpdatedAt?: string; // 简介生成时间；早于 updatedAt 时编辑器提示「设定已更新，建议重新生成」
   wechatID?: string;     // 手机号格式的微信号

@@ -35,6 +35,8 @@ type ImageGenerationRequest = {
   novelaiSmea?: boolean;
   novelaiSmeaDyn?: boolean;
   novelaiEndpointMode?: "stream" | "normal";
+  /** 参与者外观描述（中文），翻译后拼入 prompt，让 NAI 区分「谁是谁」 */
+  participantAppearance?: string;
   /** Google Imagen 专属配置（provider=google-imagen 时使用） */
   googleKey?: string;
   googleModel?: string;
@@ -246,6 +248,20 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
             console.log("[NAI-PROMPT] translated:", { from: rawPrompt.slice(0, 80), to: finalUserPrompt.slice(0, 80), changed: finalUserPrompt !== rawPrompt });
         } catch (e) {
             console.log("[NAI-PROMPT] translate error:", e);
+        }
+    }
+
+    // 参与者外观描述（中文）→ 翻译后拼到 prompt 末尾，让 NAI 区分「谁是谁」
+    if (input.participantAppearance?.trim()) {
+        try {
+            const paRaw = input.participantAppearance.trim().slice(0, 500);
+            const paTranslated = containsCJK(paRaw) ? await translateToEnglish(paRaw) : paRaw;
+            if (paTranslated && paTranslated !== paRaw) {
+                console.log("[NAI-PROMPT] participantAppearance translated:", { from: paRaw.slice(0, 60), to: paTranslated.slice(0, 60) });
+            }
+            if (paTranslated) finalUserPrompt = `${finalUserPrompt}. ${paTranslated}`;
+        } catch (e) {
+            console.log("[NAI-PROMPT] participantAppearance translate error:", e);
         }
     }
 

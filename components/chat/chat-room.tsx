@@ -2606,7 +2606,14 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
         guard?: GenerationRunGuard,
     ): Promise<ChatMessage | null> => {
         if (!isPendingChatGeneratedImageMessage(message)) return Promise.resolve(null);
-        return generateAndApplyChatGeneratedImage(message, characterId || session.contactId, { signal: guard?.signal })
+        // 群聊传所有成员角色，单聊传当前角色；用于生图时注入「谁是谁」的外观
+        const participantIds = session.isGroup
+            ? (session.participantIds || [])
+            : (characterId || session.contactId ? [(characterId || session.contactId) as string] : []);
+        return generateAndApplyChatGeneratedImage(message, characterId || session.contactId, {
+            signal: guard?.signal,
+            participantIds,
+        })
             .catch(error => {
                 if (!isAbortLikeError(error)) {
                     console.warn("[ImageGeneration] Failed to generate chat image:", error);

@@ -1751,6 +1751,7 @@ function CharArchiveView({
   const [name, setName] = useState(char.name || "");
   const [persona, setPersona] = useState(char.persona || "");
   const [personality, setPersonality] = useState(char.personality || "");
+  const [appearance, setAppearance] = useState(char.appearance || "");
   const [briefPersona, setBriefPersona] = useState(char.briefPersona || "");
   const [briefBusy, setBriefBusy] = useState(false);
   const [briefError, setBriefError] = useState("");
@@ -1871,6 +1872,7 @@ function CharArchiveView({
         name: name.trim() || char.name || "UNNAMED",
         persona,
         personality: personality.trim() || undefined,
+        appearance: appearance.trim() || undefined,
         briefPersona: trimmedBrief || undefined,
         // 简介变动才刷新时间戳；未动则保留原值（供「设定已更新」过期提示判断）
         briefPersonaUpdatedAt: trimmedBrief
@@ -2148,6 +2150,30 @@ function CharArchiveView({
                 />
               ) : (
                 <p className="char-archive-p whitespace-pre-wrap break-words">{personality}</p>
+              )}
+            </div>
+          )}
+
+          {/* 生图形象 — 生图时描述长相，让「谁是谁」更可控 */}
+          {(isEditing || appearance.trim()) && (
+            <div className="char-log-entry mb-4 border-t border-dashed border-[#999] pt-3">
+              <div className="char-log-entry-header">
+                <span>APPEARANCE / 生图形象</span>
+              </div>
+              {isEditing ? (
+                <AutoResizingTextarea
+                  value={appearance}
+                  onChange={setAppearance}
+                  placeholder="描述这个角色长什么样，用于 AI 生图。例如：女生，黑色长发及腰，常穿白色连衣裙，温柔气质"
+                  minHeight={60}
+                  style={{
+                    width: "100%", background: "color-mix(in srgb, var(--c-input) 50%, transparent)",
+                    border: "1px dashed #666", padding: 8, fontSize: "calc(12px*var(--app-text-scale,1))", lineHeight: 1.5,
+                    fontFamily: "inherit", marginTop: 8
+                  }}
+                />
+              ) : (
+                <p className="char-archive-p whitespace-pre-wrap break-words">{appearance}</p>
               )}
             </div>
           )}

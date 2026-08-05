@@ -16,6 +16,7 @@ export type UserIdentity = {
     age: string;
     occupation: string;
     customSettings: string;
+    appearance?: string; // 生图形象：用于 AI 生图时描述"你"长什么样（性别/发型/衣着等）
 };
 
 const DEFAULT_IDENTITIES: UserIdentity[] = [
@@ -321,6 +322,17 @@ export function UserIdentitySettings() {
                                                 onChange={(e) => updateIdentity(identity.id, { bio: e.target.value })}
                                                 placeholder="简单描述一下自己，这会作为AI了解您的基础背景..."
                                                 rows={3}
+                                                className="ui-textarea"
+                                            />
+                                        </div>
+
+                                        <div className="flex flex-col gap-1">
+                                            <label className="menu-desc ml-1">生图形象 (Appearance)</label>
+                                            <textarea
+                                                value={identity.appearance || ""}
+                                                onChange={(e) => updateIdentity(identity.id, { appearance: e.target.value })}
+                                                placeholder="用于 AI 生图时描述「你」长什么样（性别/发型/衣着/气质）。例如：女生，黑色长发及肩，常穿浅色连衣裙。留空则仅按上方性别生成。"
+                                                rows={2}
                                                 className="ui-textarea"
                                             />
                                         </div>

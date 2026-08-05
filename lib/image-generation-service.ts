@@ -637,6 +637,7 @@ async function generateImageViaServerOrProxy(params: {
 async function generateImageViaServer(params: {
   settings: ImageGenerationSettings;
   prompt: string;
+  participantAppearance?: string;
   referenceImageDataUrl: string | null;
   signal?: AbortSignal;
 }): Promise<ImageGenerationApiResponse> {
@@ -688,6 +689,8 @@ async function generateImageViaServer(params: {
         novelaiSmea: settings.novelai.smea,
         novelaiSmeaDyn: settings.novelai.smeaDyn,
         novelaiEndpointMode: settings.novelai.endpointMode,
+        // 参与者外观（中文），服务端翻译后注入 NAI prompt，让「谁是谁」可控
+        participantAppearance: params.participantAppearance || undefined,
       }),
     });
     throwIfAborted(signal);
@@ -774,6 +777,8 @@ export async function generateImageFromConfiguredApi(params: {
   useReferenceImage?: boolean;
   settings?: ImageGenerationSettings;
   signal?: AbortSignal;
+  /** 参与合影的角色/用户外观描述（中文），注入 prompt 让 NAI 区分「谁是谁」 */
+  participantAppearance?: string;
 }): Promise<ImageGenerationResult | null> {
   const settings = params.settings ?? loadImageGenerationSettings();
   if (!settings.enabled) return null;
@@ -797,6 +802,7 @@ export async function generateImageFromConfiguredApi(params: {
     const data = await serializeNai(() => generateImageViaServer({
       settings,
       prompt: description,
+      participantAppearance: params.participantAppearance,
       referenceImageDataUrl: null,
       signal: params.signal,
     }));
