@@ -261,7 +261,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
         ...diag,
       }));
       return { status: 502, body: {
-        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 600)}`,
+        error: `NovelAI API 错误 ${res.status}: ${errText.slice(0, 400)} [DIAG: model=${diag.model} size=${diag.size} promptLen=${diag.promptLen} prefixLen=${diag.prefixLen} suffixLen=${diag.suffixLen} steps=${diag.steps} sampler=${diag.sampler} bodySize=${diag.bodySize} hasSm=${diag.hasSm}]`,
         _diag: {
           promptPreview: finalPrompt.slice(0, 200),
           model: diag.model,
