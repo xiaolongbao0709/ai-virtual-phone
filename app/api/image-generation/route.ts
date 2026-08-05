@@ -245,6 +245,7 @@ async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise
         dynamic_thresholding: false,
         legacy: false,
         quality_toggle: true,
+        unsafe: true,
         sm: !!input.novelaiSmeaDyn,
         sm_dyn: !!input.novelaiSmeaDyn,
         uncond_scale: 1,
