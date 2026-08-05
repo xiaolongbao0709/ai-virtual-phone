@@ -1,6 +1,7 @@
 import { saveChatImageToIndexedDB } from "./chat-asset-storage";
 import { syncChatGeneratedImagePromptText, updateChatMessage, type ChatMessage } from "./chat-storage";
 import { generatedImageFilename, generateImageFromConfiguredApi } from "./image-generation-service";
+import { loadImageGenerationSettings } from "./settings-storage";
 import { updateMomentPost } from "./moments-storage";
 import type { MomentPost } from "./moments-types";
 
@@ -50,11 +51,14 @@ export async function generateAndApplyChatGeneratedImage(
     }
 
     try {
+        // 聊天流程中触发的生图：强制 enabled=true（与测试生图按钮行为一致）。
+        // 用户已通过 [照片:] 指令明确要求生图，不应因前端开关未打开而静默失败。
         const generated = await generateImageFromConfiguredApi({
             description,
             characterId,
             useReferenceImage: message.mediaData?.useReferenceImage === true,
             signal: options?.signal,
+            settings: { ...loadImageGenerationSettings(), enabled: true },
         });
         if (!generated) throw new Error("生图配置未启用或不完整");
 
@@ -111,6 +115,7 @@ export async function retryMomentGeneratedPhoto(post: MomentPost, nextDescriptio
             description,
             characterId: post.authorType === "character" ? post.authorId : undefined,
             useReferenceImage: post.photoUseReferenceImage === true,
+            settings: { ...loadImageGenerationSettings(), enabled: true },
         });
         if (!generated) throw new Error("生图配置未启用或不完整");
 
