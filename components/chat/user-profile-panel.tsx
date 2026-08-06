@@ -23,6 +23,7 @@ import { loadChatContacts } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { triggerImmediatePost } from "@/lib/moments-engine";
 import type { Character } from "@/lib/character-types";
+import { CharacterAlbumPage } from "./character-album-page";
 import { requestNotificationPermission } from "@/lib/browser-notification";
 import { kvGet, kvSet, kvRemove } from "@/lib/kv-db";
 import { formatWalletAmount, getWalletBalance, loadWalletState, WALLET_UPDATED_EVENT } from "@/lib/wallet-storage";
@@ -46,6 +47,7 @@ import {
     ThumbsUp,
     Trash2,
     User,
+    Image as ImageIcon,
     type LucideIcon,
 } from "lucide-react";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
@@ -695,6 +697,7 @@ function ApiLogViewer({ onBack }: { onBack: () => void }) {
    ══════════════════════════════════════════ */
 function InlineMomentsSettings({ onBack }: { onBack: () => void }) {
     const [config, setConfig] = useState<MomentsInteractionConfig>(loadMomentsConfig);
+    const [showAlbumFor, setShowAlbumFor] = useState<{ id: string; name: string } | null>(null);
     const [editingBilingualPrompt, setEditingBilingualPrompt] = useState(false);
     const [bilingualPromptDraft, setBilingualPromptDraft] = useState(config.bilingualTranslationPrompt);
     const [showCharPicker, setShowCharPicker] = useState(false);
@@ -755,6 +758,16 @@ function InlineMomentsSettings({ onBack }: { onBack: () => void }) {
         window.addEventListener("moments-immediate-post-done", handler);
         return () => window.removeEventListener("moments-immediate-post-done", handler);
     }, []);
+
+    if (showAlbumFor) {
+        return (
+            <CharacterAlbumPage
+                characterId={showAlbumFor.id}
+                characterName={showAlbumFor.name}
+                onBack={() => setShowAlbumFor(null)}
+            />
+        );
+    }
 
     return (
         <PageShell title="朋友圈互动设置" onBack={onBack} className="absolute inset-0 z-[100]">
@@ -936,6 +949,14 @@ function InlineMomentsSettings({ onBack }: { onBack: () => void }) {
                                 <span className="menu-label">{c.char.name}</span>
                             </div>
                             <div className="menu-right">
+                                <button
+                                    type="button"
+                                    className="ui-link-btn"
+                                    aria-label={`查看 ${c.char.name} 的相册`}
+                                    onClick={() => setShowAlbumFor({ id: c.characterId, name: c.char.name })}
+                                >
+                                    <ImageIcon size={18} />
+                                </button>
                                 <Toggle
                                     checked={!disabledAutoPostIds.has(c.characterId)}
                                     onChange={checked => toggleAutoPost(c.characterId, checked)}
