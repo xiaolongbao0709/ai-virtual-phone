@@ -1,5 +1,5 @@
 // lib/mascot-tools.ts
-// 小卷工具系统：8 个套件 + 39 个细粒度工具，支持文本协议和原生协议双轨。
+// 小卷工具系统：9 个套件 + 43 个细粒度工具，支持文本协议和原生协议双轨。
 //
 // 套件设计（默认只暴露 loader，按需展开）：
 //   - 角色卡套件 (character_pack)        — 3 个子工具
@@ -10,6 +10,7 @@
 //   - 图像处理套件 (image_pack)          — 10 个子工具
 //   - 桌面组件套件 (widget_pack)         — 7 个子工具
 //   - 世界关系网套件 (world_pack)        — 3 个子工具
+//   - 聊天控制套件 (chat_pack)           — 4 个子工具
 //   - 导航工具 (navigate)                — 1 个独立工具（直接暴露）
 
 import type { LlmToolDefinition } from "./llm-provider-adapter";
@@ -351,6 +352,57 @@ const CREATE_WORLD_RELATIONSHIP_SCHEMA = {
         label: { type: "string", description: "关系标签，如「死党」「恋人」「宿敌」「师徒」等" },
     },
     required: ["worldName", "fromCharacterName", "toCharacterName", "label"],
+    additionalProperties: false,
+};
+
+// ── 聊天控制工具 ──
+const READ_CHAT_HISTORY_SCHEMA = {
+    type: "object",
+    properties: {
+        limit: { type: "number", description: "读取最近多少条消息，默认10" },
+    },
+    additionalProperties: false,
+};
+
+const EDIT_CHAT_MESSAGE_SCHEMA = {
+    type: "object",
+    properties: {
+        messageId: { type: "string", description: "要编辑的消息ID" },
+        newContent: { type: "string", description: "新的消息内容（会替换原消息的全部文本）" },
+    },
+    required: ["messageId", "newContent"],
+    additionalProperties: false,
+};
+
+const UPDATE_CHARACTER_AVATAR_SCHEMA = {
+    type: "object",
+    properties: {
+        characterName: { type: "string", description: "角色名（必须已存在）" },
+        avatarUrl: { type: "string", description: "新头像URL（http/https链接或data:URL）。可从「图像处理套件→生成图像素材」+「上传图床」获取链接。" },
+    },
+    required: ["characterName", "avatarUrl"],
+    additionalProperties: false,
+};
+
+const CREATE_GROUP_EVENT_SCHEMA = {
+    type: "object",
+    properties: {
+        groupName: { type: "string", description: "群聊名称（必须已存在的群聊）" },
+        messages: {
+            type: "array",
+            description: "按顺序发送的脚本消息列表",
+            items: {
+                type: "object",
+                properties: {
+                    characterName: { type: "string", description: "发这条消息的角色名（必须在群成员中）" },
+                    content: { type: "string", description: "消息内容（可按角色人设风格写）" },
+                },
+                required: ["characterName", "content"],
+                additionalProperties: false,
+            },
+        },
+    },
+    required: ["groupName", "messages"],
     additionalProperties: false,
 };
 
@@ -800,6 +852,18 @@ export const MASCOT_TOOL_PACKAGES: MascotToolPackage[] = [
             { name: "创建角色关系", description: "在画布上为两个角色之间生成连线并填好关系标签（如「死党」「恋人」「宿敌」「师徒」等）。", parameterSchema: CREATE_WORLD_RELATIONSHIP_SCHEMA },
         ],
     },
+    {
+        id: "chat_pack",
+        label: "聊天控制套件",
+        description: "读/写聊天记录、更新角色头像、编排群聊剧本。可读取当前会话最近消息做润色或总结，修改已有消息，把生图结果设为角色头像，或在群聊中按脚本让多角色连续发消息。",
+        subTools: [
+            { name: "读取聊天记录", description: "读取当前聊天会话的最近 N 条消息（user+assistant），用于总结剧情、润色回复、检查上下文。", parameterSchema: READ_CHAT_HISTORY_SCHEMA },
+            { name: "编辑聊天消息", description: "修改指定消息的内容（按 messageId 定位）。用于帮用户润色/重写某条回复或修正角色卡壳的回复。", parameterSchema: EDIT_CHAT_MESSAGE_SCHEMA },
+            { name: "更新角色头像", description: "把图片链接（http/https/data:URL）直接设为指定角色的头像。配合「图像处理套件」生成+上传后使用。", parameterSchema: UPDATE_CHARACTER_AVATAR_SCHEMA },
+            { name: "创建群聊事件", description: "在指定群聊中按脚本顺序让多个角色连续发消息。一条调用即可编排修罗场、推进剧情等群戏。", parameterSchema: CREATE_GROUP_EVENT_SCHEMA },
+        ],
+        usageGuide: "=== 聊天控制套件使用指南 ===\n\n【读取聊天记录】读取当前手机里正在聊天的会话最近消息。\n- 不传 limit 时默认读最近 10 条\n- 自动过滤系统/工具消息，只保留用户和角色的对话\n- 例子：[执行动作:读取聊天记录({\"limit\":15})]\n\n【编辑聊天消息】修改已有消息的内容。\n- messageId 从「读取聊天记录」的返回结果中获取\n- 编辑后请告诉用户改了什么\n- 例子：[执行动作:编辑聊天消息({\"messageId\":\"msg_abc123\",\"newContent\":\"（润色后的版本）\"})]\n\n【更新角色头像】把图片设为角色头像。\n- avatarUrl 需要是 data: 或 http/https 链接，不能是本地路径\n- 优先先用「图像处理套件→上传图床」把生图转成公开 URL 再调用本工具\n- 例子：[执行动作:更新角色头像({\"characterName\":\"林晚\",\"avatarUrl\":\"https://i.imgur.com/xxx.png\"})]\n\n【创建群聊事件】在群聊中按剧本让角色连续发消息。\n- groupName 必须是已创建的群聊名\n- messages 数组按顺序发送，每条指定 characterName+content\n- 如果角色不在群成员中会提示\n- 例子：[执行动作:创建群聊事件({\"groupName\":\"修罗场\",\"messages\":[{\"characterName\":\"季言浅\",\"content\":\"你们俩...什么时候的事？\"},{\"characterName\":\"苏棠\",\"content\":\"不关你的事。\"}]})]",
+    },
 ];
 
 // 导航是独立工具（不在套件里），直接暴露
@@ -954,6 +1018,10 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "创建世界": "mascot_create_target_world",
     "导入角色到世界": "mascot_import_character_to_world",
     "创建角色关系": "mascot_create_world_relationship",
+    "读取聊天记录": "mascot_read_chat_history",
+    "编辑聊天消息": "mascot_edit_chat_message",
+    "更新角色头像": "mascot_update_character_avatar",
+    "创建群聊事件": "mascot_create_group_event",
 };
 
 const MASCOT_NATIVE_LOADER_NAMES: Record<string, string> = {
@@ -965,6 +1033,7 @@ const MASCOT_NATIVE_LOADER_NAMES: Record<string, string> = {
     regex_pack: "mascot_load_regex_pack",
     widget_pack: "mascot_load_widget_pack",
     world_pack: "mascot_load_world_pack",
+    chat_pack: "mascot_load_chat_pack",
 };
 
 export function getMascotNativeToolName(displayName: string): string {
@@ -1105,6 +1174,12 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "创建世界": return await handleCreateTargetWorld(call.args);
             case "导入角色到世界": return await handleImportCharacterToWorld(call.args);
             case "创建角色关系": return await handleCreateWorldRelationship(call.args);
+
+            // ─── 聊天控制 ───
+            case "读取聊天记录": return await handleReadChatHistory(call.args);
+            case "编辑聊天消息": return await handleEditChatMessage(call.args);
+            case "更新角色头像": return await handleUpdateCharacterAvatar(call.args);
+            case "创建群聊事件": return await handleCreateGroupEvent(call.args);
 
             // ─── 导航 ───
             case "导航": return await handleNavigate(call.args);
@@ -2407,6 +2482,160 @@ async function handleCreateWorldRelationship(args: Record<string, unknown>): Pro
         success: true,
         data: `已在世界「${worldName}」中创建关系连线：「${fromCharacterName}」—${label}—「${toCharacterName}」`,
     };
+}
+
+// ── 聊天控制 Handlers ────────────────────────
+
+async function handleReadChatHistory(args: Record<string, unknown>): Promise<ToolResult> {
+    const limit = Math.min(Math.max((args.limit as number) || 10, 1), 50);
+    try {
+        const { getMascotPageContext } = await import("./mascot-context");
+        const { loadChatMessages } = await import("./chat-storage");
+        const ctx = getMascotPageContext();
+        const sessionId = ctx.fields?.sessionId as string | undefined;
+        if (!sessionId || sessionId === "mascot") {
+            return {
+                name: "读取聊天记录",
+                success: false,
+                error: sessionId === "mascot"
+                    ? "当前是小卷的对话，不是角色聊天。请先进入某个角色的聊天窗口。"
+                    : "未检测到当前聊天会话。请先进入一个角色聊天窗口。",
+            };
+        }
+        const msgs = (loadChatMessages(sessionId) || [])
+            .filter((m: Record<string, unknown>) => m.role === "user" || m.role === "assistant")
+            .slice(-limit);
+        if (msgs.length === 0) {
+            return { name: "读取聊天记录", success: true, data: "（暂无聊天消息）" };
+        }
+        const lines = msgs.map((m: Record<string, unknown>) => {
+            const sender = m.senderName || (m.role === "user" ? "用户" : "角色");
+            const content = String(m.content || "").slice(0, 500);
+            return `[${sender}] ${content}`;
+        });
+        return {
+            name: "读取聊天记录",
+            success: true,
+            data: `=== 最近 ${msgs.length} 条消息 (会话ID: ${sessionId}) ===\n${lines.join("\n")}`,
+        };
+    } catch (err) {
+        return { name: "读取聊天记录", success: false, error: (err as Error).message };
+    }
+}
+
+async function handleEditChatMessage(args: Record<string, unknown>): Promise<ToolResult> {
+    const messageId = String(args.messageId || "");
+    const newContent = String(args.newContent || "");
+    if (!messageId || !newContent) {
+        return { name: "编辑聊天消息", success: false, error: "messageId 和 newContent 都必填。" };
+    }
+    try {
+        const { editChatMessage } = await import("./chat-storage");
+        editChatMessage(messageId, newContent);
+        return {
+            name: "编辑聊天消息",
+            success: true,
+            data: `已编辑消息 ${messageId.slice(0, 12)}…，新内容：${newContent.slice(0, 80)}${newContent.length > 80 ? "…" : ""}`,
+        };
+    } catch (err) {
+        return { name: "编辑聊天消息", success: false, error: (err as Error).message };
+    }
+}
+
+async function handleUpdateCharacterAvatar(args: Record<string, unknown>): Promise<ToolResult> {
+    const characterName = String(args.characterName || "").trim();
+    const avatarUrl = String(args.avatarUrl || "").trim();
+    if (!characterName || !avatarUrl) {
+        return { name: "更新角色头像", success: false, error: "characterName 和 avatarUrl 都必填。" };
+    }
+    if (!avatarUrl.startsWith("data:") && !avatarUrl.startsWith("http://") && !avatarUrl.startsWith("https://")) {
+        return { name: "更新角色头像", success: false, error: "avatarUrl 必须是 data:、http:// 或 https:// 开头的链接。" };
+    }
+    try {
+        const { loadCharacters, saveCharacters } = await import("./character-storage");
+        const chars = loadCharacters();
+        const target = chars.find((c: { name: string }) => c.name === characterName);
+        if (!target) {
+            const names = chars.map((c: { name: string }) => c.name).join("、");
+            return {
+                name: "更新角色头像",
+                success: false,
+                error: `未找到角色「${characterName}」。现有角色：${names}`,
+            };
+        }
+        target.avatar = avatarUrl;
+        saveCharacters(chars);
+        return {
+            name: "更新角色头像",
+            success: true,
+            data: `已将「${characterName}」的头像更新为：${avatarUrl.slice(0, 80)}${avatarUrl.length > 80 ? "…" : ""}`,
+        };
+    } catch (err) {
+        return { name: "更新角色头像", success: false, error: (err as Error).message };
+    }
+}
+
+async function handleCreateGroupEvent(args: Record<string, unknown>): Promise<ToolResult> {
+    const groupName = String(args.groupName || "").trim();
+    const messages = args.messages as Array<{ characterName?: string; content?: string }> | undefined;
+    if (!groupName || !messages || !Array.isArray(messages) || messages.length === 0) {
+        return { name: "创建群聊事件", success: false, error: "groupName 和 messages（至少一条）都必填。" };
+    }
+    try {
+        const { loadChatSessions, pushChatMessage } = await import("./chat-storage");
+        const { loadCharacters } = await import("./character-storage");
+        const sessions = loadChatSessions();
+        const group = sessions.find((s: { isGroup?: boolean; groupName?: string }) => s.isGroup && s.groupName === groupName);
+        if (!group) {
+            const groupNames = sessions
+                .filter((s: { isGroup?: boolean; groupName?: string }) => s.isGroup)
+                .map((s: { groupName?: string }) => s.groupName || "未命名群")
+                .join("、");
+            return {
+                name: "创建群聊事件",
+                success: false,
+                error: groupNames
+                    ? `未找到群聊「${groupName}」。现有群聊：${groupNames}`
+                    : "未找到任何群聊。请先在联系人页面创建群聊。",
+            };
+        }
+        const chars = loadCharacters();
+        const participantIds: string[] = group.participantIds || [];
+        const results: string[] = [];
+        for (let i = 0; i < messages.length; i++) {
+            const m = messages[i];
+            const cName = String(m.characterName || "").trim();
+            const content = String(m.content || "").trim();
+            if (!cName || !content) {
+                results.push(`第${i + 1}条：characterName 或 content 为空，跳过`);
+                continue;
+            }
+            const char = chars.find((c: { name: string }) => c.name === cName);
+            if (!char) {
+                results.push(`第${i + 1}条：未找到角色「${cName}」，跳过`);
+                continue;
+            }
+            if (!participantIds.includes(char.id)) {
+                results.push(`第${i + 1}条：角色「${cName}」不在群「${groupName}」中，跳过`);
+                continue;
+            }
+            pushChatMessage({
+                sessionId: group.id,
+                role: "assistant",
+                content,
+                senderCharacterId: char.id,
+                senderName: char.name,
+            });
+            results.push(`第${i + 1}条：${cName}：「${content.slice(0, 40)}${content.length > 40 ? "…" : ""}」✅`);
+        }
+        return {
+            name: "创建群聊事件",
+            success: true,
+            data: `已在群聊「${groupName}」中触发 ${messages.length} 条脚本消息：\n${results.join("\n")}`,
+        };
+    } catch (err) {
+        return { name: "创建群聊事件", success: false, error: (err as Error).message };
+    }
 }
 
 // ── 导航 Handler ─────────────────────────────
