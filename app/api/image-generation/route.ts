@@ -522,7 +522,7 @@ export async function runNovelAIImageGeneration(input: ImageGenerationRequest): 
 // ── Google Imagen 服务端生图（OpenAI 兼容端点）─────────────────────
 const GOOGLE_IMAGEN_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/openai/images:generations";
 
-async function runGoogleImagenImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+export async function runGoogleImagenImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
   try {
     const apiKey = input.googleKey?.trim();
     const prompt = input.prompt?.trim();
@@ -588,7 +588,7 @@ async function runGoogleImagenImageGeneration(input: ImageGenerationRequest): Pr
 
 // ── 原有 OpenAI 兼容生图 ──────────────────────────────────────────
 
-async function runImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+export async function runImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
   try {
     const apiKey = input.apiKey?.trim();
     const baseUrl = input.baseUrl?.trim();

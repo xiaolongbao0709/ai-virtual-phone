@@ -796,7 +796,7 @@ function imageErrorToThrow(raw: string): never {
 }
 
 // 等待（可被外部 abort 中断），用于并发锁自动重试的间隔
-function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+export function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new DOMException("Aborted", "AbortError"));
