@@ -159,6 +159,26 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     });
     const allCharacters = loadCharacters();
 
+    // Listen for mascot navigation to sub-pages (album, moments-interaction, etc.)
+    useEffect(() => {
+        const onMeMode = (e: Event) => {
+            const subMode = (e as CustomEvent<{ subMode: string }>)?.detail?.subMode;
+            if (!subMode) return;
+            if (subMode === "moments-interaction") {
+                setShowMomentsSettings(true);
+            } else if (subMode === "album" || subMode.startsWith("album:")) {
+                const chars = loadCharacters();
+                const charId = subMode.startsWith("album:") ? subMode.slice("album:".length) : undefined;
+                const target = charId
+                    ? chars.find(c => c.id === charId)
+                    : chars[0];
+                if (target) setShowAlbumFor({ id: target.id, name: target.name });
+            }
+        };
+        window.addEventListener("mascot-navigate-me-mode", onMeMode);
+        return () => window.removeEventListener("mascot-navigate-me-mode", onMeMode);
+    }, []);
+
     useEffect(() => {
         setIdentity(resolveUserIdentity());
         const settings = loadChatAppSettings();

@@ -218,6 +218,7 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
             if (!mode) return;
             // mode format: "me" | "me:moments-interaction" | "me:album:charId"
             if (mode === "me" || mode.startsWith("me:")) {
+                sessionStorage.removeItem("mascot-settings-mode");
                 setActiveTab("me");
                 // Forward sub-page info so UserProfilePanel can auto-open the right section
                 if (mode !== "me") {
@@ -228,6 +229,12 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
             }
         };
         window.addEventListener("mascot-navigate-mode", onNavMode);
+        // 兜底：如果事件在组件挂载前就已 dispatch（从桌面跳转竞态），从 sessionStorage 读取
+        const pendingMode = sessionStorage.getItem("mascot-settings-mode");
+        if (pendingMode && (pendingMode === "me" || pendingMode.startsWith("me:"))) {
+            sessionStorage.removeItem("mascot-settings-mode");
+            setTimeout(() => onNavMode(new CustomEvent("mascot-navigate-mode", { detail: { mode: pendingMode } })), 50);
+        }
         return () => window.removeEventListener("mascot-navigate-mode", onNavMode);
     }, []);
 

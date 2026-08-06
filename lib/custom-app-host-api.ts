@@ -621,7 +621,8 @@ function resolveCustomAppUserIdentity(app: InstalledCustomApp, record: Record<st
   return resolveUserIdentity(characterId, `custom_app:${app.id}`) ?? resolveUserIdentity(characterId);
 }
 
-function serializeUserProfile(identity: NonNullable<ReturnType<typeof resolveUserIdentity>>): Record<string, unknown> {
+function serializeUserProfile(identity: NonNullable<ReturnType<typeof resolveUserIdentity>>, app?: InstalledCustomApp): Record<string, unknown> {
+  const canGenImage = !!app && (app.permissions ?? []).includes("ai.generateImage");
   return {
     id: identity.id,
     name: identity.name,
@@ -630,6 +631,7 @@ function serializeUserProfile(identity: NonNullable<ReturnType<typeof resolveUse
     age: identity.age,
     occupation: identity.occupation,
     appearance: identity.appearance,
+    faceLockUrl: canGenImage ? identity.faceLockUrl : undefined,
   };
 }
 
@@ -977,14 +979,14 @@ export function incrementCustomAppBadge(appId: string, delta = 1): number {
 
 export function readCustomAppUserProfile(app: InstalledCustomApp, record: Record<string, unknown>): Record<string, unknown> | null {
   const identity = resolveCustomAppUserIdentity(app, record);
-  return identity ? serializeUserProfile(identity) : null;
+  return identity ? serializeUserProfile(identity, app) : null;
 }
 
 export function readCustomAppUserPersona(app: InstalledCustomApp, record: Record<string, unknown>): Record<string, unknown> | null {
   const identity = resolveCustomAppUserIdentity(app, record);
   if (!identity) return null;
   return {
-    ...serializeUserProfile(identity),
+    ...serializeUserProfile(identity, app),
     bio: identity.bio,
     customSettings: identity.customSettings,
     text: formatUserPersona(identity),
@@ -1359,16 +1361,56 @@ export async function runCustomAppAiClassify(app: InstalledCustomApp, record: Re
   return { label, raw };
 }
 
-export async function generateCustomAppImage(app: InstalledCustomApp, record: Record<string, unknown>): Promise<Record<string, unknown>> {
+export async function generateCustomAppImage(
+  app: InstalledCustomApp,
+  record: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   const description = cleanText(record.prompt ?? record.description, 4000);
   if (!description) throw new Error("ai.generateImage 需要 prompt。");
   const characterId = cleanText(record.characterId, 160) || undefined;
   const useReferenceImage = record.useReferenceImage === true;
   const timeoutMs = optionalCustomAppTimeoutMs(record.timeoutMs);
-  const result = await withOptionalCustomAppTimeout(timeoutMs, "ai.generateImage", signal => (
-    generateImageFromConfiguredApi({ description, characterId, useReferenceImage, signal })
+
+  /* ===== 透传多人锁脸 / 场景参数 ===== */
+  const referenceImages = Array.isArray(record.referenceImages)
+    ? (record.referenceImages as unknown[])
+        .map((v) => (typeof v === "string" ? v.trim() : ""))
+        .filter((v) => v.startsWith("data:image/"))
+        .slice(0, 4)
+    : undefined;
+
+  const participants = Array.isArray(record.participants)
+    ? (record.participants as unknown[])
+        .filter((v): v is Record<string, unknown> => !!v && typeof v === "object")
+        .slice(0, 6)
+        .map((v) => ({
+          name: cleanText(v.name, 60),
+          anchor: cleanText(v.anchor, 60) || undefined,
+          action: cleanText(v.action, 160) || undefined,
+        }))
+        .filter((v) => !!v.name)
+    : undefined;
+
+  const participantAppearance = cleanText(record.participantAppearance, 2000) || undefined;
+  const sceneBackground = cleanText(record.sceneBackground, 500) || undefined;
+  const sceneLighting = cleanText(record.sceneLighting, 200) || undefined;
+  /* ======================================== */
+
+  const result = await withOptionalCustomAppTimeout(timeoutMs, "ai.generateImage", (signal) => (
+    generateImageFromConfiguredApi({
+      description,
+      characterId,
+      useReferenceImage,
+      signal,
+      referenceImages,
+      participants,
+      participantAppearance,
+      sceneBackground,
+      sceneLighting,
+    })
   ));
   if (!result) throw new Error("生图功能未配置或未启用，请先在小手机设置里配置生图 API。");
+
   return {
     ok: true,
     dataUrl: result.dataUrl,
@@ -1376,6 +1418,7 @@ export async function generateCustomAppImage(app: InstalledCustomApp, record: Re
     prompt: result.prompt,
     revisedPrompt: result.revisedPrompt,
     usedReferenceImage: result.usedReferenceImage,
+    usedReferenceImages: (result as { usedReferenceImages?: number }).usedReferenceImages,
   };
 }
 

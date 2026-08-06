@@ -2269,7 +2269,7 @@ async function handleNavigate(args: Record<string, unknown>): Promise<ToolResult
     if (page === "me") {
         const { mascotNavigate } = await import("./mascot-events");
         // 先跳到 chat 应用，再通过 mode 通知切换到 me 标签
-        mascotNavigate("chat", subpage ? `me:${subpage}${characterId ? `:${characterId}` : ""}` : "me");
+        mascotNavigate("me", subpage ? `me:${subpage}${characterId ? `:${characterId}` : ""}` : "me");
         let desc = "已跳转到「我」（个人中心）";
         if (subpage === "moments-interaction") desc = "已跳转到「朋友圈互动设置」";
         else if (subpage === "album") desc = characterId

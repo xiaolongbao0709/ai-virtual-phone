@@ -12,6 +12,8 @@ export type ImageGenerationResult = {
   mimeType: string;
   prompt: string;
   usedReferenceImage: boolean;
+  /** 本次实际送进去的参考图张数（角色锁脸图 + 参与者锁脸图，去重后） */
+  usedReferenceImages?: number;
   revisedPrompt?: string;
 };
 
@@ -869,6 +871,34 @@ export async function generateImageFromConfiguredApi(params: {
 
   const description = params.description.trim();
 
+  // ── 提取角色锁脸图（提前到公共部分，NAI 和 OAI 都能用）──
+  const reference = params.characterId ? settings.characterReferences[params.characterId] : undefined;
+  const rawReferenceImageDataUrl = params.useReferenceImage && reference?.assetId
+    ? await getChatImageFromIndexedDB(reference.assetId)
+    : null;
+  throwIfAborted(params.signal);
+  const referenceImageDataUrl = rawReferenceImageDataUrl
+    ? await normalizeReferenceImageForEdit(rawReferenceImageDataUrl)
+    : null;
+  throwIfAborted(params.signal);
+
+  /* ===== 合并：角色锁脸图排第一，再接参与者的脸，去重后截 4 张 ===== */
+  const mergedReferenceImages = (() => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const push = (v?: string | null) => {
+      const s = typeof v === "string" ? v.trim() : "";
+      if (!s.startsWith("data:image/") || seen.has(s)) return;
+      seen.add(s);
+      out.push(s);
+    };
+    push(referenceImageDataUrl);                    // ① 角色自己的锁脸图优先
+    (params.referenceImages ?? []).forEach(push);   // ② 再加用户等参与者
+    return out.slice(0, 4);
+  })();
+  const usedReferenceImagesCount = mergedReferenceImages.length;
+  /* ============================================================== */
+
   // ── Provider 路由：NAI vs OpenAI 兼容 ──
   if (settings.provider === "novelai") {
     const nai = settings.novelai;
@@ -887,7 +917,7 @@ export async function generateImageFromConfiguredApi(params: {
       settings,
       prompt: description,
       participantAppearance: params.participantAppearance,
-      referenceImages: params.referenceImages,
+      referenceImages: mergedReferenceImages,
       participants: params.participants,
       sceneBackground: params.sceneBackground,
       sceneLighting: params.sceneLighting,
@@ -907,7 +937,8 @@ export async function generateImageFromConfiguredApi(params: {
       blob,
       mimeType,
       prompt: description,
-      usedReferenceImage: false,
+      usedReferenceImage: Boolean(referenceImageDataUrl),
+      usedReferenceImages: usedReferenceImagesCount,
       revisedPrompt: data.revisedPrompt,
     };
   }
@@ -960,15 +991,6 @@ export async function generateImageFromConfiguredApi(params: {
   // ── OpenAI 兼容（原有逻辑）──
   if (!description || !settings.apiKey.trim() || !settings.baseUrl.trim() || !settings.model.trim()) return null;
 
-  const reference = params.characterId ? settings.characterReferences[params.characterId] : undefined;
-  const rawReferenceImageDataUrl = params.useReferenceImage && reference?.assetId
-    ? await getChatImageFromIndexedDB(reference.assetId)
-    : null;
-  throwIfAborted(params.signal);
-  const referenceImageDataUrl = rawReferenceImageDataUrl
-    ? await normalizeReferenceImageForEdit(rawReferenceImageDataUrl)
-    : null;
-  throwIfAborted(params.signal);
   const prompt = mergePrompt(description, settings.extraPrompt);
 
   // 统一走 Vercel 服务器中转（与 NAI 分支一致）：浏览器只连国内 Vercel，
@@ -979,8 +1001,8 @@ export async function generateImageFromConfiguredApi(params: {
     settings,
     prompt,
     referenceImageDataUrl,
+    referenceImages: mergedReferenceImages,
     participants: params.participants,
-    referenceImages: params.referenceImages,
     sceneBackground: params.sceneBackground,
     sceneLighting: params.sceneLighting,
     signal: params.signal,
@@ -999,6 +1021,7 @@ export async function generateImageFromConfiguredApi(params: {
     mimeType,
     prompt,
     usedReferenceImage: Boolean(referenceImageDataUrl),
+    usedReferenceImages: usedReferenceImagesCount,
     revisedPrompt: data.revisedPrompt,
   };
 }
