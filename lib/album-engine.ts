@@ -8,11 +8,9 @@ import {
     loadRegexes,
     loadImageGenerationSettings,
     resolveUserIdentity,
-    type ApiConfig,
-    type PresetConfig,
-    type RegexConfig,
-    type UserIdentity,
 } from "./settings-storage";
+import type { ApiConfig, PresetConfig, RegexConfig } from "./settings-types";
+import type { UserIdentity } from "@/components/settings/user-identity";
 import { loadCharacters } from "./character-storage";
 import { generateImageFromConfiguredApi } from "./image-generation-service";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";

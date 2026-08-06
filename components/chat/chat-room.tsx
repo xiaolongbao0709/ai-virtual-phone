@@ -618,6 +618,12 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onStopGeneration: () => void;
     onTriggerAIResponse: () => void;
 	onSendSticker: (name: string, url?: string) => void;
+    // 导演对讲机
+    showNarratorDialog: boolean;
+    narratorText: string;
+    setNarratorText: (text: string) => void;
+    setShowNarratorDialog: (show: boolean) => void;
+    onInjectNarration: (text: string) => void;
 }>(function ChatTextInputBar({
     characterName,
     characterId,
@@ -649,6 +655,12 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onStopGeneration,
     onTriggerAIResponse,
     onSendSticker,
+    // 导演对讲机
+    showNarratorDialog,
+    narratorText,
+    setNarratorText,
+    setShowNarratorDialog,
+    onInjectNarration,
 }, ref) {
     const [inputText, setInputText] = useState("");
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -701,7 +713,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
 
     const panelOpen = showEmojiPanel || showStickerPanel || showPlusMenu;
     const plusMenuItems = [
-        { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="10" y1="10" x2="14" y2="10" /></svg>, label: "召唤小卷", onClick: () => { setShowPlusMenu(false); setShowNarratorDialog(true); } },
+        { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="10" y1="10" x2="14" y2="10" /></svg>, label: "召唤小卷", onClick: () => { onClosePanels(); setShowNarratorDialog(true); } },
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>, label: "照片墙", onClick: () => onOpenRichModal("photo") },
         { icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="7" y1="8" x2="17" y2="8" /><line x1="7" y1="12" x2="14" y2="12" /><line x1="7" y1="16" x2="11" y2="16" /></svg>, label: "文字图片", onClick: () => onOpenRichModal("text_photo") },
         { icon: <AlertCircle size={22} strokeWidth={1.5} color="var(--c-text)" />, label: "系统指令", onClick: () => onOpenRichModal("system_instruction") },
@@ -868,7 +880,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                             if (e.key === "Enter" && !e.shiftKey) {
                                 e.preventDefault();
                                 if (narratorText.trim()) {
-                                    pushChatMessage({ sessionId: session.id, role: "system", content: "📖 " + narratorText.trim() });
+                                    onInjectNarration(narratorText.trim());
                                     setNarratorText("");
                                     setShowNarratorDialog(false);
                                 }
@@ -885,7 +897,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                         <button
                             onClick={() => {
                                 if (narratorText.trim()) {
-                                    pushChatMessage({ sessionId: session.id, role: "system", content: "📖 " + narratorText.trim() });
+                                    onInjectNarration(narratorText.trim());
                                     setNarratorText("");
                                     setShowNarratorDialog(false);
                                 }
@@ -5936,6 +5948,11 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
                 onStopGeneration={clearStuckGeneration}
                 onTriggerAIResponse={triggerAIResponse}
                 onSendSticker={(name, url) => { setShowStickerPanel(false); sendRichMessage("sticker", { label: name, stickerUrl: url }); }}
+                showNarratorDialog={showNarratorDialog}
+                narratorText={narratorText}
+                setNarratorText={setNarratorText}
+                setShowNarratorDialog={setShowNarratorDialog}
+                onInjectNarration={(text) => pushChatMessage({ sessionId: session.id, role: "system", content: "📖 " + text })}
             />
             ))}
 

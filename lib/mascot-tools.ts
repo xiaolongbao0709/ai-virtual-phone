@@ -2661,9 +2661,9 @@ async function handleCreateWorldRelationship(args: Record<string, unknown>): Pro
 async function handleReadChatHistory(args: Record<string, unknown>): Promise<ToolResult> {
     const limit = Math.min(Math.max((args.limit as number) || 10, 1), 50);
     try {
-        const { getMascotPageContext } = await import("./mascot-context");
+        const { getMascotContext } = await import("./mascot-context");
         const { loadChatMessages } = await import("./chat-storage");
-        const ctx = getMascotPageContext();
+        const ctx = getMascotContext();
         const sessionId = ctx.fields?.sessionId as string | undefined;
         if (!sessionId || sessionId === "mascot") {
             return {
@@ -3002,9 +3002,9 @@ async function handleInjectNarratorEvent(args: Record<string, unknown>): Promise
     };
 
     try {
-        const { getMascotPageContext } = await import("./mascot-context");
+        const { getMascotContext } = await import("./mascot-context");
         const { pushChatMessage } = await import("./chat-storage");
-        const ctx = getMascotPageContext();
+        const ctx = getMascotContext();
         const sessionId = ctx.fields?.sessionId as string | undefined;
         if (!sessionId || sessionId === "mascot") {
             return {
