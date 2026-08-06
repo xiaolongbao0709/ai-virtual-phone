@@ -216,7 +216,8 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
     const fallbackPhotoDescription = post.photoDescription && !post.photoUrl
         ? post.photoDescription
         : null;
-    const canRetryPhoto = Boolean(fallbackPhotoDescription);
+    const photoMissing = !resolvedPhotoUrl && Boolean(post.photoUrl);
+    const canRetryPhoto = Boolean(post.photoDescription?.trim());
     const canRegeneratePhoto = Boolean(resolvedPhotoUrl)
         && Boolean(post.photoUrl)
         && Boolean(post.photoDescription?.trim())
@@ -327,6 +328,26 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
 
             {/* Photo area */}
             <div className="feed-post-media mb-5 w-full flex flex-col gap-2">
+                {photoMissing && (
+                    <div className="feed-post-photo-missing flex items-center gap-2 ts-13 opacity-80 text-[var(--c-icon)]">
+                        <span>图片已失效或已删除</span>
+                        {canRetryPhoto && (
+                            <button
+                                type="button"
+                                className="feed-post-photo-retry-btn"
+                                disabled={photoRegenerating}
+                                aria-label="重新生成朋友圈图片"
+                                onClick={e => {
+                                    e.stopPropagation();
+                                    openPhotoPromptEditor();
+                                }}
+                            >
+                                <RefreshCw size={14} className={photoRegenerating ? "is-spinning" : undefined} />
+                                <span className="ml-1 ts-12">重新生成</span>
+                            </button>
+                        )}
+                    </div>
+                )}
                 {resolvedPhotoUrl && (
                     <MediaImageWithPreview
                         url={resolvedPhotoUrl}
