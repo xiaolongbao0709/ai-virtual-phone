@@ -8,7 +8,7 @@ import {
     loadImageGenerationSettings,
     saveImageGenerationSettings,
 } from "@/lib/settings-storage";
-import { loadCharacters } from "@/lib/character-storage";
+import { loadCharacters, saveCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import { getChatImageFromIndexedDB, saveChatImageToIndexedDB } from "@/lib/chat-asset-storage";
 import {
@@ -611,6 +611,15 @@ export function ImageGenerationSettings() {
             delete next[characterId];
             return next;
         });
+    };
+
+    // 更新角色的生图提示词（appearance），同步持久化
+    const updateCharacterAppearance = (characterId: string, appearance: string) => {
+        const updated = characters.map(c =>
+            c.id === characterId ? { ...c, appearance } : c
+        );
+        setCharacters(updated);
+        saveCharacters(updated);
     };
 
     const isNai = settings.provider === "novelai";
@@ -1432,52 +1441,65 @@ export function ImageGenerationSettings() {
                     ) : characters.map(character => {
                         const preview = referencePreviews[character.id];
                         return (
-                            <div key={character.id} className="menu-item">
-                                <span className="h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-[var(--c-input)]">
-                                    {preview ? (
-                                        <img src={preview} alt="" className="h-full w-full object-cover" />
-                                    ) : character.avatar ? (
-                                        <img src={character.avatar} alt="" className="h-full w-full object-cover" />
-                                    ) : (
-                                        <span className="flex h-full w-full items-center justify-center ts-13 font-semibold text-[var(--c-icon)]">
-                                            {character.name.slice(0, 1)}
-                                        </span>
-                                    )}
-                                </span>
-                                <span className="min-w-0 flex flex-1 flex-col">
-                                    <span className="menu-label truncate">{character.name}</span>
-                                    <span className="menu-desc truncate">{preview ? "已上传参考图" : "未上传参考图"}</span>
-                                </span>
-                                <span className="menu-right flex gap-2">
-                                    <button
-                                        type="button"
-                                        className="ui-link-btn"
-                                        aria-label={`上传 ${character.name} 的参考图`}
-                                        onClick={() => {
-                                            const input = document.createElement("input");
-                                            input.type = "file";
-                                            input.accept = "image/*";
-                                            input.onchange = async () => {
-                                                const file = input.files?.[0];
-                                                if (file) await uploadReference(character.id, file);
-                                            };
-                                            input.click();
-                                        }}
-                                    >
-                                        <Upload size={18} />
-                                    </button>
-                                    {preview && (
+                            <div key={character.id} className="menu-item flex-col items-stretch gap-2">
+                                <div className="flex w-full items-center">
+                                    <span className="h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-[var(--c-input)]">
+                                        {preview ? (
+                                            <img src={preview} alt="" className="h-full w-full object-cover" />
+                                        ) : character.avatar ? (
+                                            <img src={character.avatar} alt="" className="h-full w-full object-cover" />
+                                        ) : (
+                                            <span className="flex h-full w-full items-center justify-center ts-13 font-semibold text-[var(--c-icon)]">
+                                                {character.name.slice(0, 1)}
+                                            </span>
+                                        )}
+                                    </span>
+                                    <span className="min-w-0 flex flex-1 flex-col">
+                                        <span className="menu-label truncate">{character.name}</span>
+                                        <span className="menu-desc truncate">{preview ? "已上传参考图" : "未上传参考图"}</span>
+                                    </span>
+                                    <span className="menu-right flex gap-2">
                                         <button
                                             type="button"
                                             className="ui-link-btn"
-                                            data-variant="danger"
-                                            aria-label={`删除 ${character.name} 的参考图`}
-                                            onClick={() => removeReference(character.id)}
+                                            aria-label={`上传 ${character.name} 的参考图`}
+                                            onClick={() => {
+                                                const input = document.createElement("input");
+                                                input.type = "file";
+                                                input.accept = "image/*";
+                                                input.onchange = async () => {
+                                                    const file = input.files?.[0];
+                                                    if (file) await uploadReference(character.id, file);
+                                                };
+                                                input.click();
+                                            }}
                                         >
-                                            <Trash2 size={18} />
+                                            <Upload size={18} />
                                         </button>
-                                    )}
-                                </span>
+                                        {preview && (
+                                            <button
+                                                type="button"
+                                                className="ui-link-btn"
+                                                data-variant="danger"
+                                                aria-label={`删除 ${character.name} 的参考图`}
+                                                onClick={() => removeReference(character.id)}
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        )}
+                                    </span>
+                                </div>
+                                {/* 生图提示词 / 形象描述 */}
+                                <div className="flex flex-col gap-1 pl-[calc(2.75rem+0.5rem)]">
+                                    <span className="ts-11 text-[var(--c-icon)] opacity-70">生图提示词（画风 / 构图 / 着装）</span>
+                                    <textarea
+                                        className="w-full rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-secondary)] px-3 py-2 ts-12 text-[var(--c-text)] placeholder-[var(--c-icon)] opacity-80 focus:border-[var(--c-accent)] focus:outline-none resize-none"
+                                        rows={2}
+                                        placeholder={`描述 ${character.name} 的生图形象，如：黑长直、白裙、动漫风格…`}
+                                        value={character.appearance || ""}
+                                        onChange={(e) => updateCharacterAppearance(character.id, e.target.value)}
+                                    />
+                                </div>
                             </div>
                         );
                     })}
