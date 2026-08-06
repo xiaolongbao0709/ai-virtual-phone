@@ -1,5 +1,5 @@
 // lib/mascot-tools.ts
-// 小卷工具系统：9 个套件 + 43 个细粒度工具，支持文本协议和原生协议双轨。
+// 小卷工具系统：10 个套件 + 48 个细粒度工具，支持文本协议和原生协议双轨。
 //
 // 套件设计（默认只暴露 loader，按需展开）：
 //   - 角色卡套件 (character_pack)        — 3 个子工具
@@ -11,6 +11,7 @@
 //   - 桌面组件套件 (widget_pack)         — 7 个子工具
 //   - 世界关系网套件 (world_pack)        — 3 个子工具
 //   - 聊天控制套件 (chat_pack)           — 4 个子工具
+//   - 长期记忆套件 (memory_pack)          — 5 个子工具
 //   - 导航工具 (navigate)                — 1 个独立工具（直接暴露）
 
 import type { LlmToolDefinition } from "./llm-provider-adapter";
@@ -403,6 +404,75 @@ const CREATE_GROUP_EVENT_SCHEMA = {
         },
     },
     required: ["groupName", "messages"],
+    additionalProperties: false,
+};
+
+// ── 长期记忆工具 ──
+const MEMORY_SEARCH_SCHEMA = {
+    type: "object",
+    properties: {
+        keyword: { type: "string", description: "搜索关键词。可搜索记忆内容和标签。" },
+        layer: { type: "string", enum: ["core", "long_term"], description: "记忆层级筛选。不传则搜索全部。" },
+        relatedTo: { type: "string", description: "关联的角色名。不传则搜索所有角色（含 default=关于用户本身）。" },
+        tags: { type: "array", items: { type: "string" }, description: "按标签筛选（如[\"偏好\",\"饮食\"]）。" },
+        limit: { type: "number", description: "返回条数上限，默认 20。" },
+    },
+    additionalProperties: false,
+};
+
+const MEMORY_WRITE_SCHEMA = {
+    type: "object",
+    properties: {
+        layer: { type: "string", enum: ["core", "long_term"], description: "记忆层级。core=核心记忆（仅用户明确要求时使用），long_term=长期记忆（默认）。" },
+        content: { type: "string", description: "记忆内容。简洁明了的一句话/短段落。" },
+        tags: { type: "array", items: { type: "string" }, description: "分类标签，如 [\"偏好\",\"饮食\"]、[\"事件\",\"旅行\"]、[\"承诺\"]。" },
+        relatedTo: { type: "string", description: "关联的角色名。关于用户本身填 \"default\"。" },
+        confidence: { type: "number", description: "置信度 0~1。自动识别时 0.6~0.9，用户明确表达时 1.0。默认 0.8。" },
+    },
+    required: ["content"],
+    additionalProperties: false,
+};
+
+const MEMORY_UPDATE_SCHEMA = {
+    type: "object",
+    properties: {
+        entryId: { type: "string", description: "要更新的记忆条目 entry_id（从「读取记忆」结果中获取）。" },
+        content: { type: "string", description: "新的记忆内容（覆盖原有内容）。" },
+        tags: { type: "array", items: { type: "string" }, description: "新的标签列表（覆盖原有标签）。" },
+        layer: { type: "string", enum: ["core", "long_term"], description: "修改记忆层级（可选）。" },
+    },
+    required: ["entryId"],
+    additionalProperties: false,
+};
+
+const MEMORY_DELETE_SCHEMA = {
+    type: "object",
+    properties: {
+        entryId: { type: "string", description: "要删除的条目 entry_id。与 query 二选一。" },
+        query: { type: "string", description: "按关键词匹配删除。entryId 优先。被匹配到的条目全部删除，请谨慎使用。" },
+    },
+    additionalProperties: false,
+};
+
+const MEMORY_SUMMARIZE_SCHEMA = {
+    type: "object",
+    properties: {
+        entries: {
+            type: "array",
+            description: "要写入的总结条目列表",
+            items: {
+                type: "object",
+                properties: {
+                    layer: { type: "string", enum: ["core", "long_term"], description: "记忆层级" },
+                    content: { type: "string", description: "总结后的记忆内容" },
+                    tags: { type: "array", items: { type: "string" }, description: "分类标签" },
+                    relatedTo: { type: "string", description: "关联角色，默认 \"default\"" },
+                },
+                required: ["layer", "content"],
+            },
+        },
+    },
+    required: ["entries"],
     additionalProperties: false,
 };
 
@@ -864,6 +934,18 @@ export const MASCOT_TOOL_PACKAGES: MascotToolPackage[] = [
         ],
         usageGuide: "=== 聊天控制套件使用指南 ===\n\n【读取聊天记录】读取当前手机里正在聊天的会话最近消息。\n- 不传 limit 时默认读最近 10 条\n- 自动过滤系统/工具消息，只保留用户和角色的对话\n- 例子：[执行动作:读取聊天记录({\"limit\":15})]\n\n【编辑聊天消息】修改已有消息的内容。\n- messageId 从「读取聊天记录」的返回结果中获取\n- 编辑后请告诉用户改了什么\n- 例子：[执行动作:编辑聊天消息({\"messageId\":\"msg_abc123\",\"newContent\":\"（润色后的版本）\"})]\n\n【更新角色头像】把图片设为角色头像。\n- avatarUrl 需要是 data: 或 http/https 链接，不能是本地路径\n- 优先先用「图像处理套件→上传图床」把生图转成公开 URL 再调用本工具\n- 例子：[执行动作:更新角色头像({\"characterName\":\"林晚\",\"avatarUrl\":\"https://i.imgur.com/xxx.png\"})]\n\n【创建群聊事件】在群聊中按剧本让角色连续发消息。\n- groupName 必须是已创建的群聊名\n- messages 数组按顺序发送，每条指定 characterName+content\n- 如果角色不在群成员中会提示\n- 例子：[执行动作:创建群聊事件({\"groupName\":\"修罗场\",\"messages\":[{\"characterName\":\"季言浅\",\"content\":\"你们俩...什么时候的事？\"},{\"characterName\":\"苏棠\",\"content\":\"不关你的事。\"}]})]",
     },
+    {
+        id: "memory_pack",
+        label: "长期记忆套件",
+        description: "读写用户的长期记忆。可检索过往记忆、识别重要信息自动写入、修改过时条目、删除错误记忆、沉淀聊天记录。核心记忆（core）仅用户明确要求时写入；长期记忆（long_term）可在识别到重要信息时自动写入。",
+        subTools: [
+            { name: "读取记忆", description: "搜索/检索记忆。可按关键词、层级(core/long_term)、关联角色、标签筛选。返回匹配的记忆条目（含entry_id、内容、时间戳、标签、置信度）。", parameterSchema: MEMORY_SEARCH_SCHEMA },
+            { name: "写入记忆", description: "写入一条新记忆（自动去重合并）。默认写 long_term 层；只有用户明确说「记住这个」「你必须记住」才写 core 层。写入前先用「读取记忆」检查是否已有相似条目。", parameterSchema: MEMORY_WRITE_SCHEMA },
+            { name: "更新记忆", description: "修改已有记忆的内容/标签/层级。entryId 从「读取记忆」结果中获取。", parameterSchema: MEMORY_UPDATE_SCHEMA },
+            { name: "删除记忆", description: "删除指定记忆（entryId）或按关键词匹配删除（query）。用户说「忘掉XXX」时调用。", parameterSchema: MEMORY_DELETE_SCHEMA },
+            { name: "沉淀记忆", description: "批量写入多条总结后的记忆条目。用于会话结束后自动压缩聊天记录为结构化记忆点。每条指定 layer/content/tags。", parameterSchema: MEMORY_SUMMARIZE_SCHEMA },
+        ],
+        usageGuide: "=== 长期记忆套件使用指南 ===\n\n记忆分层规则：\n- core（核心记忆）：仅用户明确说「记住」「必须记住」时才写入。内容为用户身份级事实（真名、关系、底线）。\n- long_term（长期记忆）：重要偏好、事件、约定、承诺。AI 可自动识别写入（confidence 0.6~0.9），用户手动写入（confidence 1.0）。\n\n【读取记忆】检索已有记忆。\n- 对话中提到用户过往信息时先检索\n- 例子：[执行动作:读取记忆({\"keyword\":\"出差\"})]\n- 例子：[执行动作:读取记忆({\"layer\":\"core\"})]\n\n【写入记忆】新增记忆条目。\n- 写入前必须先检索，避免重复\n- 默认写 long_term；用户说「记住这个」才写 core\n- 例子：[执行动作:写入记忆({\"content\":\"用户下周去上海出差\",\"tags\":[\"事件\",\"旅行\"],\"confidence\":1.0})]\n\n【更新记忆】修改已有条目。\n- 发现旧记忆过时时使用（如搬家了→更新地址条目）\n- 例子：[执行动作:更新记忆({\"entryId\":\"mem_20260806_abc123\",\"content\":\"用户已搬到北京\"})]\n\n【删除记忆】移除记忆。\n- 用户说「忘掉XXX」时调用\n- 先检索确认要删的条目，再按 entryId 删除\n- 例子：[执行动作:删除记忆({\"entryId\":\"mem_20260806_abc123\"})]\n\n【沉淀记忆】批量总结写入。\n- 会话结束或达到消息阈值时使用\n- 先读取聊天记录总结关键事件，再调本工具批量写入\n- 例子：[执行动作:沉淀记忆({\"entries\":[{\"layer\":\"long_term\",\"content\":\"用户最近在写小说\",\"tags\":[\"事件\",\"创作\"]}]})]\n\n通用规则：\n- 不记录无意义闲聊、临时话题、一次性问答。\n- 同一条目 24h 内不重复写入（系统自动去重）。\n- 自然调用记忆，不机械复读。一次对话主动引用 ≤ 2 条。" },
 ];
 
 // 导航是独立工具（不在套件里），直接暴露
@@ -1022,6 +1104,11 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "编辑聊天消息": "mascot_edit_chat_message",
     "更新角色头像": "mascot_update_character_avatar",
     "创建群聊事件": "mascot_create_group_event",
+    "读取记忆": "mascot_search_memory",
+    "写入记忆": "mascot_write_memory",
+    "更新记忆": "mascot_update_memory",
+    "删除记忆": "mascot_delete_memory",
+    "沉淀记忆": "mascot_summarize_memory",
 };
 
 const MASCOT_NATIVE_LOADER_NAMES: Record<string, string> = {
@@ -1034,6 +1121,7 @@ const MASCOT_NATIVE_LOADER_NAMES: Record<string, string> = {
     widget_pack: "mascot_load_widget_pack",
     world_pack: "mascot_load_world_pack",
     chat_pack: "mascot_load_chat_pack",
+    memory_pack: "mascot_load_memory_pack",
 };
 
 export function getMascotNativeToolName(displayName: string): string {
@@ -1180,6 +1268,13 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "编辑聊天消息": return await handleEditChatMessage(call.args);
             case "更新角色头像": return await handleUpdateCharacterAvatar(call.args);
             case "创建群聊事件": return await handleCreateGroupEvent(call.args);
+
+            // ─── 长期记忆 ───
+            case "读取记忆": return await handleSearchMemory(call.args);
+            case "写入记忆": return await handleWriteMemory(call.args);
+            case "更新记忆": return await handleUpdateMemory(call.args);
+            case "删除记忆": return await handleDeleteMemory(call.args);
+            case "沉淀记忆": return await handleSummarizeMemory(call.args);
 
             // ─── 导航 ───
             case "导航": return await handleNavigate(call.args);
@@ -2662,6 +2757,158 @@ async function handleNavigate(args: Record<string, unknown>): Promise<ToolResult
     const { mascotNavigate } = await import("./mascot-events");
     mascotNavigate(page, subpage);
     return { name: "导航", success: true, data: `已跳转到 ${page}${subpage ? `:${subpage}` : ""}`, continueConversation: false };
+}
+
+// ── 长期记忆 Handlers ────────────────────────
+
+async function handleSearchMemory(args: Record<string, unknown>): Promise<ToolResult> {
+    try {
+        const { searchMascotMemories } = await import("./mascot-memory");
+        const keyword = typeof args.keyword === "string" ? args.keyword : undefined;
+        const layer = (args.layer === "core" || args.layer === "long_term") ? args.layer : undefined;
+        const relatedTo = typeof args.relatedTo === "string" ? args.relatedTo : undefined;
+        const tags = Array.isArray(args.tags) ? args.tags.filter((t): t is string => typeof t === "string") : undefined;
+        const limit = typeof args.limit === "number" ? args.limit : 20;
+
+        const results = await searchMascotMemories({ keyword, layer, relatedTo, tags, limit });
+
+        if (results.length === 0) {
+            return { name: "读取记忆", success: true, data: "（未找到匹配的记忆条目）" };
+        }
+
+        const lines = results.map((r, i) => {
+            const tagStr = r.tags.length > 0 ? ` [${r.tags.join(", ")}]` : "";
+            const layerStr = r.layer === "core" ? "【核心】" : "【长期】";
+            const relStr = r.related_to === "default" ? "" : ` → ${r.related_to}`;
+            const confStr = r.confidence < 1 ? ` (置信度:${Math.round(r.confidence * 100)}%)` : "";
+            return `${i + 1}. ${layerStr} ${r.content}${tagStr}${relStr}${confStr}\n   entry_id: ${r.entry_id}`;
+        });
+
+        return {
+            name: "读取记忆",
+            success: true,
+            data: `=== 找到 ${results.length} 条记忆 ===\n${lines.join("\n")}`,
+        };
+    } catch (err) {
+        return { name: "读取记忆", success: false, error: (err as Error).message };
+    }
+}
+
+async function handleWriteMemory(args: Record<string, unknown>): Promise<ToolResult> {
+    try {
+        const { writeMascotMemory } = await import("./mascot-memory");
+        const content = typeof args.content === "string" ? args.content.trim() : "";
+        if (!content) return { name: "写入记忆", success: false, error: "content 参数必填" };
+
+        const layer = (args.layer === "core" || args.layer === "long_term") ? args.layer : "long_term";
+        const tags = Array.isArray(args.tags) ? args.tags.filter((t): t is string => typeof t === "string") : [];
+        const relatedTo = typeof args.relatedTo === "string" ? args.relatedTo : "default";
+        const confidence = typeof args.confidence === "number" ? Math.max(0, Math.min(1, args.confidence)) : 0.8;
+
+        const entry = await writeMascotMemory({
+            layer,
+            content,
+            tags,
+            relatedTo,
+            source: confidence >= 0.95 ? "user" : "auto",
+            confidence,
+        });
+
+        const layerLabel = layer === "core" ? "核心记忆" : "长期记忆";
+        return {
+            name: "写入记忆",
+            success: true,
+            data: `已记入${layerLabel}：「${content.slice(0, 80)}${content.length > 80 ? "…" : ""}」\nentry_id: ${entry.entry_id}`,
+        };
+    } catch (err) {
+        return { name: "写入记忆", success: false, error: (err as Error).message };
+    }
+}
+
+async function handleUpdateMemory(args: Record<string, unknown>): Promise<ToolResult> {
+    try {
+        const { updateMascotMemoryEntry } = await import("./mascot-memory");
+        const entryId = typeof args.entryId === "string" ? args.entryId.trim() : "";
+        if (!entryId) return { name: "更新记忆", success: false, error: "entryId 参数必填" };
+
+        const content = typeof args.content === "string" ? args.content.trim() : undefined;
+        const tags = Array.isArray(args.tags) ? args.tags.filter((t): t is string => typeof t === "string") : undefined;
+        const layer = (args.layer === "core" || args.layer === "long_term") ? args.layer : undefined;
+
+        if (!content && !tags && !layer) {
+            return { name: "更新记忆", success: false, error: "至少需要提供 content、tags 或 layer 之一" };
+        }
+
+        const updated = await updateMascotMemoryEntry({ entryId, content, tags, layer });
+        if (!updated) {
+            return { name: "更新记忆", success: false, error: `未找到记忆条目：${entryId}` };
+        }
+
+        return {
+            name: "更新记忆",
+            success: true,
+            data: `已更新记忆 ${entryId.slice(0, 12)}…：${updated.content.slice(0, 60)}${updated.content.length > 60 ? "…" : ""}`,
+        };
+    } catch (err) {
+        return { name: "更新记忆", success: false, error: (err as Error).message };
+    }
+}
+
+async function handleDeleteMemory(args: Record<string, unknown>): Promise<ToolResult> {
+    try {
+        const { deleteMascotMemory } = await import("./mascot-memory");
+        const entryId = typeof args.entryId === "string" ? args.entryId.trim() : undefined;
+        const query = typeof args.query === "string" ? args.query.trim() : undefined;
+
+        if (!entryId && !query) {
+            return { name: "删除记忆", success: false, error: "entryId 或 query 至少提供一个" };
+        }
+
+        const deleted = await deleteMascotMemory(entryId, query);
+        if (deleted === 0) {
+            return { name: "删除记忆", success: true, data: "未找到匹配的记忆条目，无需删除。" };
+        }
+
+        return {
+            name: "删除记忆",
+            success: true,
+            data: `已删除 ${deleted} 条记忆。`,
+        };
+    } catch (err) {
+        return { name: "删除记忆", success: false, error: (err as Error).message };
+    }
+}
+
+async function handleSummarizeMemory(args: Record<string, unknown>): Promise<ToolResult> {
+    try {
+        const { summarizeMemories } = await import("./mascot-memory");
+        const entries = args.entries as Array<Record<string, unknown>> | undefined;
+
+        if (!entries || !Array.isArray(entries) || entries.length === 0) {
+            return { name: "沉淀记忆", success: false, error: "entries 参数必填且至少包含一条" };
+        }
+
+        const validEntries = entries.map(e => ({
+            layer: (e.layer === "core" || e.layer === "long_term") ? e.layer as "core" | "long_term" : "long_term",
+            content: String(e.content || "").trim(),
+            tags: Array.isArray(e.tags) ? e.tags.filter((t): t is string => typeof t === "string") : [],
+            relatedTo: typeof e.relatedTo === "string" ? e.relatedTo : "default",
+        })).filter(e => e.content.length > 0);
+
+        if (validEntries.length === 0) {
+            return { name: "沉淀记忆", success: false, error: "所有条目的 content 均为空" };
+        }
+
+        const results = await summarizeMemories(validEntries);
+
+        return {
+            name: "沉淀记忆",
+            success: true,
+            data: `已沉淀 ${results.length} 条记忆：\n${results.map((r, i) => `  ${i + 1}. [${r.layer === "core" ? "核心" : "长期"}] ${r.content.slice(0, 60)}${r.content.length > 60 ? "…" : ""}`).join("\n")}`,
+        };
+    } catch (err) {
+        return { name: "沉淀记忆", success: false, error: (err as Error).message };
+    }
 }
 
 // ── 套件展开管理 ─────────────────────────────
