@@ -4,6 +4,7 @@
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
 import { getMascotPersonaPrompt } from "./mascot-settings";
 import type { MascotPageContext } from "./mascot-context";
+import { generateMemoryPrompt } from "./mascot-memory";
 import {
     buildMascotToolsListPrompt,
     buildMascotPackageSchemaPrompt,
@@ -527,9 +528,10 @@ async function callMascotText(
     // 由 agent loop 作为 tool 消息加入到 history，自然驻留在上下文里。
     const systemPrompt = [
         getMascotPersonaPrompt(),
+        await generateMemoryPrompt(),
         `当前页面：${context.label}（${context.mode}）`,
         buildMascotToolsListPrompt(),
-    ].join("\n\n");
+    ].filter(Boolean).join("\n\n");
 
     // 仅在该 API 配置开启"图像识别"时才构造 multipart 图片消息；
     // 关闭时走纯文本（适配器另有总闸兜底，双保险）。
@@ -604,10 +606,11 @@ async function callMascotNative(
 
     const systemPrompt = [
         getMascotPersonaPrompt(),
+        await generateMemoryPrompt(),
         `当前页面：${context.label}（${context.mode}）`,
         "你有工具可调。每个套件需要先展开才能看到详细动作；导航工具直接可用。同时最多展开 2 个套件。",
         "重要：调用工具时，回复文本里**不要复述**工具参数的内容（比如不要把 persona 完整文本再写一遍）。回复文本只用一两句话简短说明你在做什么即可，详细内容通过工具参数传递。",
-    ].join("\n\n");
+    ].filter(Boolean).join("\n\n");
 
     const messages: LlmRequestMessage[] = [
         { role: "system", content: systemPrompt },

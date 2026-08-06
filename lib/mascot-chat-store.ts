@@ -17,6 +17,7 @@ import {
     type MascotToolContext,
 } from "./mascot-tools";
 import { isMascotPanelOpen } from "./mascot-state";
+import { updateMascotMemory } from "./mascot-memory";
 
 const MASCOT_DB_NAME = "AiPhoneMascotDB";
 const MASCOT_DB_VERSION = 2;
@@ -554,6 +555,10 @@ export async function sendMascotMessage({
     } finally {
         setThinking(false);
         abortController = null;
+        // 更新小卷长期记忆（仅记录实质性对话，过滤导航/问候等短消息）
+        if (trimmed.length > 15) {
+            updateMascotMemory(trimmed);
+        }
     }
 }
 
