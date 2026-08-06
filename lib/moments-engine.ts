@@ -429,7 +429,7 @@ async function buildNPCReactionMessages(
 const MOMENTS_LLM_MAX_RETRIES = 3;
 const MOMENTS_LLM_BASE_WAIT_MS = 35_000; // API says "2 req/min", so wait ≥30s between retries
 
-async function callLLM(
+export async function callLLM(
     config: ApiConfig,
     preset: PresetConfig | null,
     messages: LLMMessage[],

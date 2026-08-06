@@ -19,6 +19,7 @@ import { clearRequestsForCharacter, dispatchFriendRequestUpdated } from "./frien
 import { sendBrowserNotification } from "./browser-notification";
 import type { MomentPost, MomentComment } from "./moments-types";
 import { attachMomentPhotoInBackground, parseMomentPostResponse } from "./moments-engine";
+import { parseAlbumCaptureResponse, generateAlbumCapture } from "./album-engine";
 import { isAbortError, throwIfAborted } from "./abort-utils";
 
 // ── Types ──
@@ -40,7 +41,7 @@ export type ActionContext = {
 
 // ── Parser ──
 
-const ACTION_TAGS = ["朋友圈", "群消息", "评论", "回复", "消息", "私信"] as const;
+const ACTION_TAGS = ["朋友圈", "群消息", "评论", "回复", "消息", "私信", "相册"] as const;
 
 function normalizeActionQuotes(text: string): string {
     return text.replace(/[\u201C\u201D\u2018\u2019\u300C\u300D]/g, "\"");
@@ -247,6 +248,9 @@ export async function dispatchActions(
                 case "群消息":
                     await dispatchGroupChatMessage(action, effectiveCtx);
                     break;
+                case "相册":
+                    await dispatchAlbumCapture(action, effectiveCtx);
+                    break;
             }
         } catch (err) {
             if (isAbortError(err)) return;
@@ -340,6 +344,16 @@ async function dispatchMomentsPost(action: ActionTag, context: ActionContext): P
         characterId: context.characterId,
         fireAt: Date.now() + delay,
     });
+}
+
+async function dispatchAlbumCapture(action: ActionTag, context: ActionContext): Promise<void> {
+    const parsed = parseAlbumCaptureResponse(action.content);
+    if (!parsed) {
+        console.warn("[ActionParser] Failed to parse album capture content");
+        return;
+    }
+    await generateAlbumCapture(context.characterId, parsed, context.signal);
+    console.log(`[ActionParser] Created album capture from ${context.sourceEngine} engine`);
 }
 
 function dispatchMomentsComment(action: ActionTag, context: ActionContext): void {
