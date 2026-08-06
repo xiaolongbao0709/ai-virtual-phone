@@ -52,7 +52,7 @@ import { bgSetInterval } from "./bg-timer";
 import { sendBrowserNotification } from "./browser-notification";
 import { buildTwoLevelMomentThreads } from "./moments-comment-threading";
 import { DEFAULT_MOMENTS_BILINGUAL_PROMPT, resolveBilingualPrompt } from "./bilingual-prompt-defaults";
-import { generateImageFromConfiguredApi } from "./image-generation-service";
+import { generateImageFromConfiguredApi, sleepWithAbort } from "./image-generation-service";
 import { isAbortError, throwIfAborted } from "./abort-utils";
 import { getChatImageFromIndexedDB, saveChatImageToIndexedDB } from "./chat-asset-storage";
 import {
@@ -426,6 +426,9 @@ async function buildNPCReactionMessages(
     };
 }
 
+const MOMENTS_LLM_MAX_RETRIES = 3;
+const MOMENTS_LLM_BASE_WAIT_MS = 35_000; // API says "2 req/min", so wait ≥30s between retries
+
 async function callLLM(
     config: ApiConfig,
     preset: PresetConfig | null,
@@ -435,19 +438,31 @@ async function callLLM(
     appTags?: string[],
     userName?: string,
 ): Promise<string | null> {
-    try {
-        return await sendLLMRequest(
-            config,
-            preset,
-            messages,
-            regexes ?? [],
-            { characterName, userName },
-            { appId: "moments", appTags },
-        );
-    } catch (err) {
-        console.warn(`[Moments] LLM call failed for ${characterName}:`, err);
-        return null;
+    for (let attempt = 0; attempt <= MOMENTS_LLM_MAX_RETRIES; attempt++) {
+        try {
+            return await sendLLMRequest(
+                config,
+                preset,
+                messages,
+                regexes ?? [],
+                { characterName, userName },
+                { appId: "moments", appTags },
+            );
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const isRateLimit = /429|rate.?limit|请求数限制|频率限制|too many request/i.test(msg);
+
+            if (!isRateLimit || attempt >= MOMENTS_LLM_MAX_RETRIES) {
+                console.warn(`[Moments] LLM call failed for ${characterName} (attempt ${attempt + 1}):`, err);
+                return null;
+            }
+
+            const waitMs = MOMENTS_LLM_BASE_WAIT_MS + attempt * 30_000; // 35s → 65s → 95s
+            console.warn(`[Moments] LLM rate-limited for ${characterName}, retrying in ${(waitMs / 1000).toFixed(0)}s… (attempt ${attempt + 1}/${MOMENTS_LLM_MAX_RETRIES + 1})`);
+            await sleepWithAbort(waitMs);
+        }
     }
+    return null;
 }
 
 /** Single LLM call to generate both NPC comments and NPC likes for a character's post. */
