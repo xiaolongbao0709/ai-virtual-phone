@@ -2,7 +2,7 @@
 // 小卷工具系统：10 个套件 + 48 个细粒度工具，支持文本协议和原生协议双轨。
 //
 // 套件设计（默认只暴露 loader，按需展开）：
-//   - 角色卡套件 (character_pack)        — 3 个子工具
+//   - 角色卡套件 (character_pack)        — 4 个子工具
 //   - 世界书套件 (worldbook_pack)        — 5 个子工具
 //   - 预设套件 (preset_pack)             — 5 个子工具
 //   - 正则套件 (regex_pack)              — 5 个子工具
@@ -261,10 +261,19 @@ const UPDATE_CHARACTER_FIELD_SCHEMA = {
     type: "object",
     properties: {
         name: { type: "string", description: "要修改的角色名" },
-        field: { type: "string", enum: ["name", "persona", "personality"], description: "字段名" },
-        value: { type: "string", description: "新值" },
+        field: { type: "string", enum: ["name", "persona", "personality", "appearance", "timeZone", "tags", "briefPersona"], description: "字段名" },
+        value: { type: "string", description: "新值（tags 用逗号分隔）" },
     },
     required: ["name", "field", "value"],
+    additionalProperties: false,
+};
+
+const DELETE_CHARACTER_SCHEMA = {
+    type: "object",
+    properties: {
+        name: { type: "string", description: "要删除的角色名" },
+    },
+    required: ["name"],
     additionalProperties: false,
 };
 
@@ -850,7 +859,8 @@ export const MASCOT_TOOL_PACKAGES: MascotToolPackage[] = [
         subTools: [
             { name: "读取角色", description: "不传 name 时列出所有角色；传 name 时返回完整字段。", parameterSchema: READ_CHARACTER_SCHEMA },
             { name: "创建角色", description: "新建一张角色卡。persona 必须包含 7 段式人设（基础信息/外貌/世界观/性格/补充信息/经历）。", parameterSchema: CREATE_CHARACTER_SCHEMA },
-            { name: "更新角色字段", description: "修改某角色的单个字段（name/persona/personality）。", parameterSchema: UPDATE_CHARACTER_FIELD_SCHEMA },
+            { name: "更新角色字段", description: "修改某角色的单个字段（name/persona/personality/appearance/timeZone/tags/briefPersona）。", parameterSchema: UPDATE_CHARACTER_FIELD_SCHEMA },
+            { name: "删除角色", description: "删除指定角色卡。不可逆，请先确认。", parameterSchema: DELETE_CHARACTER_SCHEMA },
         ],
         usageGuide: CHARACTER_CARD_PROMPT,
     },
@@ -1071,6 +1081,7 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "读取角色": "mascot_read_character",
     "创建角色": "mascot_create_character",
     "更新角色字段": "mascot_update_character_field",
+    "删除角色": "mascot_delete_character",
     "列出世界书": "mascot_list_worldbooks",
     "读取词条": "mascot_read_worldbook_entry",
     "创建词条": "mascot_create_worldbook_entry",
@@ -1223,6 +1234,7 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "读取角色": return await handleReadCharacter(call.args);
             case "创建角色": return await handleCreateCharacter(call.args);
             case "更新角色字段": return await handleUpdateCharacterField(call.args);
+            case "删除角色": return await handleDeleteCharacter(call.args);
 
             // ─── 世界书 ───
             case "列出世界书": return await handleListWorldbooks(call.args);
@@ -1683,20 +1695,16 @@ async function handleReadCharacter(args: Record<string, unknown>): Promise<ToolR
 }
 
 async function handleCreateCharacter(args: Record<string, unknown>): Promise<ToolResult> {
-    const { loadCharacters, saveCharacters } = await import("./character-storage");
+    const { loadCharacters, saveCharacters, createCharacter: createChar } = await import("./character-storage");
     const chars = loadCharacters();
     if (chars.find((c) => c.name === args.name)) return { name: "创建角色", success: false, error: "已存在同名角色" };
-    const now = new Date().toISOString();
-    const newChar = {
-        id: `char_${Date.now()}`,
+    const newChar = createChar({
         name: args.name as string,
-        avatar: null,
         persona: args.persona as string,
         personality: args.personality as string,
-        createdAt: now,
-        updatedAt: now,
-    };
-    chars.push(newChar as typeof chars[number]);
+        avatar: null,
+    });
+    chars.push(newChar);
     saveCharacters(chars);
     return { name: "创建角色", success: true, data: `已创建角色 ${newChar.name} (${newChar.id})` };
 }
@@ -1708,16 +1716,30 @@ async function handleUpdateCharacterField(args: Record<string, unknown>): Promis
     if (idx < 0) return { name: "更新角色字段", success: false, error: `找不到角色：${args.name}` };
     const field = args.field as string;
     const value = args.value as string;
+    const allowedFields = ["name", "persona", "personality", "appearance", "timeZone", "tags", "briefPersona"];
+    if (!allowedFields.includes(field)) {
+        return { name: "更新角色字段", success: false, error: `不支持的字段：${field}（支持：${allowedFields.join("/")})` };
+    }
     const char = { ...chars[idx] } as Record<string, unknown>;
-    if (field === "name" || field === "persona" || field === "personality") {
-        char[field] = value;
+    if (field === "tags") {
+        char.tags = value.split(",").map((t) => t.trim()).filter(Boolean);
     } else {
-        return { name: "更新角色字段", success: false, error: `不支持的字段：${field}` };
+        char[field] = value;
     }
     char.updatedAt = new Date().toISOString();
     chars[idx] = char as typeof chars[number];
     saveCharacters(chars);
     return { name: "更新角色字段", success: true, data: `已更新 ${args.name} 的 ${field}` };
+}
+
+async function handleDeleteCharacter(args: Record<string, unknown>): Promise<ToolResult> {
+    const { loadCharacters, saveCharacters } = await import("./character-storage");
+    const chars = loadCharacters();
+    const idx = chars.findIndex((c) => c.name === args.name);
+    if (idx < 0) return { name: "删除角色", success: false, error: `找不到角色：${args.name}` };
+    const removed = chars.splice(idx, 1)[0];
+    saveCharacters(chars);
+    return { name: "删除角色", success: true, data: `已删除角色 ${removed.name}（不可恢复）` };
 }
 
 // ── Worldbook Handlers ──────────────────────────
