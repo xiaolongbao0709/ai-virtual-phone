@@ -36,7 +36,7 @@ import { clearChatOfflineTurns } from "@/lib/chat-offline-storage";
 import { triggerDeleteFriendReaction } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
-import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Trash2, Smile, Sparkles, type LucideIcon } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Trash2, Smile, Sparkles, Clock, type LucideIcon } from "lucide-react";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -167,6 +167,9 @@ export function ChatSettingsPanel({
     const [videoBackground, setVideoBackground] = useState<string>(session.videoBackground || "");
     const [voiceBackground, setVoiceBackground] = useState<string>(session.voiceBackground || "");
     const [isPinned, setIsPinned] = useState(session.isPinned || false);
+    const [lifelikeEnabled, setLifelikeEnabled] = useState(session.lifelikeEnabled === true);
+    const [lifelikeDelayMin, setLifelikeDelayMin] = useState(session.lifelikeDelayMin ?? 5);
+    const [lifelikeDelayMax, setLifelikeDelayMax] = useState(session.lifelikeDelayMax ?? 30);
     const [visionImagePromptLimit, setVisionImagePromptLimit] = useState(() => normalizeVisionImagePromptLimit(session.visionImagePromptLimit));
     const [bilingualTranslationEnabled, setBilingualTranslationEnabled] = useState(session.bilingualTranslationEnabled !== false);
     const [collapseBilingualTranslation, setCollapseBilingualTranslation] = useState(session.collapseBilingualTranslation !== false);
@@ -695,6 +698,60 @@ export function ChatSettingsPanel({
                             <Toggle checked={isPinned} onChange={c => { setIsPinned(c); updateSession({ isPinned: c }); }} />
                         </div>
                     </div>
+                    {/* 活人感异步回复 */}
+                    <div className="menu-item">
+                        <ChatInfoIcon icon={Clock} color={CONTENT_APP_ACCENTS.chat} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">活人感异步回复</span>
+                            <span className="menu-desc">开启后角色会延迟几秒到几十秒再回复，模拟真人节奏，夜间更长</span>
+                        </div>
+                        <div className="menu-right">
+                            <Toggle
+                                checked={lifelikeEnabled}
+                                onChange={c => {
+                                    setLifelikeEnabled(c);
+                                    updateSession({ lifelikeEnabled: c });
+                                }}
+                            />
+                        </div>
+                    </div>
+                    {lifelikeEnabled && (
+                        <div className="menu-item">
+                            <ChatInfoIcon icon={Clock} color={BINDING_ACCENTS.voice} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">回复延迟范围</span>
+                                <span className="menu-desc">{lifelikeDelayMin}s ~ {lifelikeDelayMax}s（夜间自动延长）</span>
+                            </div>
+                            <div className="menu-right gap-2">
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={120}
+                                    value={lifelikeDelayMin}
+                                    onChange={e => {
+                                        const v = Math.max(1, Math.min(120, Number(e.target.value) || 5));
+                                        setLifelikeDelayMin(v);
+                                        updateSession({ lifelikeDelayMin: v });
+                                    }}
+                                    className="ui-input h-8 w-12 text-center"
+                                />
+                                <span className="text-xs opacity-50">~</span>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={300}
+                                    value={lifelikeDelayMax}
+                                    onChange={e => {
+                                        const v = Math.max(lifelikeDelayMin, Math.min(300, Number(e.target.value) || 30));
+                                        setLifelikeDelayMax(v);
+                                        updateSession({ lifelikeDelayMax: v });
+                                    }}
+                                    className="ui-input h-8 w-12 text-center"
+                                />
+                                <span className="text-xs opacity-50">s</span>
+                            </div>
+                        </div>
+                    )}
                     <div className="menu-item">
                         <ChatInfoIcon icon={ImageIcon} color={BINDING_ACCENTS.api} />
                         <div className="menu-label-group">

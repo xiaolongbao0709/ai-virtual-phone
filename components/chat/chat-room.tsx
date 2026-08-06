@@ -1102,6 +1102,7 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
         return chars.find(c => c.id === session.contactId) || null;
     });
     const [isGenerating, setIsGenerating] = useState(false);
+    const [lifelikeWaiting, setLifelikeWaiting] = useState(false);
     const [offlineMode, setOfflineMode] = useState(false);
     const [theaterMode, setTheaterMode] = useState(() => kvGet(CHAT_THEATER_MODE_PREFIX + session.id) === "1");
     const [offlineTurns, setOfflineTurns] = useState<ChatOfflineTurn[]>([]);
@@ -1334,10 +1335,15 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const mountedRef = useRef(true);
     const isGeneratingRef = useRef(false);
+    const lifelikeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lifelikeSkipRef = useRef<(() => void) | null>(null);
     const visibleMessagesRef = useRef<ChatMessage[]>([]);
     const hasMoreRef = useRef(false);
     const offlineGenerationInputRef = useRef("");
     useEffect(() => () => { mountedRef.current = false; }, []);
+    useEffect(() => () => {
+        if (lifelikeTimerRef.current) clearTimeout(lifelikeTimerRef.current);
+    }, []);
     useEffect(() => { visibleMessagesRef.current = messages; }, [messages]);
     useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
     useChatBottomReserve(
@@ -2614,6 +2620,16 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
                 });
             }
         }
+        // 清理活人感延迟
+        if (lifelikeTimerRef.current) {
+            clearTimeout(lifelikeTimerRef.current);
+            lifelikeTimerRef.current = null;
+        }
+        if (lifelikeSkipRef.current) {
+            lifelikeSkipRef.current();
+            lifelikeSkipRef.current = null;
+        }
+        setLifelikeWaiting(false);
         isGeneratingRef.current = false;
         setIsGenerating(false);
         clearGenerationLock(session.id);
@@ -3441,6 +3457,32 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
         setIsGenerating(true);
         setPendingGenerate(false);
         setGenerationLock(session.id);
+
+        // 活人感异步回复：延迟前等待，模拟真人节奏
+        if (session.lifelikeEnabled && !session.isGroup) {
+            const delayMin = session.lifelikeDelayMin ?? 5;
+            const delayMax = session.lifelikeDelayMax ?? 30;
+            const hour = new Date().getHours();
+            const isNight = hour >= 23 || hour < 7;
+            const minMs = Math.round((isNight ? delayMin * 2.5 : delayMin) * 1000);
+            const maxMs = Math.round((isNight ? delayMax * 2.5 : delayMax) * 1000);
+            const delayMs = minMs + Math.random() * (maxMs - minMs);
+
+            setLifelikeWaiting(true);
+            await new Promise<void>((resolve) => {
+                lifelikeTimerRef.current = setTimeout(() => {
+                    lifelikeTimerRef.current = null;
+                    resolve();
+                }, delayMs);
+                lifelikeSkipRef.current = resolve;
+            });
+            lifelikeSkipRef.current = null;
+            setLifelikeWaiting(false);
+
+            // 延迟期间可能被取消
+            if (!isCurrentGeneration()) return;
+        }
+
         try {
             const latestMessages = loadChatMessages(session.id);
             if (session.isGroup) {
@@ -5205,7 +5247,20 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
                         {session.isGroup
                             ? `${session.groupName || "群聊"}(${(session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1)})`
                             : (session.alias || character?.name || `User_${session.contactId.slice(-4)}`)}
-                        {(isGenerating || isOfflineGenerating) && (
+                        {lifelikeWaiting && (
+                            <span
+                                className="chat-typing-indicator"
+                                style={{ cursor: "pointer", userSelect: "none" }}
+                                onClick={() => {
+                                    if (lifelikeSkipRef.current) {
+                                        lifelikeSkipRef.current();
+                                    }
+                                }}
+                            >
+                                对方在思考… <span style={{ textDecoration: "underline" }}>催促</span>
+                            </span>
+                        )}
+                        {!lifelikeWaiting && (isGenerating || isOfflineGenerating) && (
                             <span className="chat-typing-indicator">
                                 {offlineMode ? "线下生成中" : "对方正在输入"}<span className="chat-typing-dots"><i/><i/><i/></span>
                             </span>
