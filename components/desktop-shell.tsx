@@ -1589,6 +1589,14 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     const onMascotNav = (e: Event) => {
       const { app, mode } = (e as CustomEvent).detail ?? {};
       if (app === "desktop") setActiveApp(null);
+      else if (app === "me") {
+        // "me" is a tab inside chat app, not a desktop icon
+        // → open chat first, then signal tab switch via mascot-navigate-mode
+        setActiveApp("chat");
+        const meMode = mode || "me";
+        sessionStorage.setItem("mascot-settings-mode", meMode);
+        setTimeout(() => window.dispatchEvent(new CustomEvent("mascot-navigate-mode", { detail: { mode: meMode } })), 150);
+      }
       else if (app) {
         setActiveApp(app as DesktopIconId);
         // Forward mode (e.g. "worldbook") so the target app can jump to the right sub-page

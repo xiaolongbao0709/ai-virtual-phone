@@ -575,8 +575,65 @@ const REMOVE_DIY_WIDGET_SCHEMA = {
 const NAVIGATE_SCHEMA = {
     type: "object",
     properties: {
-        page: { type: "string", enum: ["chat", "characters", "story", "vnmode", "moments", "calendar", "music", "resources", "settings"], description: "页面名" },
-        subpage: { type: "string", enum: ["presets", "worldbook", "regex", "api", "voice", "binding", "data", "identity"], description: "子页面（仅 settings 下有效）" },
+        page: {
+            type: "string",
+            enum: [
+                // ── 桌面应用（主屏图标）──
+                "chat",          // 聊天（微信）
+                "characters",    // 角色列表
+                "story",         // 剧情模式
+                "vnmode",        // 视觉小说模式
+                "moments",       // 朋友圈
+                "calendar",      // 日历
+                "music",         // 音乐
+                "resources",     // 资源库
+                "settings",      // 设置
+                "diary",         // 日记
+                "reading",       // 阅读
+                "checkphone",    // 查手机（模拟微博/IG等）
+                "theme",         // 主题
+                "cocreate",      // 协作创作
+                "game",          // 小游戏
+                "appmarket",     // 应用市场
+                "xiaohongshu",   // 小红书
+                "dwelling",      // 住所/家园
+                "shopping",      // 购物
+                "interview_magazine",  // 访谈杂志
+                "mapmode",       // 地图
+                "vnplay",        // VN播放器
+                "vnchapters",    // VN章节
+                "group_chat",    // 群聊
+                "worldbuilder",  // 世界构建
+                "qa",            // 问答
+                // ── 特殊：聊天内标签页（非桌面图标）──
+                "me",            // 我（个人中心/Me页）— 在聊天app内，含角色相册入口、朋友圈互动设置等
+            ],
+            description: "目标页面名",
+        },
+        subpage: {
+            type: "string",
+            enum: [
+                // ── settings 子页面 ──
+                "presets",             // 预设管理
+                "worldbook",           // 世界书
+                "regex",               // 正则
+                    "api",              // API接口
+                "voice",               // 语音
+                "binding",             // 绑定管理
+                "data",                // 数据管理
+                "identity",            // 用户身份
+                "image-generation",    // 生图设置（含NAI/OAI/参考图/预设）
+                "tools",               // 高级工具
+                // ── me 子页面 ──
+                "moments-interaction", // 朋友圈互动设置
+                "album",               // 角色相册（需同时传 characterId）
+            ],
+            description: "子页面名（page=settings 或 page=me 时生效）",
+        },
+        characterId: {
+            type: "string",
+            description: "角色ID（仅 page=me + subpage=album 时需要，指定看哪个角色的相册）",
+        },
     },
     required: ["page"],
     additionalProperties: false,
@@ -703,7 +760,7 @@ export const MASCOT_TOOL_PACKAGES: MascotToolPackage[] = [
 // 导航是独立工具（不在套件里），直接暴露
 export const MASCOT_NAVIGATE_TOOL: MascotSubTool = {
     name: "导航",
-    description: "跳转到手机里指定页面。subpage 仅在 page=settings 时生效。",
+    description: "跳转到手机里指定页面或子页面。支持所有桌面应用图标页+me个人中心。page=settings时subpage可跳到具体设置分区；page=me时subpage可跳到朋友圈互动/角色相册。",
     parameterSchema: NAVIGATE_SCHEMA,
 };
 
@@ -719,11 +776,19 @@ export function buildMascotToolsListPrompt(): string {
         lines.push(`【${pkg.label}】${pkg.description}`);
     }
     // 导航工具不在套件里，schema 直接在这里展开（只一个工具，省得用 [获取指令] 再加载）
-    lines.push("【独立工具】导航 — 跳转到指定页面，可直接调用。");
+    lines.push("【独立工具】导航 — 跳转到指定页面或子页面，可直接调用。");
     lines.push("  参数：");
-    lines.push("    · page (必填) — 页面名。可选值：chat / characters / story / vnmode / moments / calendar / music / resources / settings");
-    lines.push("    · subpage (可选) — 子页面（仅 page=settings 时有效）。可选值：presets / worldbook / regex / api / voice / binding / data / identity");
-    lines.push("  调用：[执行动作:导航({\"page\":\"chat\"})] 或 [执行动作:导航({\"page\":\"settings\",\"subpage\":\"presets\"})]");
+    lines.push("    · page (必填) — 目标页面。常用：");
+    lines.push("      桌面应用：chat(聊天) / characters(角色) / story(剧情) / moments(朋友圈) / settings(设置) / calendar(日历) / music(音乐) / resources(资源库) / diary(日记) / reading(阅读) / checkphone(查手机) / theme(主题) / cocreate(协作) / game(游戏) / shopping(购物) / mapmode(地图) / group_chat(群聊) / worldbuilder(世界构建) / qa(问答)");
+    lines.push("      特殊页：me(我/个人中心—含角色相册、朋友圈互动设置等)");
+    lines.push("    · subpage (可选) — 子页面。page=settings 时：presets(预设) / worldbook(世界书) / regex(正则) / api(API接口) / voice(语音) / binding(绑定) / data(数据) / identity(身份) / image-generation(生图设置) / tools(高级工具)");
+    lines.push("                       page=me 时：moments-interaction(朋友圈互动设置) / album(角色相册，需同时传characterId)");
+    lines.push("    · characterId (可选) — 角色ID，仅 page=me+subpage=album 时需要");
+    lines.push("  调用示例：");
+    lines.push("    [执行动作:导航({\"page\":\"chat\"})]");
+    lines.push("    [执行动作:导航({\"page\":\"settings\",\"subpage\":\"image-generation\"})]");
+    lines.push("    [执行动作:导航({\"page\":\"me\",\"subpage\":\"album\",\"characterId\":\"xxx\"})]");
+    lines.push("    [执行动作:导航({\"page\":\"me\"})]  ← 进个人中心");
     lines.push("");
     lines.push("===== 调用规则 =====");
     lines.push("· 展开套件：使用 [获取指令:套件名] 格式，例如 [获取指令:CSS样式套件]");
@@ -2198,6 +2263,22 @@ async function handleRemoveDiyWidget(args: Record<string, unknown>): Promise<Too
 async function handleNavigate(args: Record<string, unknown>): Promise<ToolResult> {
     const page = args.page as string;
     const subpage = args.subpage as string | undefined;
+    const characterId = args.characterId as string | undefined;
+
+    // ── 特殊处理：me 页（聊天内标签页，非桌面图标）──
+    if (page === "me") {
+        const { mascotNavigate } = await import("./mascot-events");
+        // 先跳到 chat 应用，再通过 mode 通知切换到 me 标签
+        mascotNavigate("chat", subpage ? `me:${subpage}${characterId ? `:${characterId}` : ""}` : "me");
+        let desc = "已跳转到「我」（个人中心）";
+        if (subpage === "moments-interaction") desc = "已跳转到「朋友圈互动设置」";
+        else if (subpage === "album") desc = characterId
+            ? `已跳转到角色相册`
+            : "已跳转到角色相册入口（选择角色查看）";
+        return { name: "导航", success: true, data: desc };
+    }
+
+    // ── 普通桌面应用导航 ──
     const { mascotNavigate } = await import("./mascot-events");
     mascotNavigate(page, subpage);
     return { name: "导航", success: true, data: `已跳转到 ${page}${subpage ? `:${subpage}` : ""}` };

@@ -211,6 +211,26 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
         return () => window.removeEventListener("chat-hide-tabbar", onHide);
     }, []);
 
+    // Listen for mascot navigation to me tab / sub-pages (e.g. album, moments-interaction)
+    useEffect(() => {
+        const onNavMode = (e: Event) => {
+            const mode = (e as CustomEvent<{ mode: string }>)?.detail?.mode;
+            if (!mode) return;
+            // mode format: "me" | "me:moments-interaction" | "me:album:charId"
+            if (mode === "me" || mode.startsWith("me:")) {
+                setActiveTab("me");
+                // Forward sub-page info so UserProfilePanel can auto-open the right section
+                if (mode !== "me") {
+                    setTimeout(() => window.dispatchEvent(new CustomEvent("mascot-navigate-me-mode", {
+                        detail: { subMode: mode.replace(/^me:/, "") },
+                    })), 100);
+                }
+            }
+        };
+        window.addEventListener("mascot-navigate-mode", onNavMode);
+        return () => window.removeEventListener("mascot-navigate-mode", onNavMode);
+    }, []);
+
     // Wait for IndexedDB hydration before rendering
     if (!dbReady) return null;
 
