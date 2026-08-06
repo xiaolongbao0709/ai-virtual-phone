@@ -143,6 +143,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const [showCSSEditor, setShowCSSEditor] = useState(false);
     const [showMomentsSettings, setShowMomentsSettings] = useState(false);
     const [showWalletPanel, setShowWalletPanel] = useState(false);
+    const [showAlbumFor, setShowAlbumFor] = useState<{ id: string; name: string } | null>(null);
     const [identity, setIdentity] = useState<UserIdentity | null>(null);
     const [notifEnabled, setNotifEnabled] = useState(false);
     const [notifHint, setNotifHint] = useState<string | null>(null);
@@ -156,6 +157,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
             cardCount: wallet.cards.length,
         };
     });
+    const allCharacters = loadCharacters();
 
     useEffect(() => {
         setIdentity(resolveUserIdentity());
@@ -250,6 +252,16 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     }
     if (showWalletPanel) {
         return <WalletPanel onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowWalletPanel(false); }} />;
+    }
+
+    if (showAlbumFor) {
+        return (
+            <CharacterAlbumPage
+                characterId={showAlbumFor.id}
+                characterName={showAlbumFor.name}
+                onBack={() => setShowAlbumFor(null)}
+            />
+        );
     }
 
     return (
@@ -410,6 +422,31 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                             </div>
                             <Toggle checked={notifEnabled} disabled={notifChecking} onChange={handleNotificationToggle} />
                         </div>
+                    </div>
+
+                    {/* 角色相册 */}
+                    <div className="mx-4 mb-4 bg-[var(--c-card)] rounded-2xl px-4 py-1 flex flex-col"
+                         style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.025)" }}>
+                        <div className="flex items-center gap-3 py-3 w-full border-b border-[color-mix(in_srgb,var(--c-card-border)_20%,transparent)]">
+                            <ImageIcon size={18} className="text-[var(--c-icon)] opacity-70" strokeWidth={1.25}/>
+                            <div className="flex flex-col flex-1 text-left gap-0.5">
+                                <span className="ts-14 font-semibold text-[var(--c-text-title)]">角色相册</span>
+                                <span className="ts-11 text-[var(--c-text)] opacity-70">每个角色专属的小手机相册，收录自发拍摄的回忆</span>
+                            </div>
+                            <ChevronRight size={16} className="text-[var(--c-icon)] opacity-50" />
+                        </div>
+                        {allCharacters.map((c) => (
+                            <button key={c.id} className="flex items-center gap-3 py-3 w-full border-b border-[color-mix(in_srgb,var(--c-card-border)_20%,transparent)] last:border-b-0" onClick={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: true })); setShowAlbumFor({ id: c.id, name: c.name }); }}>
+                                <span className="h-9 w-9 shrink-0 overflow-hidden rounded-full bg-[var(--c-input)] flex items-center justify-center">
+                                    {c.avatar ? <img src={c.avatar} alt="" className="h-full w-full object-cover" /> : <span className="ts-13 font-semibold text-[var(--c-icon)]">{c.name.slice(0,1)}</span>}
+                                </span>
+                                <span className="flex flex-col flex-1 text-left gap-0.5">
+                                    <span className="ts-14 font-semibold text-[var(--c-text-title)]">{c.name}</span>
+                                    <span className="ts-11 text-[var(--c-text)] opacity-70">的相册</span>
+                                </span>
+                                <ImageIcon size={16} className="text-[var(--c-icon)] opacity-50" />
+                            </button>
+                        ))}
                     </div>
 
                     {/* 高级工具 */}
