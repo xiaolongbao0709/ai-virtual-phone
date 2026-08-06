@@ -622,6 +622,9 @@ export function ImageGenerationSettings() {
         saveCharacters(updated);
     };
 
+    // 生图提示词编辑框的折叠状态（默认全收起，按需展开）
+    const [expandedCharId, setExpandedCharId] = useState<string | null>(null);
+
     const isNai = settings.provider === "novelai";
     const isPollinations = settings.provider === "pollinations";
     const isGoogleImagen = settings.provider === "google-imagen";
@@ -1462,6 +1465,18 @@ export function ImageGenerationSettings() {
                                         <button
                                             type="button"
                                             className="ui-link-btn"
+                                            aria-label={`${expandedCharId === character.id ? "收起" : "展开"} ${character.name} 的生图提示词`}
+                                            aria-expanded={expandedCharId === character.id}
+                                            onClick={() => setExpandedCharId(prev => prev === character.id ? null : character.id)}
+                                        >
+                                            <ChevronDown
+                                                size={18}
+                                                style={{ transform: expandedCharId === character.id ? "rotate(180deg)" : "none", transition: "transform .2s" }}
+                                            />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="ui-link-btn"
                                             aria-label={`上传 ${character.name} 的参考图`}
                                             onClick={() => {
                                                 const input = document.createElement("input");
@@ -1489,17 +1504,19 @@ export function ImageGenerationSettings() {
                                         )}
                                     </span>
                                 </div>
-                                {/* 生图提示词 / 形象描述 */}
-                                <div className="flex flex-col gap-1 pl-[calc(2.75rem+0.5rem)]">
-                                    <span className="ts-11 text-[var(--c-icon)] opacity-70">生图提示词（画风 / 构图 / 着装）</span>
-                                    <textarea
-                                        className="w-full rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-secondary)] px-3 py-2 ts-12 text-[var(--c-text)] placeholder-[var(--c-icon)] opacity-80 focus:border-[var(--c-accent)] focus:outline-none resize-none"
-                                        rows={2}
-                                        placeholder={`描述 ${character.name} 的生图形象，如：黑长直、白裙、动漫风格…`}
-                                        value={character.appearance || ""}
-                                        onChange={(e) => updateCharacterAppearance(character.id, e.target.value)}
-                                    />
-                                </div>
+                                {/* 生图提示词 / 形象描述（默认折叠，点击展开） */}
+                                {expandedCharId === character.id && (
+                                    <div className="flex flex-col gap-1 pl-[calc(2.75rem+0.5rem)]">
+                                        <span className="ts-11 text-[var(--c-icon)] opacity-70">生图提示词（画风 / 构图 / 着装）</span>
+                                        <textarea
+                                            className="w-full rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-secondary)] px-3 py-2 ts-12 text-[var(--c-text)] placeholder-[var(--c-icon)] opacity-80 focus:border-[var(--c-accent)] focus:outline-none resize-none"
+                                            rows={2}
+                                            placeholder={`描述 ${character.name} 的生图形象，如：黑长直、白裙、动漫风格…`}
+                                            value={character.appearance || ""}
+                                            onChange={(e) => updateCharacterAppearance(character.id, e.target.value)}
+                                        />
+                                    </div>
+                                )}
                             </div>
                         );
                     })}
