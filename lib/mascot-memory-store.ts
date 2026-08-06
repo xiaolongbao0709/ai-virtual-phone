@@ -6,8 +6,8 @@
 // - 长期记忆：AI 自动 + 用户手动，跨会话保留，可增删改
 // - 存储：IndexedDB，独立于聊天记录，按 related_to 隔离
 
-const DB_NAME = "AiPhoneMascotDB";
-const DB_VERSION = 4; // v4: + mascot_memories store (replaces old "memory" single-entry store)
+const DB_NAME = "AiPhoneMascotMemoryDB";
+const DB_VERSION = 1; // 独立数据库，不与 chat DB 共享，避免版本冲突导致的意外清空
 const STORE_NAME = "mascot_memories";
 
 // ── 类型 ──
@@ -58,14 +58,6 @@ function openMemoryStore(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      // 保留旧的 chat store
-      if (!db.objectStoreNames.contains("chat")) {
-        db.createObjectStore("chat");
-      }
-      // 新记忆 store（替换旧的 "memory" store）
-      if (db.objectStoreNames.contains("memory")) {
-        db.deleteObjectStore("memory");
-      }
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         const store = db.createObjectStore(STORE_NAME, { keyPath: "entry_id" });
         store.createIndex("layer", "layer", { unique: false });
