@@ -2275,13 +2275,13 @@ async function handleNavigate(args: Record<string, unknown>): Promise<ToolResult
         else if (subpage === "album") desc = characterId
             ? `已跳转到角色相册`
             : "已跳转到角色相册入口（选择角色查看）";
-        return { name: "导航", success: true, data: desc };
+        return { name: "导航", success: true, data: desc, continueConversation: false };
     }
 
     // ── 普通桌面应用导航 ──
     const { mascotNavigate } = await import("./mascot-events");
     mascotNavigate(page, subpage);
-    return { name: "导航", success: true, data: `已跳转到 ${page}${subpage ? `:${subpage}` : ""}` };
+    return { name: "导航", success: true, data: `已跳转到 ${page}${subpage ? `:${subpage}` : ""}`, continueConversation: false };
 }
 
 // ── 套件展开管理 ─────────────────────────────

@@ -562,6 +562,9 @@ async function callMascotText(
         raw = streamResult.content.trim();
     } catch (streamError) {
         if (options?.signal?.aborted) throw streamError;
+        // HTTP 状态类错误（429/401/403/500 等）不是"流式不可用"，直接抛出不做降级重试
+        const errMsg = (streamError as Error).message || "";
+        if (/^API (Stream|Tool Stream )?Error \d{3}/i.test(errMsg)) throw streamError;
         await options?.callbacks?.onStreamFallback?.(formatErrorMessage(streamError));
 
         const request = buildProviderRequest(apiConfig, null, messages);
@@ -645,6 +648,9 @@ async function callMascotNative(
             );
         } catch (streamError) {
             if (options?.signal?.aborted) throw streamError;
+            // HTTP 状态类错误（429/401/403/500 等）不是"流式不可用"，直接抛出不做降级重试
+            const errMsg = (streamError as Error).message || "";
+            if (/^API (Stream|Tool Stream )?Error \d{3}/i.test(errMsg)) throw streamError;
             await options?.callbacks?.onStreamFallback?.(formatErrorMessage(streamError));
 
             const fallbackRequest = buildProviderRequest(apiConfig, null, messages, { tools });

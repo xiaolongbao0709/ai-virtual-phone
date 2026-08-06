@@ -486,6 +486,7 @@ export async function sendMascotMessage({
             }
 
             if (response.toolCalls.length > 0) {
+                const roundResults: Array<{ continueConversation?: boolean }> = [];
                 for (let i = 0; i < response.toolCalls.length; i += 1) {
                     const call = response.toolCalls[i];
                     const nativeCall = response.protocol === "native"
@@ -509,6 +510,7 @@ export async function sendMascotMessage({
                     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
                     const result = await executeMascotToolCall(call, { ...toolCtx, history: workingMessages });
+                    roundResults.push(result);
                     if (result.success) mascotFillField({ field: call.name, value: result.data || "" });
 
                     const resultText = result.success ? (result.data || "完成") : (result.error || "未知错误");
@@ -528,6 +530,8 @@ export async function sendMascotMessage({
                     workingMessages = normalizeMessages(updated);
                     publishMessages(workingMessages);
                 }
+                // 若本轮所有工具都标记为终态（如导航），不再发起后续 LLM 轮次
+                if (roundResults.length > 0 && roundResults.every((r) => r.continueConversation === false)) break;
                 continue;
             }
 
