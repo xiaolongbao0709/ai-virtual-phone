@@ -22,6 +22,10 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
     const [location, setLocation] = useState("");
     const [locationDraft, setLocationDraft] = useState("");
     const [mentionIds, setMentionIds] = useState<Set<string>>(new Set());
+    const [peopleTags, setPeopleTags] = useState<Set<string>>(new Set());
+    const [showPeople, setShowPeople] = useState(false);
+    const userIdentity = resolveUserIdentity(undefined, "chat");
+    const userName = userIdentity?.name ?? "我";
 
     // Panel toggles
     const [showMention, setShowMention] = useState(false);
@@ -74,6 +78,15 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
 
     const handleToggleChar = (charId: string) => {
         setVisibility(prev => ({ ...prev, [charId]: !prev[charId] }));
+    };
+
+    const handleTogglePeopleTag = (charId: string) => {
+        setPeopleTags(prev => {
+            const next = new Set(prev);
+            if (next.has(charId)) next.delete(charId);
+            else next.add(charId);
+            return next;
+        });
     };
 
     const handleToggleMention = (charId: string) => {
@@ -174,6 +187,7 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
             photoDescription: photoDesc.trim() || undefined,
             visibility: visibleCharIds,
             location: location || undefined,
+            peopleTags: Array.from(peopleTags),
         });
 
         if (post) {
@@ -313,6 +327,61 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
                                     </div>
                                 ))}
                             </div>
+                        </div>
+                    )}
+
+                    {/* People-in-photo Section */}
+                    <div className="compose-nav-row" onClick={() => { setShowPeople(!showPeople); }}>
+                        <div className="compose-nav-left">
+                            <svg className="compose-nav-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                                <circle cx="9" cy="7" r="4" />
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                            </svg>
+                            <span className="compose-nav-label">照片里有谁</span>
+                        </div>
+                        <div className="compose-nav-right">
+                            <span className="compose-nav-value">{peopleTags.size > 0 ? `${Array.from(peopleTags).map(id => id === "user" ? userName : getCharName(id)).join("、")}` : ""}</span>
+                            <svg className="compose-nav-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: showPeople ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>
+                                <polyline points="9 18 15 12 9 6" />
+                            </svg>
+                        </div>
+                    </div>
+                    {showPeople && (
+                        <div className="compose-panel-inline" style={{ padding: "12px 16px" }}>
+                            <div className="chat-contact-list">
+                                <div
+                                    className="chat-contact-item"
+                                    onClick={() => handleTogglePeopleTag("user")}
+                                >
+                                    <div className="chat-contact-avatar" style={peopleTags.has("user") ? { outline: "2px solid var(--c-primary, #07C160)", outlineOffset: "2px" } : undefined}>
+                                        {userIdentity?.avatarUrl ? (
+                                            <img src={userIdentity.avatarUrl} alt="" />
+                                        ) : (
+                                            <ChatFallbackAvatar />
+                                        )}
+                                    </div>
+                                    <span className="chat-contact-name">{userName}（我）</span>
+                                </div>
+                                {enrichedContacts.map(c => (
+                                    <div
+                                        key={c.characterId}
+                                        className="chat-contact-item"
+                                        onClick={() => handleTogglePeopleTag(c.characterId)}
+                                    >
+                                        <div className="chat-contact-avatar" style={peopleTags.has(c.characterId) ? { outline: "2px solid var(--c-primary, #07C160)", outlineOffset: "2px" } : undefined}>
+                                            {c.char!.avatar ? (
+                                                <img src={c.char!.avatar} alt="" />
+                                            ) : (
+                                                <ChatFallbackAvatar />
+                                            )}
+                                        </div>
+                                        <span className="chat-contact-name">{c.char!.name}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="ts-12 text-[var(--c-icon)] opacity-70 mt-2">选谁在这张照片里。风景 / 心情照可不填；选项里已包含你自己（U）。</div>
                         </div>
                     )}
 

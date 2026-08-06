@@ -18,7 +18,7 @@ import { buildTwoLevelMomentThreads } from "@/lib/moments-comment-threading";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import { splitBilingualText } from "@/lib/bilingual-text";
 import { retryMomentGeneratedPhoto } from "@/lib/generated-image-retry";
-import { RefreshCw, Trash2, MoreHorizontal, MapPin, Heart, MessageCircle, Pencil } from "lucide-react";
+import { RefreshCw, Trash2, MoreHorizontal, MapPin, Heart, MessageCircle, Pencil, Users } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui";
 
 type Props = {
@@ -314,6 +314,14 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                 <div className="feed-post-location mb-3 text-[var(--c-icon)] opacity-80 flex items-center ts-12">
                     <MapPin size={12} strokeWidth={1.75} className="mr-1" />
                     {post.location}
+                </div>
+            )}
+
+            {/* People in photo */}
+            {post.peopleTags && post.peopleTags.length > 0 && (
+                <div className="feed-post-people mb-3 text-[var(--c-icon)] opacity-80 flex items-center ts-12">
+                    <Users size={12} strokeWidth={1.75} className="mr-1" />
+                    照片里有：{post.peopleTags.map(tag => tag === "user" ? (userIdentity?.name ?? "我") : getCharName(tag)).join("、")}
                 </div>
             )}
 

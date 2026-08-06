@@ -14,7 +14,8 @@ export type MomentPost = {
     photoGenerationError?: string;
     photoCompressedAt?: string;
     photoCleanedAt?: string;
-    visibility: string[];           // characterId[] of who can see this post
+    visibility: string[];              // characterId[] of who can see this post
+    peopleTags?: string[];            // characterId[] + "user" — who is IN the photo (optional; helps characters recognize people)           // characterId[] of who can see this post
     location?: string;              // 用户添加的地点
     likes: MomentLike[];
     createdAt: string;              // ISO date string

@@ -1307,6 +1307,12 @@ function buildMomentUiSnapshot(
     if (post.location) parts.push(`地点：${post.location}`);
     if (post.photoUrl) parts.push("配图：见附图");
     else if (post.photoDescription) parts.push(`配图：${post.photoDescription}`);
+    if (post.peopleTags && post.peopleTags.length > 0) {
+        const peopleNames = post.peopleTags.map(tag =>
+            tag === "user" ? userName : (chars.find(c => c.id === tag)?.name ?? tag)
+        );
+        parts.push(`照片里的人：${peopleNames.join("、")}`);
+    }
     const likes = characterId
         ? getVisibleMomentLikesForCharacter(post, characterId, post.likes)
         : post.likes;
