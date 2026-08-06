@@ -712,10 +712,29 @@ function triggerAIReactionsForPost(post: MomentPost, excludeAuthorId: string): v
         .filter(c => c.char) as { contact: typeof contacts[0]; char: Character }[];
 
     // Collect who will comment
+    // 根据"照片里有谁"(peopleTags) 加权谁来评论：让评论者跟照片人物相关。
     const cfg = loadMomentsConfig();
+    const photoPeople = post.peopleTags ?? [];
+    const photoHasUser = photoPeople.includes("user");
+    const photoCharIds = photoPeople.filter(id => id !== "user");
     const commenters: Character[] = [];
     for (const { char } of visibleChars) {
-        if (Math.random() < cfg.commentProb) {
+        let prob = cfg.commentProb;
+        if (photoCharIds.includes(char.id)) {
+            // 自己入了镜 → 高概率评论
+            prob = Math.max(cfg.commentProb, 0.92);
+        } else if (photoCharIds.length > 0) {
+            // 照片里有别的角色
+            if (photoHasUser) {
+                // 是跟"你"的合照 → 朋友圈好友略抬高概率
+                prob = Math.min(1, cfg.commentProb * 1.6);
+            } else {
+                // 纯角色之间的合照 → 非当事人降低概率，更"圈内"
+                prob = cfg.commentProb * 0.5;
+            }
+        }
+        // 无 peopleTags（风景/心情照）→ 维持原 commentProb
+        if (Math.random() < prob) {
             commenters.push(char);
         }
     }
