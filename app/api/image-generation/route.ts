@@ -4,7 +4,7 @@ import JSZip from "jszip";
 
 export const maxDuration = 120;
 
-type ImageGenerationRequest = {
+export type ImageGenerationRequest = {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
@@ -267,7 +267,7 @@ async function translateToEnglish(text: string): Promise<string> {
     return text;
 }
 
-async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+export async function runNovelAIImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
   try {
     const naiKey = input.novelaiKey?.trim();
     // 空白 = 内置官方地址（与棉花糖机一致：地址写死、用户无需填写）

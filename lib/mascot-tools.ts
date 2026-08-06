@@ -3,14 +3,14 @@
 //
 // 套件设计（默认只暴露 loader，按需展开）：
 //   - 角色卡套件 (character_pack)        — 4 个子工具
-//   - 世界书套件 (worldbook_pack)        — 5 个子工具
+//   - 世界书套件 (worldbook_pack)        — 6 个子工具
 //   - 预设套件 (preset_pack)             — 5 个子工具
 //   - 正则套件 (regex_pack)              — 5 个子工具
 //   - CSS套件 (css_pack)                 — 3 个子工具
 //   - 图像处理套件 (image_pack)          — 10 个子工具
 //   - 桌面组件套件 (widget_pack)         — 7 个子工具
 //   - 世界关系网套件 (world_pack)        — 3 个子工具
-//   - 聊天控制套件 (chat_pack)           — 4 个子工具
+//   - 聊天控制套件 (chat_pack)           — 5 个子工具
 //   - 长期记忆套件 (memory_pack)          — 5 个子工具
 //   - 导航工具 (navigate)                — 1 个独立工具（直接暴露）
 
@@ -413,6 +413,55 @@ const CREATE_GROUP_EVENT_SCHEMA = {
         },
     },
     required: ["groupName", "messages"],
+    additionalProperties: false,
+};
+
+// ── 导演对讲机（旁白干预）──
+const INJECT_NARRATOR_EVENT_SCHEMA = {
+    type: "object",
+    properties: {
+        content: { type: "string", description: "旁白/系统消息内容。描述发生的突发事件、环境变化或剧情推动。" },
+        style: { type: "string", enum: ["narrator", "system", "event"], description: "消息风格：narrator=旁白叙述（如「突然，灯灭了」），system=系统通知（如「⏰ 时间推进到第二天」），event=事件描述（如「⚠ 楼下传来急促的敲门声」）。默认 narrator。" },
+    },
+    required: ["content"],
+    additionalProperties: false,
+};
+
+// ── 动态世界更新（Lore 注入）──
+const EXTRACT_AND_INJECT_LORE_SCHEMA = {
+    type: "object",
+    properties: {
+        worldbook: { type: "string", description: "目标世界书名称。不存在则自动创建。" },
+        loreEntries: {
+            type: "array",
+            items: {
+                type: "object",
+                properties: {
+                    key: { type: "string", description: "词条触发关键词" },
+                    content: { type: "string", description: "词条正文内容" },
+                    comment: { type: "string", description: "词条注释/显示标题" },
+                },
+                required: ["key", "content"],
+                additionalProperties: false,
+            },
+            description: "要写入的词条数组",
+        },
+        characterUpdates: {
+            type: "array",
+            items: {
+                type: "object",
+                properties: {
+                    name: { type: "string", description: "角色名" },
+                    field: { type: "string", enum: ["persona", "appearance", "personality", "briefPersona"], description: "要修改的字段" },
+                    value: { type: "string", description: "新值（会覆盖原值）" },
+                },
+                required: ["name", "field", "value"],
+                additionalProperties: false,
+            },
+            description: "要更新的角色卡字段。角色随剧情自动成长时使用。",
+        },
+    },
+    required: ["worldbook"],
     additionalProperties: false,
 };
 
@@ -874,6 +923,7 @@ export const MASCOT_TOOL_PACKAGES: MascotToolPackage[] = [
             { name: "创建词条", description: "在世界书里新建词条。如果指定的世界书不存在会自动创建。content 推荐用 XML 标签包裹增强结构性。", parameterSchema: CREATE_WORLDBOOK_ENTRY_SCHEMA },
             { name: "更新词条", description: "修改词条的某个字段（key/content/comment/constant/position）。", parameterSchema: UPDATE_WORLDBOOK_ENTRY_SCHEMA },
             { name: "删除词条", description: "删除世界书里的某个词条。", parameterSchema: DELETE_WORLDBOOK_ENTRY_SCHEMA },
+            { name: "提取注入世界设定", description: "从聊天记录中提取关键事件，批量写入世界书词条，同时可更新角色卡人设。剧情结束后让小卷自动总结并沉淀设定。", parameterSchema: EXTRACT_AND_INJECT_LORE_SCHEMA },
         ],
         usageGuide: WORLDBOOK_PROMPT,
     },
@@ -941,8 +991,9 @@ export const MASCOT_TOOL_PACKAGES: MascotToolPackage[] = [
             { name: "编辑聊天消息", description: "修改指定消息的内容（按 messageId 定位）。用于帮用户润色/重写某条回复或修正角色卡壳的回复。", parameterSchema: EDIT_CHAT_MESSAGE_SCHEMA },
             { name: "更新角色头像", description: "把图片链接（http/https/data:URL）直接设为指定角色的头像。配合「图像处理套件」生成+上传后使用。", parameterSchema: UPDATE_CHARACTER_AVATAR_SCHEMA },
             { name: "创建群聊事件", description: "在指定群聊中按脚本顺序让多个角色连续发消息。一条调用即可编排修罗场、推进剧情等群戏。", parameterSchema: CREATE_GROUP_EVENT_SCHEMA },
+            { name: "注入旁白事件", description: "向当前聊天注入一条系统/旁白消息。跑团DM模式：制造突发事件、环境变化、剧情推动，角色会对该事件自动做出反应。", parameterSchema: INJECT_NARRATOR_EVENT_SCHEMA },
         ],
-        usageGuide: "=== 聊天控制套件使用指南 ===\n\n【读取聊天记录】读取当前手机里正在聊天的会话最近消息。\n- 不传 limit 时默认读最近 10 条\n- 自动过滤系统/工具消息，只保留用户和角色的对话\n- 例子：[执行动作:读取聊天记录({\"limit\":15})]\n\n【编辑聊天消息】修改已有消息的内容。\n- messageId 从「读取聊天记录」的返回结果中获取\n- 编辑后请告诉用户改了什么\n- 例子：[执行动作:编辑聊天消息({\"messageId\":\"msg_abc123\",\"newContent\":\"（润色后的版本）\"})]\n\n【更新角色头像】把图片设为角色头像。\n- avatarUrl 需要是 data: 或 http/https 链接，不能是本地路径\n- 优先先用「图像处理套件→上传图床」把生图转成公开 URL 再调用本工具\n- 例子：[执行动作:更新角色头像({\"characterName\":\"林晚\",\"avatarUrl\":\"https://i.imgur.com/xxx.png\"})]\n\n【创建群聊事件】在群聊中按剧本让角色连续发消息。\n- groupName 必须是已创建的群聊名\n- messages 数组按顺序发送，每条指定 characterName+content\n- 如果角色不在群成员中会提示\n- 例子：[执行动作:创建群聊事件({\"groupName\":\"修罗场\",\"messages\":[{\"characterName\":\"季言浅\",\"content\":\"你们俩...什么时候的事？\"},{\"characterName\":\"苏棠\",\"content\":\"不关你的事。\"}]})]",
+        usageGuide: "=== 聊天控制套件使用指南 ===\n\n【读取聊天记录】读取当前手机里正在聊天的会话最近消息。\n- 不传 limit 时默认读最近 10 条\n- 自动过滤系统/工具消息，只保留用户和角色的对话\n- 例子：[执行动作:读取聊天记录({\"limit\":15})]\n\n【编辑聊天消息】修改已有消息的内容。\n- messageId 从「读取聊天记录」的返回结果中获取\n- 编辑后请告诉用户改了什么\n- 例子：[执行动作:编辑聊天消息({\"messageId\":\"msg_abc123\",\"newContent\":\"（润色后的版本）\"})]\n\n【更新角色头像】把图片设为角色头像。\n- avatarUrl 需要是 data: 或 http/https 链接，不能是本地路径\n- 优先先用「图像处理套件→上传图床」把生图转成公开 URL 再调用本工具\n- 例子：[执行动作:更新角色头像({\"characterName\":\"林晚\",\"avatarUrl\":\"https://i.imgur.com/xxx.png\"})]\n\n【创建群聊事件】在群聊中按剧本让角色连续发消息。\n- groupName 必须是已创建的群聊名\n- messages 数组按顺序发送，每条指定 characterName+content\n- 如果角色不在群成员中会提示\n- 例子：[执行动作:创建群聊事件({\"groupName\":\"修罗场\",\"messages\":[{\"characterName\":\"季言浅\",\"content\":\"你们俩...什么时候的事？\"},{\"characterName\":\"苏棠\",\"content\":\"不关你的事。\"}]})]\n\n【注入旁白事件】向当前聊天注入旁白/系统消息（跑团DM模式）。\n- style=narrator：文学性旁白（「突然，一阵冷风吹开了窗……」）\n- style=system：系统通知（「⏰ 时间推进到第二天早上」）\n- style=event：事件描述（「⚠ 楼下传来急促的敲门声」）\n- 注入后角色会自动对事件做出反应\n- 例子：[执行动作:注入旁白事件({\"content\":\"突然停电了，房间里一片漆黑。窗外传来警笛声。\",\"style\":\"narrator\"})]",
     },
     {
         id: "memory_pack",
@@ -1115,6 +1166,8 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "编辑聊天消息": "mascot_edit_chat_message",
     "更新角色头像": "mascot_update_character_avatar",
     "创建群聊事件": "mascot_create_group_event",
+    "注入旁白事件": "mascot_inject_narrator_event",
+    "提取注入世界设定": "mascot_extract_and_inject_lore",
     "读取记忆": "mascot_search_memory",
     "写入记忆": "mascot_write_memory",
     "更新记忆": "mascot_update_memory",
@@ -1242,6 +1295,7 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "创建词条": return await handleCreateWorldbookEntry(call.args);
             case "更新词条": return await handleUpdateWorldbookEntry(call.args);
             case "删除词条": return await handleDeleteWorldbookEntry(call.args);
+            case "提取注入世界设定": return await handleExtractAndInjectLore(call.args);
 
             // ─── 预设 ───
             case "列出预设": return await handleListPresets();
@@ -1280,6 +1334,7 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "编辑聊天消息": return await handleEditChatMessage(call.args);
             case "更新角色头像": return await handleUpdateCharacterAvatar(call.args);
             case "创建群聊事件": return await handleCreateGroupEvent(call.args);
+            case "注入旁白事件": return await handleInjectNarratorEvent(call.args);
 
             // ─── 长期记忆 ───
             case "读取记忆": return await handleSearchMemory(call.args);
@@ -2930,6 +2985,165 @@ async function handleSummarizeMemory(args: Record<string, unknown>): Promise<Too
         };
     } catch (err) {
         return { name: "沉淀记忆", success: false, error: (err as Error).message };
+    }
+}
+
+// ── 导演对讲机 Handler ────────────────────────
+
+async function handleInjectNarratorEvent(args: Record<string, unknown>): Promise<ToolResult> {
+    const content = String(args.content || "").trim();
+    if (!content) return { name: "注入旁白事件", success: false, error: "content 参数必填" };
+
+    const style = (typeof args.style === "string" ? args.style : "narrator") as "narrator" | "system" | "event";
+    const stylePrefix: Record<string, string> = {
+        narrator: "📖 ",
+        system: "⏰ ",
+        event: "⚠ ",
+    };
+
+    try {
+        const { getMascotPageContext } = await import("./mascot-context");
+        const { pushChatMessage } = await import("./chat-storage");
+        const ctx = getMascotPageContext();
+        const sessionId = ctx.fields?.sessionId as string | undefined;
+        if (!sessionId || sessionId === "mascot") {
+            return {
+                name: "注入旁白事件",
+                success: false,
+                error: sessionId === "mascot"
+                    ? "当前是小卷的对话，不能注入旁白。请先让用户进入某个角色聊天窗口，再召唤你执行此操作。"
+                    : "未检测到当前聊天会话。请先让用户进入一个角色聊天窗口。",
+            };
+        }
+
+        const prefix = stylePrefix[style] || stylePrefix.narrator;
+        pushChatMessage({ sessionId, role: "system", content: prefix + content });
+
+        return {
+            name: "注入旁白事件",
+            success: true,
+            data: `已在当前聊天注入旁白事件 [${style}]：${content.slice(0, 80)}${content.length > 80 ? "…" : ""}`,
+        };
+    } catch (err) {
+        return { name: "注入旁白事件", success: false, error: (err as Error).message };
+    }
+}
+
+// ── Lore 自动注入 Handler ──────────────────────
+
+async function handleExtractAndInjectLore(args: Record<string, unknown>): Promise<ToolResult> {
+    const worldbook = String(args.worldbook || "").trim();
+    if (!worldbook) return { name: "提取注入世界设定", success: false, error: "worldbook 参数必填" };
+
+    const loreEntries = args.loreEntries as Array<{ key: string; content: string; comment?: string }> | undefined;
+    const characterUpdates = args.characterUpdates as Array<{ name: string; field: string; value: string }> | undefined;
+
+    try {
+        const results: string[] = [];
+
+        // 1. 处理世界书词条
+        if (loreEntries && loreEntries.length > 0) {
+            const { loadWorldBooks, saveWorldBooks, createWorldBook } = await import("./settings-storage");
+            const books = loadWorldBooks();
+            let bookIdx = books.findIndex((b) => b.name === worldbook);
+            if (bookIdx < 0) {
+                const newBook = createWorldBook(worldbook);
+                books.push(newBook);
+                bookIdx = books.length - 1;
+                results.push(`创建世界书「${worldbook}」`);
+            }
+
+            const book = { ...books[bookIdx] };
+            const existingKeys = new Set((book.entries || []).map((e) => e.key));
+            let added = 0;
+            let updated = 0;
+
+            for (const entry of loreEntries) {
+                if (!entry.key || !entry.content) continue;
+                const existingIdx = (book.entries || []).findIndex((e) => e.key === entry.key);
+
+                if (existingIdx >= 0) {
+                    // 更新已有词条
+                    book.entries[existingIdx] = {
+                        ...book.entries[existingIdx],
+                        content: entry.content,
+                        comment: entry.comment || book.entries[existingIdx].comment,
+                        disable: false,
+                    };
+                    updated++;
+                } else {
+                    // 新建词条
+                    const newEntry = {
+                        uid: `entry_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                        key: entry.key,
+                        content: entry.content,
+                        comment: entry.comment || entry.key,
+                        use_regex: false,
+                        disable: false,
+                        constant: false,
+                        position: 0 as const,
+                        insertion_order: 100,
+                        role: 0,
+                    };
+                    book.entries = [...(book.entries || []), newEntry];
+                    added++;
+                }
+            }
+
+            book.updatedAt = Date.now();
+            books[bookIdx] = book;
+            saveWorldBooks(books);
+
+            const parts: string[] = [];
+            if (added > 0) parts.push(`新增 ${added} 条词条`);
+            if (updated > 0) parts.push(`更新 ${updated} 条词条`);
+            results.push(`世界书「${worldbook}」：${parts.join("，")}`);
+        }
+
+        // 2. 处理角色卡更新
+        if (characterUpdates && characterUpdates.length > 0) {
+            const { loadCharacters, saveCharacters } = await import("./character-storage");
+            const chars = loadCharacters();
+            let charUpdated = 0;
+
+            for (const update of characterUpdates) {
+                if (!update.name || !update.field || update.value === undefined) continue;
+                const idx = chars.findIndex((c) => c.name === update.name);
+                if (idx < 0) {
+                    results.push(`（跳过：未找到角色「${update.name}」）`);
+                    continue;
+                }
+
+                const validFields = ["persona", "appearance", "personality", "briefPersona"];
+                if (!validFields.includes(update.field)) {
+                    results.push(`（跳过：不支持的角色字段「${update.field}」）`);
+                    continue;
+                }
+
+                const char = { ...chars[idx] } as Record<string, unknown>;
+                char[update.field] = update.value;
+                char.updatedAt = new Date().toISOString();
+                chars[idx] = char as typeof chars[number];
+                charUpdated++;
+            }
+
+            if (charUpdated > 0) {
+                saveCharacters(chars);
+                results.push(`角色卡：更新 ${charUpdated} 个角色`);
+            }
+        }
+
+        if (results.length === 0) {
+            return { name: "提取注入世界设定", success: true, data: "未产生任何更新（没有提供有效词条或角色更新）。" };
+        }
+
+        return {
+            name: "提取注入世界设定",
+            success: true,
+            data: `✅ 世界设定已更新：\n${results.map((r) => `  · ${r}`).join("\n")}`,
+        };
+    } catch (err) {
+        return { name: "提取注入世界设定", success: false, error: (err as Error).message };
     }
 }
 
