@@ -11,6 +11,7 @@ import {
   pushVnMessage,
   updateChapterStartMessageId,
   archiveChapter,
+  updateChapterSummary,
   deleteVnMessage,
   deleteVnMessagesFrom,
   editVnMessage,
@@ -20,7 +21,7 @@ import {
   loadVnConfig,
 } from "@/lib/vn-storage";
 import type { VnFrameAudio, VnMessage } from "@/lib/vn-types";
-import { generateVnCompletion } from "@/lib/vn-engine";
+import { generateVnCompletion, summarizeVnChapter } from "@/lib/vn-engine";
 import { parseVnResponse, packageUserInput, packageMultiActions } from "@/lib/vn-parser";
 import { resolveVnAssetMap, loadVnScenes, getVnSceneLayout, getVnSpriteLayout } from "@/lib/vn-asset-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
@@ -1328,6 +1329,16 @@ export function VnPlayer({ characterId, chapterIndex, onClose, onChapterEnd, vnT
                 onClick={async () => {
                   setIsArchiving(true);
                   archiveChapter(session.id, chapterIndex);
+                  // Auto-summarize for cross-module memory
+                  try {
+                    const msgs = loadVnMessagesForChapter(session.id, chapterIndex);
+                    if (msgs.length > 0) {
+                      const summary = await summarizeVnChapter(characterId, msgs);
+                      updateChapterSummary(session.id, chapterIndex, summary);
+                    }
+                  } catch (err) {
+                    console.warn("[VN] Auto-summarize failed:", err);
+                  }
                   // Small delay so the user sees the archiving state
                   await new Promise((r) => setTimeout(r, 600));
                   setIsArchiving(false);

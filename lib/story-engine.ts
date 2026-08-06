@@ -22,6 +22,8 @@ import { STORY_PARSER_VERSION } from "./story-parser";
 import { loadStoryMessages, replaceStoryMessages, type StoryMessage } from "./story-storage";
 import type { ChatMessage } from "./chat-storage";
 import { MacroEngine } from "./macro-engine";
+import { simpleLLMCall } from "./api-helpers";
+import { resolveAuxiliaryApiConfig } from "./settings-storage";
 
 const DEFAULT_STORY_FOLD_TAGS = "think,thinking,summary";
 const DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS = "think,thinking";
@@ -133,6 +135,51 @@ export function getStoryRenderSignature(characterId: string): { regexSignature: 
   };
 }
 
+/**
+ * Auto-generate a story summary when the LLM didn't produce a <summary> tag.
+ * This ensures cross-module memory (story → chat) works even with presets
+ * that don't include summary output instructions.
+ */
+async function summarizeStoryContent(
+  characterId: string,
+  storyText: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  try {
+    const apiConfig = resolveAuxiliaryApiConfig("memorySummaryApiConfigId");
+    if (!apiConfig) return "";
+
+    const character = loadCharacters().find((c) => c.id === characterId);
+    const charName = character?.name ?? "角色";
+    const userIdentity = resolveUserIdentity(characterId, "story");
+    const userName = userIdentity?.name ?? "用户";
+
+    // Strip HTML tags for cleaner summary input
+    const plainText = storyText
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 3000);
+
+    if (!plainText) return "";
+
+    const prompt = `以下是${charName}与${userName}在剧情模式中的一段故事。请用200字以内的中文总结这段故事的关键情节、人物关系和情感走向。
+
+${plainText}`;
+
+    const result = await simpleLLMCall(apiConfig, [{ role: "user", content: prompt }], {
+      temperature: 0.3,
+      max_tokens: 500,
+      signal,
+    });
+
+    return result.content?.trim() || "";
+  } catch (err) {
+    console.warn("[Story] Auto-summarize fallback failed:", err);
+    return "";
+  }
+}
+
 export async function generateStoryCompletion(
   characterId: string,
   history: StoryMessage[],
@@ -161,10 +208,17 @@ export async function generateStoryCompletion(
     macroEngine,
     activeTags: ["story"],
   });
+
+  // Fallback: if LLM didn't output <summary>, auto-generate one for cross-module memory
+  let summaryText = parsed.summaryText;
+  if (!summaryText && parsed.renderedText) {
+    summaryText = await summarizeStoryContent(characterId, parsed.renderedText, options?.signal);
+  }
+
   return {
     rawText: parsed.rawText,
     renderedText: parsed.renderedText,
-    storySummary: parsed.summaryText,
+    storySummary: summaryText,
     regexSignature,
     parserVersion: STORY_PARSER_VERSION,
     promptMessages: llmMessages,
