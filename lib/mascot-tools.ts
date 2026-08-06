@@ -1,14 +1,16 @@
 // lib/mascot-tools.ts
-// 小卷工具系统：7 个套件 + 36 个细粒度工具，支持文本协议和原生协议双轨。
+// 小卷工具系统：8 个套件 + 39 个细粒度工具，支持文本协议和原生协议双轨。
 //
 // 套件设计（默认只暴露 loader，按需展开）：
-//   - 角色卡套件 (character_pack)     — 3 个子工具
-//   - 世界书套件 (worldbook_pack)     — 5 个子工具
-//   - 预设套件 (preset_pack)          — 5 个子工具
-//   - 正则套件 (regex_pack)           — 5 个子工具
-//   - CSS套件 (css_pack)              — 3 个子工具
-//   - 图像处理套件 (image_pack)       — 10 个子工具
-//   - 导航工具 (navigate)             — 1 个独立工具（直接暴露）
+//   - 角色卡套件 (character_pack)        — 3 个子工具
+//   - 世界书套件 (worldbook_pack)        — 5 个子工具
+//   - 预设套件 (preset_pack)             — 5 个子工具
+//   - 正则套件 (regex_pack)              — 5 个子工具
+//   - CSS套件 (css_pack)                 — 3 个子工具
+//   - 图像处理套件 (image_pack)          — 10 个子工具
+//   - 桌面组件套件 (widget_pack)         — 7 个子工具
+//   - 世界关系网套件 (world_pack)        — 3 个子工具
+//   - 导航工具 (navigate)                — 1 个独立工具（直接暴露）
 
 import type { LlmToolDefinition } from "./llm-provider-adapter";
 import type { ToolCall, ToolResult } from "./tool-executor";
@@ -316,6 +318,39 @@ const DELETE_WORLDBOOK_ENTRY_SCHEMA = {
         entryUid: { type: "string", description: "词条 uid" },
     },
     required: ["worldbook", "entryUid"],
+    additionalProperties: false,
+};
+
+// ── 世界关系网工具 ──
+const CREATE_TARGET_WORLD_SCHEMA = {
+    type: "object",
+    properties: {
+        name: { type: "string", description: "新世界的名称（如「校园恋爱线」「赛博朋克2077」）" },
+        description: { type: "string", description: "世界观描述（可选，用于给 LLM 上下文）" },
+    },
+    required: ["name"],
+    additionalProperties: false,
+};
+
+const IMPORT_CHARACTER_TO_WORLD_SCHEMA = {
+    type: "object",
+    properties: {
+        characterName: { type: "string", description: "角色名（用于在角色列表中定位）" },
+        worldName: { type: "string", description: "目标世界名称（必须已存在）" },
+    },
+    required: ["characterName", "worldName"],
+    additionalProperties: false,
+};
+
+const CREATE_WORLD_RELATIONSHIP_SCHEMA = {
+    type: "object",
+    properties: {
+        worldName: { type: "string", description: "世界名称（必须已存在且包含这两个角色）" },
+        fromCharacterName: { type: "string", description: "起始角色名" },
+        toCharacterName: { type: "string", description: "目标角色名" },
+        label: { type: "string", description: "关系标签，如「死党」「恋人」「宿敌」「师徒」等" },
+    },
+    required: ["worldName", "fromCharacterName", "toCharacterName", "label"],
     additionalProperties: false,
 };
 
@@ -755,6 +790,16 @@ export const MASCOT_TOOL_PACKAGES: MascotToolPackage[] = [
         ],
         usageGuide: WIDGET_PROMPT,
     },
+    {
+        id: "world_pack",
+        label: "世界关系网套件",
+        description: "管理可视化角色关系网：创建网状世界、导入角色到画布、为角色之间创建关系连线（如「死党」「恋人」「宿敌」）。",
+        subTools: [
+            { name: "创建世界", description: "新建一个网状世界（对应左上角分类 tab），可选填世界观描述。", parameterSchema: CREATE_TARGET_WORLD_SCHEMA },
+            { name: "导入角色到世界", description: "将已有的角色卡导入到指定世界的画布中。角色名和世界名都必须已存在。", parameterSchema: IMPORT_CHARACTER_TO_WORLD_SCHEMA },
+            { name: "创建角色关系", description: "在画布上为两个角色之间生成连线并填好关系标签（如「死党」「恋人」「宿敌」「师徒」等）。", parameterSchema: CREATE_WORLD_RELATIONSHIP_SCHEMA },
+        ],
+    },
 ];
 
 // 导航是独立工具（不在套件里），直接暴露
@@ -780,7 +825,7 @@ export function buildMascotToolsListPrompt(): string {
     lines.push("  参数：");
     lines.push("    · page (必填) — 目标页面。常用：");
     lines.push("      桌面应用：chat(聊天) / characters(角色) / story(剧情) / moments(朋友圈) / settings(设置) / calendar(日历) / music(音乐) / resources(资源库) / diary(日记) / reading(阅读) / checkphone(查手机) / theme(主题) / cocreate(协作) / game(游戏) / shopping(购物) / mapmode(地图) / group_chat(群聊) / worldbuilder(世界构建) / qa(问答)");
-    lines.push("      特殊页：me(我/个人中心—含角色相册、朋友圈互动设置等)");
+    lines.push("      特殊页：me(主页/个人中心—含角色相册、朋友圈互动设置等)");
     lines.push("    · subpage (可选) — 子页面。page=settings 时：presets(预设) / worldbook(世界书) / regex(正则) / api(API接口) / voice(语音) / binding(绑定) / data(数据) / identity(身份) / image-generation(生图设置) / tools(高级工具)");
     lines.push("                       page=me 时：moments-interaction(朋友圈互动设置) / album(角色相册，需同时传characterId)");
     lines.push("    · characterId (可选) — 角色ID，仅 page=me+subpage=album 时需要");
@@ -906,6 +951,9 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "预览DIY组件": "mascot_preview_diy_widget",
     "摆放组件": "mascot_place_widget",
     "移除DIY组件": "mascot_remove_diy_widget",
+    "创建世界": "mascot_create_target_world",
+    "导入角色到世界": "mascot_import_character_to_world",
+    "创建角色关系": "mascot_create_world_relationship",
 };
 
 const MASCOT_NATIVE_LOADER_NAMES: Record<string, string> = {
@@ -916,6 +964,7 @@ const MASCOT_NATIVE_LOADER_NAMES: Record<string, string> = {
     preset_pack: "mascot_load_preset_pack",
     regex_pack: "mascot_load_regex_pack",
     widget_pack: "mascot_load_widget_pack",
+    world_pack: "mascot_load_world_pack",
 };
 
 export function getMascotNativeToolName(displayName: string): string {
@@ -1051,6 +1100,11 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
             case "预览DIY组件": return await handlePreviewDiyWidget(call.args);
             case "摆放组件": return await handlePlaceWidget(call.args);
             case "移除DIY组件": return await handleRemoveDiyWidget(call.args);
+
+            // ─── 世界关系网 ───
+            case "创建世界": return await handleCreateTargetWorld(call.args);
+            case "导入角色到世界": return await handleImportCharacterToWorld(call.args);
+            case "创建角色关系": return await handleCreateWorldRelationship(call.args);
 
             // ─── 导航 ───
             case "导航": return await handleNavigate(call.args);
@@ -2259,6 +2313,103 @@ async function handleRemoveDiyWidget(args: Record<string, unknown>): Promise<Too
 }
 
 // ── Navigation ────────────────────────────────
+
+// ── 世界关系网 Handlers ───────────────────────
+
+async function handleCreateTargetWorld(args: Record<string, unknown>): Promise<ToolResult> {
+    const name = (typeof args.name === "string" ? args.name : "").trim();
+    if (!name) return { name: "创建世界", success: false, error: "name 参数必填" };
+    const description = typeof args.description === "string" ? args.description.trim() : "";
+
+    const { createCharacterWorldGroup, updateCharacterWorldDescription } = await import("./character-world-storage");
+    const group = createCharacterWorldGroup(name);
+    if (description) {
+        updateCharacterWorldDescription(group.id, description);
+    }
+
+    return {
+        name: "创建世界",
+        success: true,
+        data: `已创建世界「${group.name}」${description ? `，世界观：${description}` : ""}（id: ${group.id}）。现在可以用「导入角色到世界」把角色放进去，用「创建角色关系」连线。`,
+    };
+}
+
+async function handleImportCharacterToWorld(args: Record<string, unknown>): Promise<ToolResult> {
+    const characterName = (typeof args.characterName === "string" ? args.characterName : "").trim();
+    const worldName = (typeof args.worldName === "string" ? args.worldName : "").trim();
+    if (!characterName || !worldName) return { name: "导入角色到世界", success: false, error: "characterName 和 worldName 参数必填" };
+
+    const { loadCharacters } = await import("./character-storage");
+    const chars = loadCharacters();
+    const targetChar = chars.find(c => c.name === characterName);
+    if (!targetChar) {
+        const names = chars.map(c => c.name).join("、");
+        return { name: "导入角色到世界", success: false, error: `找不到角色「${characterName}」。现有角色：${names}` };
+    }
+
+    const { loadCharacterWorldGroups, moveCharacterToWorld } = await import("./character-world-storage");
+    const groups = loadCharacterWorldGroups();
+    const targetGroup = groups.find(g => g.name === worldName);
+    if (!targetGroup) {
+        const groupNames = groups.map(g => g.name).join("、");
+        return { name: "导入角色到世界", success: false, error: `找不到世界「${worldName}」。现有世界：${groupNames}` };
+    }
+
+    moveCharacterToWorld(targetChar.id, targetGroup.id);
+
+    return {
+        name: "导入角色到世界",
+        success: true,
+        data: `已将角色「${characterName}」导入世界「${worldName}」。现在可以用「创建角色关系」为它建立连线。`,
+    };
+}
+
+async function handleCreateWorldRelationship(args: Record<string, unknown>): Promise<ToolResult> {
+    const worldName = (typeof args.worldName === "string" ? args.worldName : "").trim();
+    const fromCharacterName = (typeof args.fromCharacterName === "string" ? args.fromCharacterName : "").trim();
+    const toCharacterName = (typeof args.toCharacterName === "string" ? args.toCharacterName : "").trim();
+    const label = (typeof args.label === "string" ? args.label : "").trim();
+    if (!worldName || !fromCharacterName || !toCharacterName || !label) {
+        return { name: "创建角色关系", success: false, error: "worldName、fromCharacterName、toCharacterName、label 参数均必填" };
+    }
+    if (fromCharacterName === toCharacterName) {
+        return { name: "创建角色关系", success: false, error: "两个角色不能是同一个人" };
+    }
+
+    const { loadCharacters } = await import("./character-storage");
+    const chars = loadCharacters();
+    const fromChar = chars.find(c => c.name === fromCharacterName);
+    const toChar = chars.find(c => c.name === toCharacterName);
+    if (!fromChar || !toChar) {
+        const missing = [!fromChar && fromCharacterName, !toChar && toCharacterName].filter(Boolean).join("、");
+        return { name: "创建角色关系", success: false, error: `找不到角色：${missing}` };
+    }
+
+    const { loadCharacterWorldGroups, addCharacterWorldRelation } = await import("./character-world-storage");
+    const groups = loadCharacterWorldGroups();
+    const targetGroup = groups.find(g => g.name === worldName);
+    if (!targetGroup) {
+        const groupNames = groups.map(g => g.name).join("、");
+        return { name: "创建角色关系", success: false, error: `找不到世界「${worldName}」。现有世界：${groupNames}` };
+    }
+
+    const memberSet = new Set(targetGroup.memberIds);
+    const missingFromWorld = [fromChar.id, toChar.id].filter(id => !memberSet.has(id));
+    if (missingFromWorld.length > 0) {
+        const missingNames = missingFromWorld.map(id => chars.find(c => c.id === id)?.name).filter(Boolean).join("、");
+        return { name: "创建角色关系", success: false, error: `角色「${missingNames}」不在世界「${worldName}」中，请先导入` };
+    }
+
+    addCharacterWorldRelation(targetGroup.id, fromChar.id, toChar.id, label);
+
+    return {
+        name: "创建角色关系",
+        success: true,
+        data: `已在世界「${worldName}」中创建关系连线：「${fromCharacterName}」—${label}—「${toCharacterName}」`,
+    };
+}
+
+// ── 导航 Handler ─────────────────────────────
 
 async function handleNavigate(args: Record<string, unknown>): Promise<ToolResult> {
     const page = args.page as string;
