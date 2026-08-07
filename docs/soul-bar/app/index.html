@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-<title>Kissa 灵魂酒吧</title>
+<title>黑珍珠 灵魂酒吧</title>
 <style>
   :root{
     --bg0:#0b0a14; --bg1:#15121f; --glass:rgba(255,255,255,.06);
@@ -182,7 +182,7 @@
 <body>
 <div id="app">
   <div class="topbar">
-    <div class="brand"><h1>KISSA</h1><span class="sub">灵魂酒吧 · 一家有记忆的店</span></div>
+    <div class="brand"><h1>黑珍珠</h1><span class="sub">灵魂酒吧 · 一家有记忆的店</span></div>
     <div class="status">
       <span id="clock" class="stat">🕘 21:00</span>
       <span id="drunk" class="stat">🍷 清醒</span>
@@ -246,7 +246,7 @@
 
   <!-- 选人遮罩 -->
   <div class="mask" id="mask">
-    <h2>今晚和谁去 Kissa？</h2>
+    <h2>今晚和谁去 黑珍珠？</h2>
     <p id="maskDesc">选择要一起去的角色。之后还能在酒吧里偶遇更多人。</p>
     <div class="role-grid" id="roleGrid"></div>
   </div>
@@ -290,6 +290,32 @@ const BGM_LIST = [
   { file: "assets/bgm/disco.mp3", name: "复古 Disco", desc: "灯球转起来，气氛拉满" },
   { file: "assets/bgm/lofi.mp3",  name: "Lo-Fi 慢拍",  desc: "温柔鼓点，聊天背景" },
 ];
+
+/* ---------- 黑珍珠酒吧：固定员工（老板娘珍珠 + 招牌调酒师老K） ---------- */
+const STAFF = [
+  { id:"staff_pearl", name:"珍珠", avatar:"🦪", isReal:false, fixed:true, staff:"owner",
+    persona:"黑珍珠酒吧的女老板，身材姣好、口才极好，风情万种，桃花与风流往事极多。见多识广，说话滴水不漏又撩人，善于把气氛炒热，也善于在关键时刻收住。她记得每个熟客的口味和故事，对今晚来的人也很快能接上话。",
+    greet:"（抬眼一笑）来啦？坐。老K，给她/他调一杯。" },
+  { id:"staff_k", name:"老K", avatar:"🥃", isReal:false, fixed:true, staff:"bartender",
+    persona:"黑珍珠的招牌调酒师，沉默寡言，调酒技术精湛。他知道该说什么、不该说什么——多数时候只点头、擦杯子、把酒推到你面前。只有在调酒和真正关键的时刻才开口，一句顶十句。平常不主动插话，被点名才淡淡接一句。" }
+];
+async function addStaff(){
+  for(const s of STAFF){
+    if(state.present.find(p=>p.id===s.id)) continue;
+    let mem="";
+    try{ const m=await DB.get("staff_memory", s.id); mem = m && m.memory ? m.memory : ""; }catch(e){}
+    state.present.push({ ...s, status:s.staff, memory:mem });
+  }
+}
+async function saveStaffMemory(id, mem){ try{ await DB.set("staff_memory", id, { id, memory:mem||"" }); }catch(e){} }
+// 老K 把酒推过来的极简服务台词
+async function staffServe(drinkName){
+  const k=state.present.find(p=>p.staff==="bartender"); if(!k) return;
+  try{
+    const r=await A.ai.generate({ appTags:["bar","bartend"], instruction:`${k.persona}\n用户点了「${drinkName}」。以老K身份，用极简的动作和一句顶十句的话把酒推过去（可只写动作，不必多言）。` });
+    const txt=(r.text||"").trim(); if(txt) pushBubble("other", k.name, txt);
+  }catch(e){}
+}
 
 /* ---------- 工具 ---------- */
 function sysLine(text){ const f=$("#feed"); const d=document.createElement("div"); d.className="sys"; d.textContent=text; f.appendChild(d); f.scrollTop=f.scrollHeight; }
@@ -350,6 +376,7 @@ function orderDrink(name, price){
   state.bill.push({ name, price, who });
   addDrunk(18); advanceTime(10);
   sysLine(`🍸 你点了「${name}」(¥${price})，端上来冒着细密的气泡。`);
+  staffServe(name);
   loungeGenerate(`${state.userName}点了一杯「${name}」，举杯示意大家。请自然地接话、碰杯或起哄。`, false);
 }
 
@@ -393,21 +420,23 @@ function renderRoleGrid(chars){
 
 /* ---------- 进场 ---------- */
 async function enterBar(){
+  await addStaff();
   renderPresent(); renderBartop(); renderJuke(); renderMoments();
-  sysLine(`你走进了 Kissa。${state.present.map(p=>p.name).join("、")}已经在卡座上了。`);
-  // 今日特调提示栏
+  const guests = state.present.filter(p=>!p.fixed).map(p=>p.name).join("、");
+  sysLine(`你走进了黑珍珠。${guests?guests+"已经在卡座上了，":""}老板娘珍珠抬眼打了个招呼，老K 在吧台后擦着杯子。`);
+  // 今日特调提示栏（老K 的手笔）
   await genTodaysSpecials();
   // 进场偶遇：常客可能本来就在，或撞上一个陌生人
   await maybeEncounterOnEntry();
-  // 随行角色打招呼
+  // 随行角色 + 员工打招呼
   if(state.present.length){
-    await loungeGenerate(`${state.userName}刚走进 Kissa 酒吧，在卡座坐下。请自然地打招呼或接话。`, true);
+    await loungeGenerate(`${state.userName}刚走进黑珍珠酒吧，在卡座坐下。请自然地打招呼或接话。`, true);
   }
 }
 
 async function genTodaysSpecials(){
   try{
-    const instr = `你是 Kissa 酒吧的酒保。请为今晚推荐 3 款特调/小吃套餐，风格涵盖一款烈、一款柔、一款小吃。只返回 JSON 数组，每项 {name, desc, price}（desc 一句氛围描述不超过 18 字；price 为该单品人民币价格整数，30~70 之间）。不要任何解释。`;
+    const instr = `你是 黑珍珠 酒吧的酒保。请为今晚推荐 3 款特调/小吃套餐，风格涵盖一款烈、一款柔、一款小吃。只返回 JSON 数组，每项 {name, desc, price}（desc 一句氛围描述不超过 18 字；price 为该单品人民币价格整数，30~70 之间）。不要任何解释。`;
     const ids = state.present.filter(p=>p.isReal).map(p=>p.id);
     if(ids.length){
       const r = await A.ai.generate({ characterIds: ids, appTags:["bar","lounge"], instruction: instr });
@@ -438,11 +467,14 @@ function renderSpecials(){
 function renderPresent(){
   const box=$("#presentChips"); box.innerHTML="";
   state.present.forEach(p=>{
+    const isStaff = !!p.fixed;
     const c=document.createElement("div");
-    c.className="chip leave"+(p.isReal?"":" npc");
-    const badge = p.isReal?"":`<span class="npc-badge">${p.status==="regular"?"常客":(p.status==="independent"?"老友":"客人")}</span>`;
-    c.innerHTML=`<span class="av">${(p.name||"?").slice(0,1)}</span><span>${p.name}</span>${badge}<span class="x">×</span>`;
-    c.onclick=()=>leaveCharacter(p);
+    c.className="chip"+(isStaff?"":" leave")+(p.isReal?"":" npc");
+    const badge = isStaff
+      ? `<span class="npc-badge" style="border-color:rgba(231,201,139,.5);color:var(--gold)">${p.staff==="owner"?"老板":"调酒师"}</span>`
+      : (p.isReal?"":`<span class="npc-badge">${p.status==="regular"?"常客":(p.status==="independent"?"老友":"客人")}</span>`);
+    c.innerHTML=`<span class="av">${(p.name||"?").slice(0,1)}</span><span>${p.name}</span>${badge}`+(isStaff?"":`<span class="x">×</span>`);
+    if(!isStaff) c.onclick=()=>leaveCharacter(p);
     box.appendChild(c);
   });
   // 加人 / 偶遇
@@ -453,7 +485,7 @@ function renderPresent(){
 async function leaveCharacter(p, silent){
   // 先让对方道别（此时仍在场，能正常生成台词）
   if(!silent){
-    await genEntrance(`${p.name} 起身离开了 Kissa，向大家道别（可私下给 ${state.userName} 发句私信）。`, [p.id]);
+    await genEntrance(`${p.name} 起身离开了 黑珍珠，向大家道别（可私下给 ${state.userName} 发句私信）。`, [p.id]);
   }
   state.present = state.present.filter(x=>x.id!==p.id);
   // NPC 离场：累计到访次数 + 推进升级路径 + 写记忆
@@ -490,7 +522,7 @@ async function loungeGenerate(userLine, opening, bypassBusy){
     const roster = state.present.map(p=>`- ${p.name} (id:${p.id})`).join("\n");
     let extra = "";
     if(state.privateNotes.length) extra += `\n[私信上下文] 此前你私下给${state.userName}发过私信：${state.privateNotes.join("；")}。回到卡座可自然地接上这个话题或调侃。`;
-    const npcNote = npcList.length ? `\n\n[注意] 以下成员是酒吧客人（非手机角色），不由你代其发言，你只需以在场真实角色身份回应，并可以对他们做出反应：${npcList.map(p=>p.name+"("+p.id+")").join("、")}。` : "";
+    const npcNote = npcList.length ? `\n\n[注意] 以下成员是酒吧员工或客人（非手机角色），不由你代其发言，你只需以在场真实角色身份回应，并可以对他们做出反应：${npcList.map(p=>p.name+"("+p.id+")").join("、")}。` : "";
     const instr = `在场成员：\n${roster}\n用户：${state.userName} (id:user)\n\n请以在场真实角色身份，严格用 [台词@真实角色id] / [沉默@id] / [私信@真实角色id]内容 输出。${npcNote}${extra}${drunkSuffix()}\n\n${userLine}`;
     if(realIds.length){
       const r = await A.ai.generate({ characterIds: realIds, appTags:["bar","lounge"], instruction: instr });
@@ -626,19 +658,25 @@ async function selfBartend(){
 async function moodBartend(){
   const mood=prompt("说出你现在的心情（比如：有点累 / 开心但孤独 / 想被宠着）：");
   if(!mood) return;
-  if(state.busy||!state.present.length) return;
-  const bartender = state.present.find(p=>p.isReal);
-  if(!bartender) return;
+  if(state.busy) return;
+  const bartender = state.present.find(p=>p.staff==="bartender") || state.present.find(p=>p.isReal);
+  if(!bartender){ toast("吧台这会儿没人"); return; }
   $("#bartendTitle").textContent=`${bartender.name} 为你调酒`;
   $("#bartendPanel").style.display="block";
   setBusy(true);
   try{
-    const r=await A.ai.generate({ characterId:bartender.id, appTags:["bar","bartend_mood"],
-      instruction:`用户心情：${mood}。以 ${bartender.name} 身份调一杯专属特调并描述。${drunkSuffix()}` });
-    $("#bartendBody").textContent=r.text||"（没有回应）";
+    if(bartender.isReal){
+      const r=await A.ai.generate({ characterId:bartender.id, appTags:["bar","bartend_mood"],
+        instruction:`用户心情：${mood}。以 ${bartender.name} 身份调一杯专属特调并描述。${drunkSuffix()}` });
+      $("#bartendBody").textContent=r.text||"（没有回应）";
+    } else {
+      const r=await A.ai.generate({ appTags:["bar","bartend_mood"],
+        instruction:`${bartender.persona}\n\n用户心情：${mood}。以「${bartender.name}」身份调一杯专属特调并描述（老K 话少，用精确的几个动作和一句顶十句的话带过）。${drunkSuffix()}` });
+      $("#bartendBody").textContent=r.text||"（没有回应）";
+    }
   }catch(e){ $("#bartendBody").textContent="出错："+e.message; }
   finally{ setBusy(false); }
-  // 角色调的酒计费 + 醉酒
+  // 角色/调酒师调的酒计费 + 醉酒
   state.bill.push({ name:`${bartender.name}特调`, price:52, who:bartender.name }); addDrunk(20); advanceTime(8);
   $("#backToLounge").onclick=()=>{ $("#bartendPanel").style.display="none"; switchRoom("lounge"); };
 }
@@ -695,20 +733,20 @@ async function takePhoto(){
   const members = state.present.map(p=>p.name).join("、") || "你一个人";
   const had = state.todaysSpecials.map(s=>s.name).join("、") || "还没点酒";
   const lv = drunkLevel(); const drunkTag = ["清醒","微醺","上头","烂醉"][lv];
-  const instr = `你是 Kissa 酒吧的驻场摄影师。根据今晚：在场：${members}；喝过的特调：${had}；用户状态：${drunkTag}；当前消费：¥${billTotal()}；时间：${fmtTime(state.minutes)}。写一张「拍立得」照片：先一句画面描述（scene，40字内，有氛围感），再一句配文（caption，像发朋友圈的文艺短句，20字内）。只返回 JSON {scene, caption}，不要任何解释。`;
+  const instr = `你是 黑珍珠 酒吧的驻场摄影师。根据今晚：在场：${members}；喝过的特调：${had}；用户状态：${drunkTag}；当前消费：¥${billTotal()}；时间：${fmtTime(state.minutes)}。写一张「拍立得」照片：先一句画面描述（scene，40字内，有氛围感），再一句配文（caption，像发朋友圈的文艺短句，20字内）。只返回 JSON {scene, caption}，不要任何解释。`;
   setBusy(true);
   try{
     const r = await A.ai.generate({ appTags:["bar","photo"], instruction:instr });
     const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) throw new Error("生成失败");
     const d=JSON.parse(m[0]);
-    const moment = { scene:d.scene||"今晚的 Kissa，灯光很软", caption:d.caption||"微醺夜未央", time:fmtTime(state.minutes) };
+    const moment = { scene:d.scene||"今晚的 黑珍珠，灯光很软", caption:d.caption||"微醺夜未央", time:fmtTime(state.minutes) };
     state.moments.push(moment); renderMoments(); switchRoom("moments");
     // 最佳努力发到真实朋友圈（不同宿主 API 名可能不同，失败也不影响）
     let posted=false;
     try{
-      const text = `${moment.caption}\n📍 Kissa 灵魂酒吧\n${moment.scene}`;
+      const text = `${moment.caption}\n📍 黑珍珠 灵魂酒吧\n${moment.scene}`;
       if(A.social && A.social.postMoment){ await A.social.postMoment({ text }); posted=true; }
-      else if(A.moments && A.moments.create){ await A.moments.create({ text:`${moment.caption} · Kissa`, scene:moment.scene }); posted=true; }
+      else if(A.moments && A.moments.create){ await A.moments.create({ text:`${moment.caption} · 黑珍珠`, scene:moment.scene }); posted=true; }
       else if(A.feed && A.feed.post){ await A.feed.post({ text }); posted=true; }
     }catch(e){}
     toast(posted ? "📸 已发朋友圈" : "📸 已存进今晚的相册");
@@ -721,9 +759,9 @@ function sendMoment(){
   state.moments.push({ caption:v, scene:"", time:fmtTime(state.minutes) });
   renderMoments();
   try{
-    const text = `${v}\n📍 Kissa 灵魂酒吧`;
+    const text = `${v}\n📍 黑珍珠 灵魂酒吧`;
     if(A.social && A.social.postMoment) A.social.postMoment({ text });
-    else if(A.moments && A.moments.create) A.moments.create({ text:`${v} · Kissa` });
+    else if(A.moments && A.moments.create) A.moments.create({ text:`${v} · 黑珍珠` });
     else if(A.feed && A.feed.post) A.feed.post({ text });
   }catch(e){}
   toast("📸 已存进今晚的相册");
@@ -737,7 +775,7 @@ function renderMoments(){
   }
   state.moments.forEach(m=>{
     const c=document.createElement("div"); c.className="polaroid";
-    c.innerHTML=`<div class="ph">📷</div><div class="cap">${m.caption}</div>${m.scene?`<div class="scene">${m.scene}</div>`:""}<div class="mt">${m.time} · Kissa</div>`;
+    c.innerHTML=`<div class="ph">📷</div><div class="cap">${m.caption}</div>${m.scene?`<div class="scene">${m.scene}</div>`:""}<div class="mt">${m.time} · 黑珍珠</div>`;
     f.appendChild(c);
   });
   f.scrollTop=f.scrollHeight;
@@ -757,12 +795,16 @@ async function leaveBar(){
   const total = billTotal();
   switchRoom("lounge");
   renderBillCard();
+  const guests = state.present.filter(p=>!p.fixed).map(p=>p.name).join("、");
   const billLine = state.bill.length ? `今晚消费 ${state.bill.map(b=>b.name+"¥"+b.price).join("、")}，合计 ¥${total}。` : "今晚没点单，纯聊天。";
-  const summary = `${state.userName}和${state.present.map(p=>p.name).join("、")}在 Kissa 灵魂酒吧一起喝酒聊天${state.todaysSpecials.length?("，今晚特调有「"+state.todaysSpecials.map(s=>s.name).join("、")+"」"):""}。${billLine}用户醉酒程度：${["清醒","微醺","上头","烂醉"][drunkLevel()]}。这是一次线下共处的真实经历。`;
+  const summary = `${state.userName}和${guests}在黑珍珠灵魂酒吧一起喝酒聊天${state.todaysSpecials.length?("，今晚特调有「"+state.todaysSpecials.map(s=>s.name).join("、")+"」"):""}。${billLine}用户醉酒程度：${["清醒","微醺","上头","烂醉"][drunkLevel()]}。这是一次线下共处的真实经历。`;
   try{
     for(const p of state.present){
       if(p.isReal){
-        await A.memory.addTimeline({ characterId:p.id, appLabel:"Kissa 灵魂酒吧", detail:"bar_visit", summary });
+        await A.memory.addTimeline({ characterId:p.id, appLabel:"黑珍珠 灵魂酒吧", detail:"bar_visit", summary });
+      } else if(p.fixed){
+        // 固定员工（珍珠/老K）：写记忆，不触发升级
+        await saveStaffMemory(p.id, (p.memory||""));
       } else {
         // NPC：最终结算升级路径 + 写记忆
         const prevStatus = p.status;
@@ -771,10 +813,10 @@ async function leaveBar(){
         await saveNpc(p);
         // 频繁出现的常客：询问是否升级为正式角色
         if(p.status==="regular" && (p.appearanceCount||0)>=5){
-          const ok = await uiConfirm(`「${p.name}」最近常来 Kissa（已来 ${p.appearanceCount} 次），要把 TA 变成手机里的正式角色吗？`);
+          const ok = await uiConfirm(`「${p.name}」最近常来黑珍珠（已来 ${p.appearanceCount} 次），要把 TA 变成手机里的正式角色吗？`);
           if(ok){
             try{
-              await A.characters.create({ name:p.name, persona:p.persona || (p.name+" 是 Kissa 灵魂酒吧的常客，常来喝酒聊天。"), avatar:"🍷" });
+              await A.characters.create({ name:p.name, persona:p.persona || (p.name+" 是黑珍珠灵魂酒吧的常客，常来喝酒聊天。"), avatar:"🍷" });
               toast(`已添加 ${p.name} 为正式角色`);
               p.status="independent"; await saveNpc(p);
             }catch(e){}
@@ -833,7 +875,7 @@ const DB = {
   }
 };
 async function loadNpcsFromDb(){ return await DB.all("npc_profiles"); }
-async function saveNpc(npc){ await DB.set("npc_profiles", npc.id, npc); }
+async function saveNpc(npc){ if(npc.fixed) return; await DB.set("npc_profiles", npc.id, npc); }
 
 async function uiConfirm(msg){
   try{ if(A.ui&&A.ui.confirm) return await A.ui.confirm(msg); }catch(e){}
@@ -849,7 +891,7 @@ async function npcGenerate(userLine){
   const npcs = state.present.filter(p=>!p.isReal);
   if(!npcs.length) return;
   const roster = npcs.map(p=>`- ${p.name} (id:${p.id})，人设：${p.persona||""}，当前心情：${p.mood||""}${p.memory?`，与用户的过往：${p.memory}`:""}`).join("\n");
-  const instr=`你是 Kissa 酒吧里的几位客人，请各自自然接话、可对用户或其他人反应。\n${roster}\n用户：${state.userName}\n\n${userLine}\n请严格用 [台词@id] / [沉默@id] / [私信@id]内容 输出每位（没话就说[沉默@id]）。${drunkSuffix()}`;
+  const instr=`你是 黑珍珠 酒吧里的几位客人，请各自自然接话、可对用户或其他人反应。\n${roster}\n用户：${state.userName}\n\n${userLine}\n请严格用 [台词@id] / [沉默@id] / [私信@id]内容 输出每位（没话就说[沉默@id]）。${drunkSuffix()}`;
   try{ const r=await A.ai.generate({ appTags:["bar","npc"], instruction: instr }); parseBarOutput(r.text||""); }catch(e){}
 }
 
@@ -873,7 +915,7 @@ async function maybeEncounterOnEntry(){
 async function rollRandomNpc(entranceLine){
   setBusy(true);
   try{
-    const instr=`你是 Kissa 酒吧的神秘客人生成器。请生成一个临时客人（非手机已有角色），用于今晚偶遇。只返回 JSON：{name, persona(两句话人设), mood(当前心情一句), greet(一句入场台词)}。不要解释。`;
+    const instr=`你是 黑珍珠 酒吧的神秘客人生成器。请生成一个临时客人（非手机已有角色），用于今晚偶遇。只返回 JSON：{name, persona(两句话人设), mood(当前心情一句), greet(一句入场台词)}。不要解释。`;
     const r=await A.ai.generate({ appTags:["bar","npc_gen"], instruction:instr });
     const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) return;
     let d; try{ d=JSON.parse(m[0]); }catch(e){ return; }
@@ -925,7 +967,7 @@ async function rollRandomEvent(){
     if(state.privateNotes.length) seed.push("此前私信："+state.privateNotes.slice(-3).join("；"));
     if(state.drunk>0) seed.push("当前醉酒程度："+["清醒","微醺","上头","烂醉"][drunkLevel()]);
     const seedTxt = seed.length ? ("参考线索（仅参考，不必照搬）："+seed.join("；")+"。"):"";
-    const instr=`你是 Kissa 酒吧的即兴编剧。基于在场成员（${ctx}）和今晚氛围，生成一条突发、有画面感的酒吧小事件（例如：新来的服务员打翻酒泼到某位客人身上 / 隔壁桌突然划拳 / 停电烛光里有人告白 / 有人醉到在卡座上哼歌 / 门外进来一个熟悉的身影）。只返回 JSON：{title, desc, involves:[成员名], optionA, optionB}。用户可选择是否观看。`;
+    const instr=`你是 黑珍珠 酒吧的即兴编剧。基于在场成员（${ctx}）和今晚氛围，生成一条突发、有画面感的酒吧小事件（例如：新来的服务员打翻酒泼到某位客人身上 / 隔壁桌突然划拳 / 停电烛光里有人告白 / 有人醉到在卡座上哼歌 / 门外进来一个熟悉的身影）。只返回 JSON：{title, desc, involves:[成员名], optionA, optionB}。用户可选择是否观看。`;
     const r=await A.ai.generate({ appTags:["bar","event"], instruction: instr+seedTxt });
     const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) return;
     let d; try{ d=JSON.parse(m[0]); }catch(e){ return; }
@@ -936,7 +978,7 @@ async function rollRandomEvent(){
     if(others.length && Math.random()<0.4){
       extraChar=others[Math.floor(Math.random()*others.length)];
       state.present.push(mkPresent(extraChar,true)); renderPresent();
-      sysLine(`🚪 没想到，${extraChar.name} 正好也来了 Kissa，被这阵骚动吸引了过来。`);
+      sysLine(`🚪 没想到，${extraChar.name} 正好也来了 黑珍珠，被这阵骚动吸引了过来。`);
     }
     sysLine(`🎲 你们凑过去看：${d.title}`);
     await loungeGenerate(`突发情况：${d.desc} 就发生在你们附近${extraChar?`，${extraChar.name} 也刚到`:""}。请自然地反应、互动、起哄或吐槽。`, false, true);
@@ -944,7 +986,7 @@ async function rollRandomEvent(){
     // 参与事件的角色/客人记一笔记忆；NPC 标记"本次参与了随机事件"
     state.present.forEach(p=>{
       if(p.isReal){
-        A.memory.addTimeline({ characterId:p.id, appLabel:"Kissa 灵魂酒吧", detail:"bar_event", summary:`在 Kissa 遇到突发事件「${d.title}」：${d.desc}` }).catch(()=>{});
+        A.memory.addTimeline({ characterId:p.id, appLabel:"黑珍珠 灵魂酒吧", detail:"bar_event", summary:`在 黑珍珠 遇到突发事件「${d.title}」：${d.desc}` }).catch(()=>{});
       } else {
         p.participatedEvents=(p.participatedEvents||0)+1;
         p.participatedThisVisit=true; // 计入升级路径连胜
