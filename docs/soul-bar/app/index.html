@@ -295,20 +295,48 @@ const BGM_LIST = [
 ];
 
 /* ---------- 黑珍珠酒吧：固定员工（老板娘珍珠 + 招牌调酒师老K） ---------- */
+// aliases：用于在手机真实角色列表中按名识别。命中真实角色后，珍珠/老K 的记忆会
+// 直接写进他们「自己的角色记忆」（A.memory.addTimeline），并改用真实角色卡驱动对话。
+// 识别不到时退回 app 本地 staff_memory（内置人设），体验不降级。
 const STAFF = [
-  { id:"staff_pearl", name:"珍珠", avatar:"🦪", isReal:false, fixed:true, staff:"owner",
+  { id:"staff_pearl", key:"pearl", name:"珍珠", aliases:["珍珠","珍珠老板","老板娘珍珠","老板娘"], avatar:"🦪", isReal:false, fixed:true, staff:"owner",
     persona:"黑珍珠酒吧的老板娘，人称「珍珠」。身材姣好，常穿红色吊带长裙（胸前别着金色BOSS铭牌），一头微卷长发随意披散。口才极好，风情万种又不失分寸——桃花与风流往事极多，但她从不说破。见多识广，说话滴水不漏又撩人，善于把气氛炒热，也善于在关键时刻收住。她习惯倚在吧台上和客人聊天，记得每个熟客的口味和故事，对今晚来的人也很快能接上话。她知道什么时候该笑、什么时候该沉默地看着你。",
     greet:"（倚在吧台上，抬眼一笑，红色吊带裙的肩带微微滑落又随手拨回）来啦？坐。老K，给TA来杯惯常的。" },
-  { id:"staff_k", name:"老K", avatar:"🥃", isReal:false, fixed:true, staff:"bartender",
+  { id:"staff_k", key:"k", name:"老K", aliases:["老K","老k","老k","K哥","k哥","调酒师老K"], avatar:"🥃", isReal:false, fixed:true, staff:"bartender",
     persona:"黑珍珠的招牌调酒师「老K」。黑长马尾束在脑后，永远穿黑色双排扣马甲配衬衫领带和深色围裙，左胸别一枚银色调酒针。沉默寡言，调酒技术精湛到近乎艺术——摇酒、滤冰、装饰，行云流水不浪费一个动作。他知道该说什么、不该说什么——多数时候只点头、擦杯子、把酒推到你面前，眼神冷淡但手上的活从不出错。只有在调酒和真正关键的时刻才开口，一句顶十句。平常不主动插话，被点名才淡淡接一句。" }
 ];
+// 在真实角色列表中识别固定员工：精确 > 前缀 > 包含（大小写不敏感）
+function matchRealStaff(chars){
+  const map = {};
+  for(const s of STAFF){
+    const names = (chars||[]).map(c=>({id:c.id, name:c.name}));
+    let hit = names.find(c=> c.name===s.name);
+    if(!hit) hit = names.find(c=> c.name.toLowerCase().startsWith(s.name.toLowerCase()));
+    if(!hit) hit = names.find(c=> c.name.toLowerCase().includes(s.name.toLowerCase()));
+    if(hit) map[s.key]=hit;
+  }
+  return map;
+}
 async function addStaff(){
+  const chars = window.__allChars || [];
+  const matched = matchRealStaff(chars);
+  const hits = [];
   for(const s of STAFF){
     if(state.present.find(p=>p.id===s.id)) continue;
-    let mem="";
-    try{ const m=await DB.get("staff_memory", s.id); mem = m && m.memory ? m.memory : ""; }catch(e){}
-    state.present.push({ ...s, status:s.staff, memory:mem });
+    const real = matched[s.key];
+    if(real){
+      // 命中真实角色：用真实 id + isReal，记忆走角色自身；persona 仅作场景兜底
+      state.present.push({ ...s, id:real.id, name:real.name, isReal:true, status:s.staff, memory:"" });
+      hits.push(real.name);
+    } else {
+      // 未识别：退回 app 本地 staff_memory（内置人设）
+      let mem="";
+      try{ const m=await DB.get("staff_memory", s.id); mem = m && m.memory ? m.memory : ""; }catch(e){}
+      state.present.push({ ...s, status:s.staff, memory:mem });
+    }
   }
+  if(hits.length) toast("🪪 已识别真实角色：" + hits.join("、") + "（记忆将挂接到角色自身）");
+  else toast("未识别到真实角色，珍珠/老K 使用内置人设");
 }
 async function saveStaffMemory(id, mem){ try{ await DB.set("staff_memory", id, { id, memory:mem||"" }); }catch(e){} }
 // 老K 把酒推过来的极简服务台词
@@ -388,6 +416,7 @@ async function init(){
   try{
     const ctx = await A.app.getLaunchContext().catch(()=>null);
     const chars = await A.characters.list();
+    window.__allChars = chars; // 供 addStaff 识别真实角色 / 随机事件偶遇
     // 加载酒吧客人档案（跨次访问持久）
     try{ state.npcs = await loadNpcsFromDb(); }catch(e){ state.npcs = []; }
     // 用户昵称
@@ -526,7 +555,10 @@ async function loungeGenerate(userLine, opening, bypassBusy){
     let extra = "";
     if(state.privateNotes.length) extra += `\n[私信上下文] 此前你私下给${state.userName}发过私信：${state.privateNotes.join("；")}。回到卡座可自然地接上这个话题或调侃。`;
     const npcNote = npcList.length ? `\n\n[注意] 以下成员是酒吧员工或客人（非手机角色），不由你代其发言，你只需以在场真实角色身份回应，并可以对他们做出反应：${npcList.map(p=>p.name+"("+p.id+")").join("、")}。` : "";
-    const instr = `在场成员：\n${roster}\n用户：${state.userName} (id:user)\n\n请以在场真实角色身份，严格用 [台词@真实角色id] / [沉默@id] / [私信@真实角色id]内容 输出。${npcNote}${extra}${drunkSuffix()}\n\n${userLine}`;
+    // 固定真实员工（老板娘/调酒师）：锚定场景身份，确保真实角色卡按酒吧人设演绎
+    const fixedStaff = state.present.filter(p=>p.fixed && p.isReal);
+    const staffScene = fixedStaff.length ? `\n\n[场景] 当前大家都在「黑珍珠」酒吧里：${fixedStaff.map(p=> p.staff==="owner" ? `${p.name}是这家酒吧的老板娘` : (p.staff==="bartender" ? `${p.name}是招牌调酒师（沉默寡言但调酒技术精湛）` : `${p.name}是酒吧员工`)).join("；")}。请以各自在酒吧里的身份自然互动。` : "";
+    const instr = `在场成员：\n${roster}\n用户：${state.userName} (id:user)\n\n请以在场真实角色身份，严格用 [台词@真实角色id] / [沉默@id] / [私信@真实角色id]内容 输出。${npcNote}${staffScene}${extra}${drunkSuffix()}\n\n${userLine}`;
     if(realIds.length){
       const r = await A.ai.generate({ characterIds: realIds, appTags:["bar","lounge"], instruction: instr });
       parseBarOutput(r.text||"");
@@ -570,12 +602,21 @@ async function handlePrivate(charId, content){
   // 记一笔，用于转回卡座时衔接
   state.privateNotes.push(`${name}私下跟你说：${content}`);
   if(p && p.isReal){
-    try{
-      await A.chat.writeHistory({ characterId: charId, role:"user",
-        content:`[酒吧私信：${name}私下跟${state.userName}说：${content}]` });
-      await A.chat.requestReply({ characterId: charId });
-      await A.notifications.create({ title:`${name}的私信`, body: content.slice(0,40), badgeDelta:1 }).catch(()=>{});
-    }catch(e){}
+    if(p.fixed){
+      // 固定员工私信：写进真实角色记忆 + 通知，但不触发主聊天回复（保持酒吧沉浸）
+      try{
+        await A.memory.addTimeline({ characterId: charId, appLabel:"黑珍珠 灵魂酒吧", detail:"bar_private",
+          summary:`在黑珍珠酒吧私下给${state.userName}发私信：${content}` }).catch(()=>{});
+        await A.notifications.create({ title:`${name}的私信`, body: content.slice(0,40), badgeDelta:1 }).catch(()=>{});
+      }catch(e){}
+    } else {
+      try{
+        await A.chat.writeHistory({ characterId: charId, role:"user",
+          content:`[酒吧私信：${name}私下跟${state.userName}说：${content}]` });
+        await A.chat.requestReply({ characterId: charId });
+        await A.notifications.create({ title:`${name}的私信`, body: content.slice(0,40), badgeDelta:1 }).catch(()=>{});
+      }catch(e){}
+    }
   } else if(p){
     // NPC：写入其记忆，下次偶遇仍记得（私信不计入"随机事件参与"连胜）
     p.memory = (p.memory||"") + `\n私信用户：${content}`;
