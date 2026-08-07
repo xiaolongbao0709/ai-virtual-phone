@@ -93,6 +93,7 @@
     margin:0 1px;animation:bl 1s infinite}
   .typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
   @keyframes bl{0%,60%,100%{opacity:.3}30%{opacity:1}}
+  @keyframes fadeSlideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
   /* 输入条 */
   .composer{display:flex;gap:8px;padding:10px 0 4px;align-items:flex-end}
   .composer textarea{flex:1;resize:none;max-height:96px;min-height:42px;padding:11px 14px;
@@ -119,23 +120,25 @@
   .btn:active{background:rgba(255,255,255,.1)}
   .btn.primary{background:linear-gradient(135deg,var(--gold),var(--rose));color:#2a1d1d;border:none;font-weight:600}
   /* 调酒面板：浮层覆盖（不受房间切换影响），聊天里角色同意调酒时直接展开 */
-  #bartendPanel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+  #bartendPanel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);
     width:min(92%,420px);max-height:80vh;overflow-y:auto;z-index:60;
-    box-shadow:0 14px 44px rgba(0,0,0,.55)}
+    box-shadow:0 14px 44px rgba(0,0,0,.55);
+    opacity:0;transition:opacity .3s ease,transform .3s ease;pointer-events:none}
+  #bartendPanel.show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
   .mood-input{width:100%;margin-top:8px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);
     border:1px solid var(--glass-bd);color:var(--txt);font:13.5px inherit;outline:none}
   .billrow{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed var(--glass-bd)}
   .billrow.total{border:none;font-weight:700;color:var(--gold);margin-top:4px}
   /* 调酒：分步加料展示 */
-  .b-name{font-size:16px;font-weight:700;color:var(--gold);margin-bottom:2px}
-  .b-vibe{font-size:12px;color:var(--sub);margin-bottom:8px;font-style:italic}
-  .b-step{display:flex;align-items:flex-start;gap:6px;padding:7px 0;border-top:1px dashed var(--glass-bd);line-height:1.55}
+  .b-name{font-size:16px;font-weight:700;color:var(--gold);margin-bottom:2px;text-shadow:0 1px 3px rgba(0,0,0,.4)}
+  .b-vibe{font-size:12.5px;color:#c8bfd9;margin-bottom:8px;font-style:italic;line-height:1.5}
+  .b-step{display:flex;align-items:flex-start;gap:6px;padding:8px 0;border-top:1px dashed var(--glass-bd);line-height:1.6}
   .b-step:first-of-type{border-top:none}
-  .b-dot{flex:0 0 auto;color:var(--gold);font-size:13px;line-height:1.6}
-  .b-ing{flex:0 0 auto;font-weight:600;color:var(--txt);white-space:nowrap}
-  .b-reason{flex:1;color:var(--sub);font-size:12.5px}
-  .b-finish{margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(231,201,139,.1);
-    border:1px solid rgba(231,201,139,.35);font-size:13px;color:var(--txt);line-height:1.6}
+  .b-dot{flex:0 0 auto;color:var(--gold);font-size:14px;line-height:1.6}
+  .b-ing{flex:0 0 auto;font-weight:700;color:#ede8f5;white-space:nowrap;text-shadow:0 1px 2px rgba(0,0,0,.35)}
+  .b-reason{flex:1;color:#c8bfd9;font-size:13px;line-height:1.55}
+  .b-finish{margin-top:10px;padding:12px 14px;border-radius:12px;background:rgba(231,201,139,.12);
+    border:1px solid rgba(231,201,139,.35);font-size:13.5px;color:#f0e8d5;line-height:1.65}
   /* 选人遮罩：多选 */
   .role-opt.sel{background:linear-gradient(135deg,var(--gold),var(--rose));color:#2a1d1d;border-color:transparent;font-weight:600}
   .role-opt.sel::after{content:" ✓";opacity:.8}
@@ -193,7 +196,8 @@
   .event-btn:active{transform:scale(.96)}
   /* 随机事件卡片 */
   .event-card{margin:8px 0;padding:12px 14px;border-radius:14px;background:rgba(182,156,240,.10);
-    border:1px solid rgba(182,156,240,.35);box-shadow:0 4px 14px rgba(0,0,0,.18)}
+    border:1px solid rgba(182,156,240,.35);box-shadow:0 4px 14px rgba(0,0,0,.18);
+    animation:fadeSlideUp .35s ease both}
   .ev-title{font-size:14px;font-weight:600;color:var(--txt);margin-bottom:4px}
   .ev-desc{font-size:12.5px;line-height:1.65;color:var(--sub);white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}
   .ev-opts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
@@ -241,7 +245,7 @@
   <div class="topbar">
     <div class="brand"><h1>黑珍珠</h1><span class="sub">灵魂酒吧 · 一家有记忆的店</span></div>
     <div class="status">
-      <span id="clock" class="stat">🕘 21:00</span>
+      <span id="clock" class="stat">🕘 --:--</span>
       <span id="drunk" class="stat">🍷 清醒</span>
       <span id="bill" class="stat">💰 ¥0</span>
     </div>
@@ -393,7 +397,7 @@ const state = {
   worldbook: [],          // 世界书条目（挂载的城市人物/关系网）
   avatarOverrides: {},    // 真实角色在酒吧里的头像覆盖 {id:avatar}
   // ---- P5 ----
-  minutes: 21*60,         // 酒吧开门时间 21:00（minutes from midnight）
+  minutes: (new Date().getHours()*60) + new Date().getMinutes(),  // 跟随系统真实时间
   drunk: 0,               // 醉酒度 0-100
   bill: [],               // {name, price, who}
   moments: [],            // {caption, scene, time}
@@ -1040,9 +1044,9 @@ function renderBartop(){
 function ensureBartendPanel(){
   if($("#bartendPanel")) return;
   const p=document.createElement("div");
-  p.className="card"; p.id="bartendPanel"; p.style.display="none";
+  p.className="card"; p.id="bartendPanel";
   p.innerHTML=`<h3 id="bartendTitle">调酒</h3>
-    <div id="bartendBody" style="font-size:13.5px;line-height:1.7;color:var(--txt)"></div>
+    <div id="bartendBody" style="font-size:13.5px;line-height:1.7;color:#ddd6e8"></div>
     <div class="btn primary" id="backToLounge">↩ 回到卡座继续聊</div>`;
   const app=$("#app")||document.body;
   app.appendChild(p);
@@ -1071,7 +1075,7 @@ async function selfBartend(){
   if(!realChars.length) return;
   $("#bartendTitle").textContent="你自己调了一杯";
   $("#bartendBody").textContent="（描述你调的配方，角色们会凑过来尝一口、给评价）";
-  $("#bartendPanel").style.display="block";
+  $("#bartendPanel").classList.add("show");
   setBusy(true);
   try{
     const ids=realChars.map(p=>p.id);
@@ -1083,7 +1087,7 @@ async function selfBartend(){
   finally{ setBusy(false); }
   // 自己调也计费 + 醉酒
   state.bill.push({ name:"自调特饮", price:30, who:state.userName }); addDrunk(15); advanceTime(8);
-  $("#backToLounge").onclick=()=>{ $("#bartendPanel").style.display="none"; switchRoom("lounge"); };
+  $("#backToLounge").onclick=()=>{ $("#bartendPanel").classList.remove("show"); switchRoom("lounge"); };
 }
 
 async function moodBartend(){
@@ -1102,7 +1106,7 @@ async function bartendForUser(charId, mood){
   setBusy(true);
   $("#bartendTitle").textContent = `${c.name} 给你调一杯`;
   const body=$("#bartendBody"); body.innerHTML = "";
-  $("#bartendPanel").style.display="block";
+  $("#bartendPanel").classList.add("show");
   switchRoom("lounge");
   sysLine(`🍸 ${c.name} 走向吧台，说要给你调一杯${mood?("（"+(mood.length>12?mood.slice(0,12)+"…":mood)+"）"):""}。`);
   try{
@@ -1131,7 +1135,7 @@ async function bartendForUser(charId, mood){
   }catch(e){ appendBartend("出错："+e.message); }
   finally{
     setBusy(false);
-    $("#backToLounge").onclick=()=>{ $("#bartendPanel").style.display="none"; switchRoom("lounge"); };
+    $("#backToLounge").onclick=()=>{ $("#bartendPanel").classList.remove("show"); switchRoom("lounge"); };
   }
 }
 
