@@ -21,10 +21,13 @@ export function GroupCreateModal({ onClose, onCreate }: GroupCreateModalProps) {
 
     const contacts = loadChatContacts();
     const chars = loadCharacters();
+    const contactIds = new Set(contacts.map(c => c.characterId));
 
-    const enriched = contacts
-        .map(c => ({ ...c, char: chars.find(ch => ch.id === c.characterId) }))
-        .filter(c => c.char) as (typeof contacts[number] & { char: Character })[];
+    // 全部角色均可选，标记是否为联系人
+    const allCandidates = chars.map(char => ({
+        char,
+        isContact: contactIds.has(char.id),
+    }));
 
     const toggle = (id: string) => {
         setSelectedIds(prev => {
@@ -43,32 +46,67 @@ export function GroupCreateModal({ onClose, onCreate }: GroupCreateModalProps) {
         ? selectedChars.map(c => c.name).join("、")
         : [...selectedChars.map(c => c.name), userName].join("、");
 
+    // 快捷：NPC 纯群（自动围观）
+    const activateNpcOnlyGroup = () => {
+        setIsSpectator(true);
+    };
+
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal-dialog" onClick={e => e.stopPropagation()}>
                 {step === "pick" ? (
                     <>
                         <span className="modal-header-title">选择群成员</span>
-                        {enriched.length === 0 ? (
-                            <span className="menu-desc">暂无联系人，请先添加好友</span>
+                        <div className="flex items-center justify-between mb-2">
+                            <span className="ts-12 text-[var(--c-icon)]">
+                                共 {allCandidates.length} 位角色可选
+                                {!isSpectator && selectedIds.size >= 2 && (
+                                    <button
+                                        onClick={activateNpcOnlyGroup}
+                                        className="ml-2 ts-12 text-[var(--c-primary)] underline cursor-pointer bg-transparent border-none p-0"
+                                    >
+                                        → 设为 NPC 纯群
+                                    </button>
+                                )}
+                            </span>
+                            <label
+                                className="flex items-center gap-1 cursor-pointer select-none"
+                                onClick={() => setIsSpectator(prev => !prev)}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={isSpectator}
+                                    onChange={() => {}}
+                                    className="shrink-0"
+                                />
+                                <span className="ts-12 text-[var(--c-text)]">围观模式</span>
+                            </label>
+                        </div>
+                        {allCandidates.length === 0 ? (
+                            <span className="menu-desc">暂无角色，请先创建或导入角色卡</span>
                         ) : (
                             <div className="chat-contact-list">
-                                {enriched.map(c => {
-                                    const isSelected = selectedIds.has(c.characterId);
+                                {allCandidates.map(({ char, isContact }) => {
+                                    const isSelected = selectedIds.has(char.id);
                                     return (
                                         <div
-                                            key={c.characterId}
+                                            key={char.id}
                                             className="chat-contact-item"
-                                            onClick={() => toggle(c.characterId)}
+                                            onClick={() => toggle(char.id)}
                                         >
                                             <div className="chat-contact-avatar" style={isSelected ? { outline: "3px solid var(--c-success)", outlineOffset: "2px" } : undefined}>
-                                                {c.char.avatar ? (
-                                                    <img src={c.char.avatar} alt="" />
+                                                {char.avatar ? (
+                                                    <img src={char.avatar} alt="" />
                                                 ) : (
                                                     <ChatFallbackAvatar />
                                                 )}
                                             </div>
-                                            <span className="chat-contact-name">{c.char.name}</span>
+                                            <div className="flex flex-col">
+                                                <span className="chat-contact-name">{char.name}</span>
+                                                {!isContact && (
+                                                    <span className="ts-10 text-[var(--c-icon)]">未添加好友</span>
+                                                )}
+                                            </div>
                                         </div>
                                     );
                                 })}
@@ -79,7 +117,7 @@ export function GroupCreateModal({ onClose, onCreate }: GroupCreateModalProps) {
                                 onClick={() => setStep("name")}
                                 className="ui-btn ui-btn-success w-full"
                             >
-                                下一步 ({selectedIds.size} 人)
+                                下一步 ({selectedIds.size} 人){isSpectator ? " · 围观" : ""}
                             </button>
                         )}
                         {selectedIds.size === 1 && (
