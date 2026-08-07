@@ -531,7 +531,7 @@ async function applyAvatar(p, avatar){
   }catch(e){}
   renderPresent();
 }
-async function loadAvatarOverrides(){ try{ const all=await DB.all("bar_avatar_overrides"); state.avatarOverrides={}; (all||[]).forEach(o=>{ if(o&&o.id) state.avatarOverrides[o.id]=o.avatar; }); }catch(e){ state.avatarOverrides={}; } }
+async function loadAvatarOverrides(){ try{ const all=await DB.all("bar_avatar_overrides"); state.avatarOverrides={}; (all||[]).forEach(o=>{ if(!o) return; const k=o._key||o.id; if(k) state.avatarOverrides[k]=o.avatar; }); }catch(e){ state.avatarOverrides={}; } }
 
 /* ---------- 世界书（世界观挂载） ---------- */
 async function loadWorldbook(){
@@ -540,7 +540,7 @@ async function loadWorldbook(){
   return list;
 }
 async function saveWorldbookEntry(e){ try{ await DB.set("bar_worldbook", e.id, e); }catch(e){} }
-async function deleteWorldbookEntry(id){ try{ await DB.set("bar_worldbook", id, null); }catch(e){} if(state.worldbook) state.worldbook=state.worldbook.filter(x=>x.id!==id); }
+async function deleteWorldbookEntry(id){ try{ await DB.delete("bar_worldbook", id); }catch(e){} if(state.worldbook) state.worldbook=state.worldbook.filter(x=>x.id!==id); }
 function seedDefaultWorldbook(){
   return [
     { id:"wb_city", title:"黑珍珠 · 城市与酒吧", keywords:["黑珍珠","酒吧","城市","滨海","今晚"], order:1, enabled:true, constant:true, relations:[],
@@ -645,7 +645,7 @@ async function saveWorldbookForm(){
 }
 async function resetWorldbook(){
   if(!confirm("用默认世界书覆盖当前所有条目？（自定义条目会丢失）")) return;
-  try{ const all=await DB.all("bar_worldbook"); (all||[]).forEach(x=>{ try{ DB.set("bar_worldbook", x.id, null); }catch(e){} }); }catch(e){}
+  try{ const all=await DB.all("bar_worldbook"); (all||[]).forEach(x=>{ try{ DB.delete("bar_worldbook", x.id); }catch(e){} }); }catch(e){}
   state.worldbook=seedDefaultWorldbook();
   for(const e of state.worldbook){ try{ await DB.set("bar_worldbook", e.id, e); }catch(e){} }
   renderWorldbook(); toast("已恢复默认世界书");
@@ -1294,22 +1294,49 @@ document.querySelectorAll(".tab").forEach(t=> t.onclick=()=>switchRoom(t.dataset
 
 /* ---------- P3：动态角色 / 偶遇 / NPC 档案 ---------- */
 // 持久层：优先用宿主 A.db，降级到 localStorage
+// 持久层：严格按说明 5.4 使用宿主规范 db.create/list/get/update/delete（无 set/query/upsert）。
+// 宿主 create 不接收外部 id（由宿主生成），故用 _key 字段保存本 APP 逻辑 id；
+// set/get/delete 通过 list+find(_key) 模拟 upsert/remove；宿主不可用时降级 localStorage。
 const DB = {
-  async set(col,id,data){
-    try{ if(A.db&&A.db.set) return await A.db.set(col,id,data); }catch(e){}
-    try{ if(A.db&&A.db[col]&&A.db[col].set) return await A.db[col].set(id,data); }catch(e){}
+  async _find(col, id){
+    if(!(A.db && A.db.list)) return null;
+    const all = await A.db.list(col, {}) || [];
+    const rec = all.find(x => x && (x._key === id || String(x.id) === String(id)));
+    return rec ? { hostId: rec.id, record: rec } : null;
+  },
+  async set(col, id, data){
+    const payload = Object.assign({}, data, { _key: id });
+    try{
+      if(A.db && A.db.list && (A.db.create || A.db.update)){
+        const f = await DB._find(col, id);
+        if(f){ try{ return await A.db.update(col, f.hostId, payload); }catch(e){} }
+        if(A.db.create) return await A.db.create(col, payload);
+      }
+    }catch(e){}
     try{ localStorage.setItem(col+":"+id, JSON.stringify(data)); }catch(e){}
   },
-  async get(col,id){
-    try{ if(A.db&&A.db.get){ const v=await A.db.get(col,id); if(v) return v; } }catch(e){}
-    try{ if(A.db&&A.db[col]&&A.db[col].get){ const v=await A.db[col].get(id); if(v) return v; } }catch(e){}
+  async get(col, id){
+    try{
+      if(A.db && A.db.list){
+        const f = await DB._find(col, id);
+        if(f){ const { _key, ...rest } = f.record; return rest; }
+      }
+    }catch(e){}
     try{ const r=localStorage.getItem(col+":"+id); return r?JSON.parse(r):null; }catch(e){ return null; }
   },
   async all(col){
-    try{ if(A.db&&A.db.query){ const a=await A.db.query(col,{}); if(Array.isArray(a)) return a; } }catch(e){}
-    try{ if(A.db&&A.db[col]&&A.db[col].query){ const a=await A.db[col].query({}); if(Array.isArray(a)) return a; } }catch(e){}
+    try{ if(A.db && A.db.list){ const a = await A.db.list(col, {}) || []; if(Array.isArray(a)) return a; } }catch(e){}
     const out=[]; try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith(col+":")){ try{ out.push(JSON.parse(localStorage.getItem(k))); }catch(e){} } } }catch(e){}
     return out;
+  },
+  async delete(col, id){
+    try{
+      if(A.db && A.db.list && A.db.delete){
+        const f = await DB._find(col, id);
+        if(f) return await A.db.delete(col, f.hostId);
+      }
+    }catch(e){}
+    try{ localStorage.removeItem(col+":"+id); }catch(e){}
   }
 };
 async function loadNpcsFromDb(){ return await DB.all("npc_profiles"); }

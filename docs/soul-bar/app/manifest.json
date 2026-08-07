@@ -29,6 +29,7 @@
     "memory.suggest",
     "chat.write",
     "chat.sendCard",
+    "chat.write",
     "chat.requestReply",
     "chat.read",
     "voice.tts",
@@ -44,6 +45,9 @@
     "calendar.read",
     "tasks.schedule"
   ],
+  "resources": {
+    "presets": ["presets.json"]
+  },
   "extensions": {
     "chat": {
       "plusActions": [
