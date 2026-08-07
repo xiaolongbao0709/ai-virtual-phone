@@ -73,7 +73,6 @@
   .room.active{display:flex}
   .room.active.lounge{background:radial-gradient(120% 55% at 50% 0%, rgba(182,156,240,.10), transparent 70%)}
   .room.active.bar{background:radial-gradient(120% 55% at 50% 0%, rgba(231,201,139,.10), transparent 70%)}
-  .room.active.juke{background:radial-gradient(120% 55% at 50% 0%, rgba(159,227,224,.09), transparent 70%)}
   .room.active.moments{background:radial-gradient(120% 55% at 50% 0%, rgba(240,166,192,.09), transparent 70%)}
   .zonehead{padding:2px 2px 9px;font-size:12px;color:var(--sub);line-height:1.55}
   .zonehead b{color:var(--txt);font-weight:600}
@@ -123,8 +122,20 @@
     border:1px solid var(--glass-bd);color:var(--txt);font:13.5px inherit;outline:none}
   .billrow{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed var(--glass-bd)}
   .billrow.total{border:none;font-weight:700;color:var(--gold);margin-top:4px}
-  /* 点唱机 */
-  .juke{flex:1;overflow-y:auto;padding:8px 0;display:flex;flex-direction:column;gap:8px;max-height:50vh}
+  /* 内嵌 BGM 控制条（不遮挡对话） */
+  .bgm-bar{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:10px;
+    background:rgba(255,255,255,.04);border:1px solid var(--glass-bd);margin:4px 0 6px;flex-wrap:wrap}
+  .bgm-label{font-size:14px;flex-shrink:0}
+  .bgm-now{font-size:11.5px;color:var(--gold);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
+  .bgm-list{display:none;width:100%;order:99;flex-basis:100%;max-height:160px;overflow-y:auto;
+    padding-top:4px;border-top:1px dashed var(--glass-bd);margin-top:4px;
+    display:flex;flex-direction:column;gap:4px}
+  .bgm-bar.open .bgm-list{display:flex}
+  .bgm-toggle{flex:0 0 auto;width:28px;height:28px;border-radius:8px;border:1px solid var(--glass-bd);
+    background:var(--glass);color:var(--sub);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .bgm-toggle:active{transform:scale(.92)}
+  /* bgm-list 内的歌曲项（复用 .song 样式但更紧凑） */
+  .bgm-list .song{padding:8px 12px}
   .song{display:flex;justify-content:space-between;align-items:center;padding:13px 15px;
     border-radius:14px;background:var(--glass);border:1px solid var(--glass-bd);cursor:pointer}
   .song:active{background:rgba(255,255,255,.1)}
@@ -135,7 +146,6 @@
   .song .eq i:nth-child(4){animation-delay:.6s}
   .song.paused .eq i{animation:none;height:4px;background:var(--sub)}
   @keyframes eq{0%,100%{height:5px}50%{height:18px}}
-  .juke-note{font-size:10px;color:var(--sub);line-height:1.5;padding:4px 2px;opacity:.7}
   /* 相册 / 朋友圈 */
   .moments-feed{display:flex;flex-wrap:wrap;gap:10px;padding:4px 0;justify-content:center}
   .polaroid{background:#fbf7ef;color:#2a2330;border-radius:10px;padding:8px 8px 12px;margin:0;
@@ -247,7 +257,6 @@
   <div class="tabs">
     <div class="tab active" data-room="lounge">🛋️ 卡座</div>
     <div class="tab" data-room="bar">🍸 吧台</div>
-    <div class="tab" data-room="juke">🎵 点唱机</div>
     <div class="tab" data-room="moments">📸 相册</div>
   </div>
 
@@ -255,6 +264,13 @@
     <!-- 卡座 -->
     <div class="room active lounge" id="room-lounge">
       <div class="zonehead"><b>🛋️ 卡座区</b> · 沙发陷下去，灯只亮一半，最适合说废话。</div>
+      <!-- 内嵌 BGM 控制条（不遮挡对话） -->
+      <div class="bgm-bar" id="bgmBar">
+        <span class="bgm-label">🎵</span>
+        <span class="bgm-now" id="bgmNow">未播放</span>
+        <div class="bgm-list" id="bgmList"></div>
+        <button class="bgm-toggle" id="bgmToggle" title="展开/收起歌曲列表">⋮</button>
+      </div>
       <div class="feed" id="feed"></div>
       <div class="event-bar"><button class="event-btn" id="eventBtn">🎲 触发随机事件</button></div>
       <div class="composer">
@@ -267,12 +283,6 @@
     <div class="room bar" id="room-bar">
       <div class="zonehead"><b>🍸 吧台</b> · 酒保擦着杯子，琥珀色灯光把脸照得很暖。</div>
       <div class="bartop" id="bartop"></div>
-    </div>
-    <!-- 点唱机 -->
-    <div class="room juke" id="room-juke">
-      <div class="zonehead"><b>🎵 点唱机</b> · 老歌转着，没人说话也热闹。</div>
-      <div class="juke" id="juke"></div>
-      <div class="juke-note">点唱机切换酒吧氛围音乐。点击歌曲即可播放/切换，再点一次停止。</div>
     </div>
     <!-- 相册 / 朋友圈 -->
     <div class="room moments" id="room-moments">
@@ -1081,29 +1091,34 @@ async function moodBartend(){
   $("#backToLounge").onclick=()=>{ $("#bartendPanel").style.display="none"; switchRoom("lounge"); };
 }
 
-/* ---------- 点唱机 ---------- */
+/* ---------- 点唱机（内嵌 BGM 控制条） ---------- */
 function renderJuke(){
-  const box=$("#juke"); box.innerHTML="";
+  const list=$("#bgmList"); list.innerHTML="";
   BGM_LIST.forEach((s, idx)=>{
     const d=document.createElement("div"); d.className="song"+(state.bgm&&state.bgm.idx===idx?"":" paused");
     d.innerHTML=`<div class="meta"><div class="nm">${s.name}</div><div class="ds">${s.desc}</div></div>
       <div class="eq"><i></i><i></i><i></i><i></i></div>`;
-    d.onclick=()=>playBgm(s, idx, d); box.appendChild(d);
+    d.onclick=()=>playBgm(s, idx, d); list.appendChild(d);
   });
+  // BGM 展开收起
+  $("#bgmToggle").onclick=()=>{ $("#bgmBar").classList.toggle("open"); };
 }
 async function playBgm(song, idx, el){
+  const nowEl=$("#bgmNow");
   document.querySelectorAll(".song").forEach(x=>x.classList.add("paused"));
   if(el) el.classList.remove("paused");
   // 切换同一首 → 停止
   if(state.bgm && state.bgm.idx===idx){
     try{ await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{}); }catch(e){}
     state.bgm=null; if(el) el.classList.add("paused");
+    if(nowEl) nowEl.textContent="未播放";
     return;
   }
   try{
     if(state.bgm){ try{ await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{}); }catch(e){} }
     await A.voice.play({ channel:"ambience", dataUrl:song.url, loop:true, volume:0.28 });
     state.bgm={ idx, name:song.name };
+    if(nowEl) nowEl.textContent="♬ "+song.name;
     toast("🎵 正在播放：" + song.name);
   }catch(e){
     // 静默降级：不报错，只标记状态让 UI 显示选中

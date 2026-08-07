@@ -2281,7 +2281,7 @@
 
 .menu-label-group {
   flex: 1;
-  min-width: 0;
+  min-width: 90px;
 }
 
 .menu-label {

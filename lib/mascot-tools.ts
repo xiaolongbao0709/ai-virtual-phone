@@ -1181,6 +1181,7 @@ const MASCOT_NATIVE_TOOL_NAMES: Record<string, string> = {
     "更新记忆": "mascot_update_memory",
     "删除记忆": "mascot_delete_memory",
     "沉淀记忆": "mascot_summarize_memory",
+    "查询系统更新": "mascot_query_updates",
 };
 
 const MASCOT_NATIVE_LOADER_NAMES: Record<string, string> = {
