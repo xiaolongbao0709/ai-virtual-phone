@@ -6,7 +6,7 @@
 // 头部追加一条记录。设置页「系统更新」与小卷「查询系统更新」工具共用这份数据，
 // 这样你无论从哪都能确认「我的小手机是不是更新了、更新了什么」。
 
-export const APP_VERSION = "1.0.0";
+export const APP_VERSION = "1.2.0";
 
 export interface ChangelogEntry {
   version: string;       // 例如 "1.0.0"
@@ -16,6 +16,36 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "1.2.0",
+    date: "2026-08-07",
+    title: "建群弹窗支持全部角色 + NPC 纯群",
+    highlights: [
+      "创建群聊候选列表从「仅联系人」扩展为「全部有独立人设的角色」",
+      "未加好友的角色也可被选入，并标记「未添加好友」",
+      "选人步骤即可切换「围观模式」；选满 2 人可一键「设为 NPC 纯群」（机主不在群里），方便围观 NPC 之间的社交",
+    ],
+  },
+  {
+    version: "1.1.0",
+    date: "2026-08-07",
+    title: "黑珍珠灵魂酒吧 v10：调酒台融合 + 点单菜单恢复",
+    highlights: [
+      "调酒台游戏由 iframe 改为直接同文档内联合并，修复手机端黑屏问题",
+      "恢复吧台点单菜单（今日特调 / 自调 / 让 TA 调）",
+      "修复 ai.generate 缺少 characterId 导致随机事件等 6 处报错",
+      "酒吧相册支持 AI 生图合照",
+    ],
+  },
+  {
+    version: "1.0.1",
+    date: "2026-08-07",
+    title: "工坊能力增强",
+    highlights: [
+      "工坊「单轮工具调用上限」可在配置里调节",
+      "仓库源码单次读取上限提升至 9000 字符，单页读取字符数可配置",
+    ],
+  },
   {
     version: "1.0.0",
     date: "2026-08-07",
