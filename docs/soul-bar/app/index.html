@@ -118,10 +118,27 @@
     background:rgba(255,255,255,.05);color:var(--txt);font-size:13.5px;cursor:pointer;margin-top:8px}
   .btn:active{background:rgba(255,255,255,.1)}
   .btn.primary{background:linear-gradient(135deg,var(--gold),var(--rose));color:#2a1d1d;border:none;font-weight:600}
+  /* 调酒面板：浮层覆盖（不受房间切换影响），聊天里角色同意调酒时直接展开 */
+  #bartendPanel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:min(92%,420px);max-height:80vh;overflow-y:auto;z-index:60;
+    box-shadow:0 14px 44px rgba(0,0,0,.55)}
   .mood-input{width:100%;margin-top:8px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);
     border:1px solid var(--glass-bd);color:var(--txt);font:13.5px inherit;outline:none}
   .billrow{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed var(--glass-bd)}
   .billrow.total{border:none;font-weight:700;color:var(--gold);margin-top:4px}
+  /* 调酒：分步加料展示 */
+  .b-name{font-size:16px;font-weight:700;color:var(--gold);margin-bottom:2px}
+  .b-vibe{font-size:12px;color:var(--sub);margin-bottom:8px;font-style:italic}
+  .b-step{display:flex;align-items:flex-start;gap:6px;padding:7px 0;border-top:1px dashed var(--glass-bd);line-height:1.55}
+  .b-step:first-of-type{border-top:none}
+  .b-dot{flex:0 0 auto;color:var(--gold);font-size:13px;line-height:1.6}
+  .b-ing{flex:0 0 auto;font-weight:600;color:var(--txt);white-space:nowrap}
+  .b-reason{flex:1;color:var(--sub);font-size:12.5px}
+  .b-finish{margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(231,201,139,.1);
+    border:1px solid rgba(231,201,139,.35);font-size:13px;color:var(--txt);line-height:1.6}
+  /* 选人遮罩：多选 */
+  .role-opt.sel{background:linear-gradient(135deg,var(--gold),var(--rose));color:#2a1d1d;border-color:transparent;font-weight:600}
+  .role-opt.sel::after{content:" ✓";opacity:.8}
   /* 相册 / 朋友圈 */
   .moments-feed{display:flex;flex-wrap:wrap;gap:10px;padding:4px 0;justify-content:center}
   .polaroid{background:#fbf7ef;color:#2a2330;border-radius:10px;padding:8px 8px 12px;margin:0;
@@ -274,8 +291,9 @@
   <!-- 选人遮罩 -->
   <div class="mask" id="mask">
     <h2>今晚和谁去 黑珍珠？</h2>
-    <p id="maskDesc">选择要一起去的角色。之后还能在酒吧里偶遇更多人。</p>
+    <p id="maskDesc">选择要一起去的角色（可多选），然后进店。之后还能在酒吧里偶遇更多人。</p>
     <div class="role-grid" id="roleGrid"></div>
+    <div class="btn primary" id="enterBarBtn" disabled style="margin-top:14px">确认进店 ▸</div>
   </div>
 
   <!-- 加人 / 偶遇遮罩 -->
@@ -350,7 +368,9 @@
 <script>
 const A = window.AiPhone || window.AiPhoneApp;
 const $ = (s) => document.querySelector(s);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const PRICE = { "夜色微醺":48, "烈焰红唇":58, "深夜拼盘":38 }; // 特调默认价（AI 未返回时用）
+let pendingBartend = [];   // 聊天中角色同意调酒时暂存，待本轮对话结束再展开
 const state = {
   userName: "你",
   present: [],            // {id,name,avatar,isReal,status}
@@ -668,6 +688,10 @@ function importWorldbook(file){
 
 /* ---------- 工具 ---------- */
 function sysLine(text){ const f=$("#feed"); const d=document.createElement("div"); d.className="sys"; d.textContent=text; f.appendChild(d); f.scrollTop=f.scrollHeight; }
+function appendBartend(html){
+  const b=$("#bartendBody"); const d=document.createElement("div"); d.className="b-step-wrap"; d.innerHTML=html;
+  b.appendChild(d); b.scrollTop=b.scrollHeight;
+}
 function pushBubble(role, name, text, priv){
   const f=$("#feed"); const m=document.createElement("div");
   m.className="msg"+(role==="me"?" me":"");
@@ -743,32 +767,36 @@ async function init(){
     // 用户昵称
     try{ const prof = await A.user.getProfile({}); state.userName = prof?.name || "你"; }catch(e){}
     renderStatusBar();
-    // 选人：从邀TA去酒吧入口带 characterId，否则让用户选
+    // 选人：从邀TA去酒吧入口带 characterId 作为预选，仍可多选更多人
     let presetId = ctx?.characterId || (ctx?.launchContext?.characterId);
     if(!presetId && ctx && ctx.characterId) presetId = ctx.characterId;
-    if(presetId && chars.find(c=>c.id===presetId)){
-      state.present.push(mkPresent(chars.find(c=>c.id===presetId), true));
-      $("#mask").classList.add("hidden");
-      await enterBar();
-    } else {
-      renderRoleGrid(chars);
-    }
+    if(presetId && !chars.find(c=>c.id===presetId)) presetId = null;
+    renderRoleGrid(chars, presetId || null);
   }catch(e){ sysLine("初始化失败：" + e.message); }
 }
 
 function mkPresent(c, isReal){ return { id:c.id, name:c.name, avatar:cleanAvatar(c.avatar)||(state.avatarOverrides&&state.avatarOverrides[c.id])||c.name.slice(0,1), isReal, status: isReal?"real":undefined }; }
 
-function renderRoleGrid(chars){
+function renderRoleGrid(chars, presetId){
   const g=$("#roleGrid"); g.innerHTML="";
+  const sel = new Set(presetId ? [presetId] : []);
+  const btn = $("#enterBarBtn");
   chars.forEach(c=>{
-    const d=document.createElement("div"); d.className="role-opt"; d.textContent=c.name;
-    d.onclick=async()=>{
-      state.present.push(mkPresent(c,true));
-      $("#mask").classList.add("hidden");
-      await enterBar();
+    const d=document.createElement("div"); d.className="role-opt"+(sel.has(c.id)?" sel":""); d.textContent=c.name;
+    d.onclick=()=>{
+      if(sel.has(c.id)){ sel.delete(c.id); d.classList.remove("sel"); }
+      else { sel.add(c.id); d.classList.add("sel"); }
+      btn.disabled = sel.size===0;
     };
     g.appendChild(d);
   });
+  btn.disabled = sel.size===0;
+  btn.onclick=async()=>{
+    if(!sel.size) return;
+    sel.forEach(id=>{ const c=chars.find(x=>x.id===id); if(c) state.present.push(mkPresent(c,true)); });
+    $("#mask").classList.add("hidden");
+    await enterBar();
+  };
 }
 
 /* ---------- 进场 ---------- */
@@ -886,7 +914,7 @@ async function loungeGenerate(userLine, opening, bypassBusy){
     // 固定真实员工（老板娘/调酒师）：锚定场景身份，确保真实角色卡按酒吧人设演绎
     const fixedStaff = state.present.filter(p=>p.fixed && p.isReal);
     const staffScene = fixedStaff.length ? `\n\n[场景] 当前大家都在「黑珍珠」酒吧里：${fixedStaff.map(p=> p.staff==="owner" ? `${p.name}是这家酒吧的老板娘` : (p.staff==="bartender" ? `${p.name}是招牌调酒师（沉默寡言但调酒技术精湛）` : `${p.name}是酒吧员工`)).join("；")}。请以各自在酒吧里的身份自然互动。` : "";
-    const instr = `在场成员：\n${roster}\n用户：${state.userName} (id:user)\n\n请以在场真实角色身份，严格用 [台词@真实角色id] / [沉默@id] / [私信@真实角色id]内容 输出。${npcNote}${staffScene}${extra}${drunkSuffix()}\n\n${userLine}`;
+    const instr = `在场成员：\n${roster}\n用户：${state.userName} (id:user)\n\n请以在场真实角色身份，严格用 [台词@真实角色id] / [沉默@id] / [私信@真实角色id]内容 输出。${npcNote}${staffScene}${extra}${drunkSuffix()}\n\n${userLine}\n\n[调酒约定] 如果有在场角色表示要给用户调一杯酒，请在该角色那句台词之后，另起一行附加 [调酒@该角色自身id]（系统会自动展开 TA 调酒、并逐步说明每个材料的来由）。不要把这句话本身念给玩家听。`;
     if(realIds.length){
       const r = await A.ai.generate({ characterIds: realIds, appTags:["bar","lounge"], instruction: instr + wbInject(userLine) });
       parseBarOutput(r.text||"");
@@ -900,6 +928,8 @@ async function loungeGenerate(userLine, opening, bypassBusy){
     }
   }catch(e){ sysLine("生成出错：" + e.message); }
   finally{ if(ownBusy) setBusy(false); }
+  // 聊天里角色同意调酒 → 自动展开 TA 的调酒模块
+  processPendingBartend();
 }
 
 function parseBarOutput(text){
@@ -920,6 +950,19 @@ function parseBarOutput(text){
   // 沉默
   const silRe=/\[沉默@([^\]]+)\]/g; let s;
   while((s=silRe.exec(text))){ /* 不渲染 */ }
+  // 调酒：角色同意给用户调一杯 → 暂存，等本轮对话结束再展开调酒模块
+  const tbRe=/\[调酒@([^\]]+)\]/g; let tb;
+  while((tb=tbRe.exec(text))){
+    const id=tb[1];
+    if(state.present.find(p=>p.id===id)) pendingBartend.push(id);
+  }
+}
+
+function processPendingBartend(){
+  if(!pendingBartend.length) return;
+  const ids = pendingBartend; pendingBartend = [];
+  const id = ids[ids.length-1]; // 一轮里取最后一位同意调酒的角色
+  setTimeout(()=>{ bartendForUser(id); }, 350);
 }
 
 async function handlePrivate(charId, content){
@@ -972,11 +1015,6 @@ function renderBartop(){
       <div id="drinkList"></div>
       <div class="btn" id="selfBartend">我自己调一杯（¥30）</div>
       <div class="btn" id="moodBartend">让 TA 给我调（说出心情 · ¥52）</div>
-    </div>
-    <div class="card" id="bartendPanel" style="display:none">
-      <h3 id="bartendTitle">调酒</h3>
-      <div id="bartendBody" style="font-size:13.5px;line-height:1.7;color:var(--txt)"></div>
-      <div class="btn primary" id="backToLounge">↩ 回到卡座继续聊</div>
     </div>`;
   const dl=$("#drinkList");
   state.todaysSpecials.forEach(s=>{
@@ -987,6 +1025,19 @@ function renderBartop(){
   });
   $("#selfBartend").onclick=()=>selfBartend();
   $("#moodBartend").onclick=()=>moodBartend();
+  // 调酒面板是全局浮层（只创建一次）：聊天里角色同意调酒时直接展开，不受房间切换/重复渲染影响
+  ensureBartendPanel();
+}
+
+function ensureBartendPanel(){
+  if($("#bartendPanel")) return;
+  const p=document.createElement("div");
+  p.className="card"; p.id="bartendPanel"; p.style.display="none";
+  p.innerHTML=`<h3 id="bartendTitle">调酒</h3>
+    <div id="bartendBody" style="font-size:13.5px;line-height:1.7;color:var(--txt)"></div>
+    <div class="btn primary" id="backToLounge">↩ 回到卡座继续聊</div>`;
+  const app=$("#app")||document.body;
+  app.appendChild(p);
 }
 
 async function suggestDrink(drinkName){
@@ -1030,27 +1081,50 @@ async function selfBartend(){
 async function moodBartend(){
   const mood=prompt("说出你现在的心情（比如：有点累 / 开心但孤独 / 想被宠着）：");
   if(!mood) return;
-  if(state.busy) return;
   const bartender = state.present.find(p=>p.staff==="bartender") || state.present.find(p=>p.isReal);
   if(!bartender){ toast("吧台这会儿没人"); return; }
-  $("#bartendTitle").textContent=`${bartender.name} 为你调酒`;
-  $("#bartendPanel").style.display="block";
+  await bartendForUser(bartender.id, mood);
+}
+
+/* 角色（C）开始给 U 调酒：分步加料，每加一个都说明为什么加这个材料 */
+async function bartendForUser(charId, mood){
+  const c = state.present.find(p=>p.id===charId);
+  if(!c){ toast("TA 这会儿不在场"); return; }
+  if(state.busy) return;
   setBusy(true);
+  $("#bartendTitle").textContent = `${c.name} 给你调一杯`;
+  const body=$("#bartendBody"); body.innerHTML = "";
+  $("#bartendPanel").style.display="block";
+  switchRoom("lounge");
+  sysLine(`🍸 ${c.name} 走向吧台，说要给你调一杯${mood?("（"+(mood.length>12?mood.slice(0,12)+"…":mood)+"）"):""}。`);
   try{
-    if(bartender.isReal){
-      const r=await A.ai.generate({ characterId:bartender.id, appTags:["bar","bartend_mood"],
-        instruction:`用户心情：${mood}。以 ${bartender.name} 身份调一杯专属特调并描述。${drunkSuffix()}` + wbInject(mood) });
-      $("#bartendBody").textContent=r.text||"（没有回应）";
-    } else {
-      const r=await A.ai.generate({ appTags:["bar","bartend_mood"],
-        instruction:`${bartender.persona}\n\n用户心情：${mood}。以「${bartender.name}」身份调一杯专属特调并描述（老K 话少，用精确的几个动作和一句顶十句的话带过）。${drunkSuffix()}` + wbInject(mood) });
-      $("#bartendBody").textContent=r.text||"（没有回应）";
+    const personaLine = c.isReal ? "" : (c.persona ? c.persona+"\n\n" : "");
+    const moodLine = mood ? `用户此刻的心情：${mood}。` : "";
+    const instr = `${personaLine}你是黑珍珠酒吧的角色 ${c.name}，用户请你调一杯酒。
+请设计一款贴合氛围的特调，并分步骤调出来。只返回 JSON：
+{ "name":"酒名", "vibe":"一句氛围描述(18字内)", "ingredients":[ {"name":"材料名","reason":"为什么加这个材料、带来什么风味或情绪(25字内)"} ], "finish":"调好后端给用户的那句话(一句顶十句，可带动作)" }
+要求 ingredients 有 3~5 个，每个 reason 要具体（如「金酒做骨架，清冽打底」「接骨木花增香，带一点甜润收尾」）。不要任何解释，只要 JSON。`;
+    const r = c.isReal
+      ? await A.ai.generate({ characterId:c.id, appTags:["bar","bartend"], instruction: instr + wbInject(mood||"") })
+      : await A.ai.generate({ appTags:["bar","bartend"], instruction: instr + wbInject(mood||"") });
+    const m=(r.text||"").match(/\{[\s\S]*\}/);
+    let recipe=null; if(m){ try{ recipe=JSON.parse(m[0]); }catch(e){} }
+    if(!recipe || !Array.isArray(recipe.ingredients) || !recipe.ingredients.length)
+      recipe={ name:"今晚特调", vibe:"随你心情来", ingredients:[{name:"基酒",reason:"先镇个场"},{name:"气泡水",reason:"稀释酒劲，好入口"}], finish:"给你，慢用。" };
+    appendBartend(`<div class="b-name">🍸 ${recipe.name}</div>${recipe.vibe?`<div class="b-vibe">${recipe.vibe}</div>`:""}`);
+    for(const ing of recipe.ingredients){
+      await sleep(750);
+      appendBartend(`<div class="b-step"><span class="b-dot">➕</span><span class="b-ing">${ing.name||"材料"}</span><span class="b-reason">— ${ing.reason||""}</span></div>`);
     }
-  }catch(e){ $("#bartendBody").textContent="出错："+e.message; }
-  finally{ setBusy(false); }
-  // 角色/调酒师调的酒计费 + 醉酒
-  state.bill.push({ name:`${bartender.name}特调`, price:52, who:bartender.name }); addDrunk(20); advanceTime(8);
-  $("#backToLounge").onclick=()=>{ $("#bartendPanel").style.display="none"; switchRoom("lounge"); };
+    await sleep(500);
+    appendBartend(`<div class="b-finish">🥃 ${recipe.finish||"调好了，给你。"}</div>`);
+    // 计费 + 醉酒 + 时间
+    state.bill.push({ name:`${c.name}·${recipe.name}`, price:52, who:c.name }); addDrunk(20); advanceTime(8);
+  }catch(e){ appendBartend("出错："+e.message); }
+  finally{
+    setBusy(false);
+    $("#backToLounge").onclick=()=>{ $("#bartendPanel").style.display="none"; switchRoom("lounge"); };
+  }
 }
 
 /* ---------- 入场/离场台词 ---------- */
