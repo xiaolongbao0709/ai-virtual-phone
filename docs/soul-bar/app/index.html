@@ -162,6 +162,20 @@
     text-align:center;font-size:13px;cursor:pointer}
   .role-opt:active{background:rgba(255,255,255,.1)}
   .hidden{display:none!important}
+  /* 首次进店：挑选固定班底 */
+  .setup-card{max-width:360px;width:90%;display:flex;flex-direction:column;align-items:stretch;gap:4px}
+  .setup-card h2{font-weight:600;letter-spacing:2px;margin:0}
+  .setup-card .sub{color:var(--sub);font-size:12px;margin:0 0 4px;text-align:center}
+  .setup-row{margin-top:6px}
+  .setup-label{font-size:12px;color:var(--gold);margin-bottom:4px;letter-spacing:1px}
+  .setup-grid{max-height:34vh}
+  .staff-opt{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:12px;background:var(--glass);
+    border:1px solid var(--glass-bd);font-size:13px;cursor:pointer}
+  .staff-opt .av{flex:0 0 auto;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    background:rgba(255,255,255,.12);font-size:13px}
+  .staff-opt.builtin{border-style:dashed;color:var(--sub)}
+  .staff-opt.sel{border-color:var(--gold);background:rgba(231,201,139,.16);box-shadow:0 0 0 1px var(--gold) inset}
+  #staffDone:disabled{opacity:.45;filter:grayscale(.4);pointer-events:none}
   /* 增删人物 */
   .chip.add{cursor:pointer;opacity:.7;border-style:dashed}
   .chip.add .av{background:rgba(231,201,139,.18);color:var(--gold)}
@@ -245,6 +259,7 @@
 
   <div class="foot">
     <button class="leave-btn" id="leaveBtn">🌙 离开酒吧（结账 · 保存今晚的记忆）</button>
+    <button class="btn" id="staffCfgBtn" style="margin-top:8px">⚙ 重新配置员工</button>
   </div>
 
   <!-- 选人遮罩 -->
@@ -263,6 +278,23 @@
     <div class="btn hidden" id="inviteRegular">🍷 叫今晚的常客来</div>
     <div class="btn" id="inviteClose">先这样</div>
   </div>
+
+  <!-- 首次进店：挑选固定班底 -->
+  <div class="mask hidden" id="staffSetup">
+    <div class="setup-card">
+      <h2>黑珍珠 · 第一天开业</h2>
+      <p class="sub">先认领两位固定班底。可以从你已有的角色里挑，不选就用店里的人。</p>
+      <div class="setup-row">
+        <div class="setup-label">① 老板娘</div>
+        <div class="role-grid setup-grid" id="ownerGrid"></div>
+      </div>
+      <div class="setup-row">
+        <div class="setup-label">② 招牌调酒师</div>
+        <div class="role-grid setup-grid" id="bartenderGrid"></div>
+      </div>
+      <div class="btn primary" id="staffDone" style="margin-top:14px" disabled>开始营业 ▸</div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -272,6 +304,7 @@ const PRICE = { "夜色微醺":48, "烈焰红唇":58, "深夜拼盘":38 }; // �
 const state = {
   userName: "你",
   present: [],            // {id,name,avatar,isReal,status}
+  staffConfig: null,      // {owner:{type,...}, bartender:{type,...}} 首次进店挑选并持久化
   todaysSpecials: [],     // {name,desc,price}
   currentRoom: "lounge",
   visitId: "v_" + Date.now(),
@@ -298,47 +331,95 @@ const BGM_LIST = [
 // aliases：用于在手机真实角色列表中按名识别。命中真实角色后，珍珠/老K 的记忆会
 // 直接写进他们「自己的角色记忆」（A.memory.addTimeline），并改用真实角色卡驱动对话。
 // 识别不到时退回 app 本地 staff_memory（内置人设），体验不降级。
-const STAFF = [
-  { id:"staff_pearl", key:"pearl", name:"珍珠", aliases:["珍珠","珍珠老板","老板娘珍珠","老板娘"], avatar:"🦪", isReal:false, fixed:true, staff:"owner",
+// 黑珍珠固定班底：内置兜底人设（仅在玩家不选真实角色时使用）
+const BUILTIN_STAFF = {
+  owner:     { id:"staff_pearl", key:"pearl", name:"珍珠", avatar:"🦪", staff:"owner",
     persona:"黑珍珠酒吧的老板娘，人称「珍珠」。身材姣好，常穿红色吊带长裙（胸前别着金色BOSS铭牌），一头微卷长发随意披散。口才极好，风情万种又不失分寸——桃花与风流往事极多，但她从不说破。见多识广，说话滴水不漏又撩人，善于把气氛炒热，也善于在关键时刻收住。她习惯倚在吧台上和客人聊天，记得每个熟客的口味和故事，对今晚来的人也很快能接上话。她知道什么时候该笑、什么时候该沉默地看着你。",
     greet:"（倚在吧台上，抬眼一笑，红色吊带裙的肩带微微滑落又随手拨回）来啦？坐。老K，给TA来杯惯常的。" },
-  { id:"staff_k", key:"k", name:"老K", aliases:["老K","老k","老k","K哥","k哥","调酒师老K"], avatar:"🥃", isReal:false, fixed:true, staff:"bartender",
+  bartender: { id:"staff_k", key:"k", name:"老K", avatar:"🥃", staff:"bartender",
     persona:"黑珍珠的招牌调酒师「老K」。黑长马尾束在脑后，永远穿黑色双排扣马甲配衬衫领带和深色围裙，左胸别一枚银色调酒针。沉默寡言，调酒技术精湛到近乎艺术——摇酒、滤冰、装饰，行云流水不浪费一个动作。他知道该说什么、不该说什么——多数时候只点头、擦杯子、把酒推到你面前，眼神冷淡但手上的活从不出错。只有在调酒和真正关键的时刻才开口，一句顶十句。平常不主动插话，被点名才淡淡接一句。" }
+};
+const STAFF_ROLES = [
+  { role:"owner", title:"① 老板娘", builtinKey:"owner" },
+  { role:"bartender", title:"② 招牌调酒师", builtinKey:"bartender" }
 ];
-// 在真实角色列表中识别固定员工：精确 > 前缀 > 包含（大小写不敏感）
-function matchRealStaff(chars){
-  const map = {};
-  for(const s of STAFF){
-    const names = (chars||[]).map(c=>({id:c.id, name:c.name}));
-    let hit = names.find(c=> c.name===s.name);
-    if(!hit) hit = names.find(c=> c.name.toLowerCase().startsWith(s.name.toLowerCase()));
-    if(!hit) hit = names.find(c=> c.name.toLowerCase().includes(s.name.toLowerCase()));
-    if(hit) map[s.key]=hit;
-  }
-  return map;
-}
+// 员工配置：{ owner:{type,name,avatar,id?}, bartender:{...} }，type="real"|"builtin"
+// 仅首次进店让用户从角色列表里挑选；之后持久化到 app db，不再询问。
+async function loadStaffConfig(){ try{ const m=await DB.get("bar_staff_config","config"); if(m) return m; }catch(e){} return null; }
+async function saveStaffConfig(cfg){ try{ await DB.set("bar_staff_config","config", cfg); }catch(e){} }
 async function addStaff(){
-  const chars = window.__allChars || [];
-  const matched = matchRealStaff(chars);
-  const hits = [];
-  for(const s of STAFF){
-    if(state.present.find(p=>p.id===s.id)) continue;
-    const real = matched[s.key];
-    if(real){
-      // 命中真实角色：用真实 id + isReal，记忆走角色自身；persona 仅作场景兜底
-      state.present.push({ ...s, id:real.id, name:real.name, isReal:true, status:s.staff, memory:"" });
-      hits.push(real.name);
+  const cfg = state.staffConfig || {};
+  const chosen = [];
+  for(const def of STAFF_ROLES){
+    const sel = cfg[def.role];
+    const builtin = BUILTIN_STAFF[def.builtinKey];
+    if(state.present.find(p=>p.staff===def.role)) continue;
+    if(sel && sel.type==="real"){
+      // 玩家选了真实角色 → 用真实 id，记忆走角色自身；人设兜底用内置
+      const exist = state.present.find(p=>p.id===sel.id);
+      if(exist){
+        // 该角色已随你进场：直接升级为固定员工，避免重复
+        exist.fixed=true; exist.staff=def.role; exist.status=def.role; exist.persona=builtin.persona;
+      } else {
+        state.present.push({ id:sel.id, name:sel.name, avatar:sel.avatar||builtin.avatar,
+          isReal:true, fixed:true, staff:def.role, status:def.role, persona:builtin.persona });
+      }
+      chosen.push(`${sel.name}（真实角色）`);
     } else {
-      // 未识别：退回 app 本地 staff_memory（内置人设）
+      // 未选或选了内置 → 退回 app 本地 staff_memory（内置人设）
       let mem="";
-      try{ const m=await DB.get("staff_memory", s.id); mem = m && m.memory ? m.memory : ""; }catch(e){}
-      state.present.push({ ...s, status:s.staff, memory:mem });
+      try{ const m=await DB.get("staff_memory", builtin.id); mem = m && m.memory ? m.memory : ""; }catch(e){}
+      state.present.push({ ...builtin, isReal:false, fixed:true, status:def.role, memory:mem });
+      chosen.push(`${builtin.name}（店内人设）`);
     }
   }
-  if(hits.length) toast("🪪 已识别真实角色：" + hits.join("、") + "（记忆将挂接到角色自身）");
-  else toast("未识别到真实角色，珍珠/老K 使用内置人设");
+  if(chosen.length) toast("🪪 今晚班底：" + chosen.join(" · "));
 }
 async function saveStaffMemory(id, mem){ try{ await DB.set("staff_memory", id, { id, memory:mem||"" }); }catch(e){} }
+
+// ---------- 首次进店：从角色列表里挑选固定员工 ----------
+function showStaffSetup(){
+  return new Promise(resolve=>{
+    const chars = window.__allChars || [];
+    const sel = { owner:null, bartender:null };
+    const modal=$("#staffSetup");
+    const doneBtn=$("#staffDone");
+    function mark(gridId, el){ $(gridId).querySelectorAll(".staff-opt").forEach(x=>x.classList.remove("sel")); el.classList.add("sel"); }
+    function check(){ doneBtn.disabled = !(sel.owner && sel.bartender); }
+    function renderGrid(role, gridId){
+      const g=$(gridId); g.innerHTML="";
+      chars.forEach(c=>{
+        const d=document.createElement("div"); d.className="staff-opt";
+        d.innerHTML=`<span class="av">${(c.avatar||c.name||"?").slice(0,1)}</span><span>${c.name}</span>`;
+        d.onclick=()=>{ sel[role]={type:"real",id:c.id,name:c.name,avatar:c.avatar}; mark(gridId,d); check(); };
+        g.appendChild(d);
+      });
+      const builtin=BUILTIN_STAFF[role==="owner"?"owner":"bartender"];
+      const b=document.createElement("div"); b.className="staff-opt builtin";
+      b.innerHTML=`<span class="av">${builtin.avatar}</span><span>${builtin.name}（店里的人）</span>`;
+      b.onclick=()=>{ sel[role]={type:"builtin",name:builtin.name}; mark(gridId,b); check(); };
+      g.appendChild(b);
+    }
+    renderGrid("owner","#ownerGrid"); renderGrid("bartender","#bartenderGrid"); check();
+    doneBtn.onclick=async()=>{
+      const cfg={ owner:sel.owner, bartender:sel.bartender };
+      state.staffConfig=cfg; await saveStaffConfig(cfg);
+      modal.classList.add("hidden");
+      resolve(cfg);
+    };
+    modal.classList.remove("hidden");
+  });
+}
+async function ensureStaffConfig(){
+  if(state.staffConfig && state.staffConfig.owner && state.staffConfig.bartender) return;
+  await showStaffSetup();
+}
+async function reconfigStaff(){
+  state.present = state.present.filter(p=>!p.fixed);   // 移除当前班底
+  await showStaffSetup();                               // 重新挑选并保存
+  await addStaff(); renderPresent(); renderBartop();
+  toast("🪪 班底已更新");
+}
 // 老K 把酒推过来的极简服务台词
 async function staffServe(drinkName){
   const k=state.present.find(p=>p.staff==="bartender"); if(!k) return;
@@ -416,7 +497,8 @@ async function init(){
   try{
     const ctx = await A.app.getLaunchContext().catch(()=>null);
     const chars = await A.characters.list();
-    window.__allChars = chars; // 供 addStaff 识别真实角色 / 随机事件偶遇
+    window.__allChars = chars; // 供 addStaff 挑选真实角色 / 随机事件偶遇
+    state.staffConfig = await loadStaffConfig(); // 读取已保存的员工配置
     // 加载酒吧客人档案（跨次访问持久）
     try{ state.npcs = await loadNpcsFromDb(); }catch(e){ state.npcs = []; }
     // 用户昵称
@@ -452,10 +534,14 @@ function renderRoleGrid(chars){
 
 /* ---------- 进场 ---------- */
 async function enterBar(){
+  await ensureStaffConfig();   // 首次进店：从角色列表里挑选老板娘 / 调酒师
   await addStaff();
   renderPresent(); renderBartop(); renderJuke(); renderMoments();
   const guests = state.present.filter(p=>!p.fixed).map(p=>p.name).join("、");
-  sysLine(`你走进了黑珍珠。${guests?guests+"已经在卡座上了，":""}珍珠倚在吧台上抬眼一笑，老K 在身后默默擦着杯子。`);
+  const boss = state.present.find(p=>p.staff==="owner");
+  const barkeep = state.present.find(p=>p.staff==="bartender");
+  const bossName = boss?boss.name:"珍珠", barkeepName = barkeep?barkeep.name:"老K";
+  sysLine(`你走进了黑珍珠。${guests?guests+"已经在卡座上了，":""}${bossName}倚在吧台上抬眼一笑，${barkeepName} 在身后默默擦着杯子。`);
   // 今日特调提示栏（老K 的手笔）
   await genTodaysSpecials();
   // 进场偶遇：常客可能本来就在，或撞上一个陌生人
@@ -943,6 +1029,7 @@ function renderBillCard(){
   card.innerHTML=html; f.appendChild(card); f.scrollTop=f.scrollHeight;
 }
 $("#leaveBtn").onclick=leaveBar;
+$("#staffCfgBtn").onclick=reconfigStaff;
 
 /* ---------- 房间切换 ---------- */
 function switchRoom(r){
