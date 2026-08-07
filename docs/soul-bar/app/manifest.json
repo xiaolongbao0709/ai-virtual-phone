@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "author": "乖乖",
   "description": "虚拟手机世界里一家有记忆的酒吧。约角色一起去调酒、卡座闲聊、听 BGM、偶遇客人、拍照发朋友圈；带醉酒度、时间流逝与结账系统，所有经历都会沉淀成角色记忆，下次来熟客会记得你，老客人还能升级为正式角色。",
+  "icon": "icon.png",
   "entry": "index.html",
   "permissions": [
     "app.data.read",
