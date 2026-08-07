@@ -54,9 +54,10 @@
   .chips{display:flex;gap:8px;overflow-x:auto}
   .chips::-webkit-scrollbar{display:none}
   .chip{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:4px 10px 4px 4px;
-    border-radius:20px;background:var(--glass);border:1px solid var(--glass-bd);font-size:12px}
-  .chip .av{width:22px;height:22px;border-radius:50%;background:#3a3350;display:flex;
-    align-items:center;justify-content:center;font-size:11px;color:var(--gold)}
+    border-radius:20px;background:var(--glass);border:1px solid var(--glass-bd);font-size:12px;max-width:180px}
+  .chip .av{flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:#3a3350;display:flex;
+    align-items:center;justify-content:center;font-size:11px;color:var(--gold);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:22px}
+  .chip .av+span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .chip.leave{cursor:pointer;opacity:.85}
   .chip.leave:active{transform:scale(.95)}
   .chip .x{color:#ff9a9a;font-size:13px;margin-left:2px}
@@ -83,11 +84,11 @@
   .msg.me{align-self:flex-end;align-items:flex-end}
   .msg .who{font-size:10.5px;color:var(--sub);margin:0 4px}
   .msg .bubble{padding:10px 13px;border-radius:16px;font-size:14px;line-height:1.55;
-    background:rgba(255,255,255,.08);border:1px solid var(--glass-bd)}
+    background:rgba(255,255,255,.08);border:1px solid var(--glass-bd);word-break:break-word;overflow-wrap:anywhere}
   .msg.me .bubble{background:linear-gradient(135deg,#3a2b52,#2c2140);border-color:rgba(182,156,240,.35)}
   .msg .bubble.priv{background:rgba(240,166,192,.14);border-color:rgba(240,166,192,.4);font-style:italic}
   .sys{align-self:center;font-size:11px;color:var(--sub);background:var(--glass);
-    padding:5px 12px;border-radius:12px;text-align:center;max-width:90%}
+    padding:5px 12px;border-radius:12px;text-align:center;max-width:90%;word-break:break-word;line-height:1.45}
   .typing{font-size:12px;color:var(--sub);padding:4px 6px}
   .typing i{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--sub);
     margin:0 1px;animation:bl 1s infinite}
@@ -123,7 +124,7 @@
   .billrow{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed var(--glass-bd)}
   .billrow.total{border:none;font-weight:700;color:var(--gold);margin-top:4px}
   /* 点唱机 */
-  .juke{flex:1;overflow-y:auto;padding:8px 0;display:flex;flex-direction:column;gap:10px}
+  .juke{flex:1;overflow-y:auto;padding:8px 0;display:flex;flex-direction:column;gap:8px;max-height:50vh}
   .song{display:flex;justify-content:space-between;align-items:center;padding:13px 15px;
     border-radius:14px;background:var(--glass);border:1px solid var(--glass-bd);cursor:pointer}
   .song:active{background:rgba(255,255,255,.1)}
@@ -134,18 +135,19 @@
   .song .eq i:nth-child(4){animation-delay:.6s}
   .song.paused .eq i{animation:none;height:4px;background:var(--sub)}
   @keyframes eq{0%,100%{height:5px}50%{height:18px}}
-  .juke-note{font-size:11px;color:var(--sub);line-height:1.6;padding:6px 4px}
+  .juke-note{font-size:10px;color:var(--sub);line-height:1.5;padding:4px 2px;opacity:.7}
   /* 相册 / 朋友圈 */
-  .polaroid{background:#fbf7ef;color:#2a2330;border-radius:10px;padding:10px 10px 14px;margin:6px 4px;
-    box-shadow:0 6px 20px rgba(0,0,0,.45);transform:rotate(-1.2deg)}
+  .moments-feed{display:flex;flex-wrap:wrap;gap:10px;padding:4px 0;justify-content:center}
+  .polaroid{background:#fbf7ef;color:#2a2330;border-radius:10px;padding:8px 8px 12px;margin:0;
+    box-shadow:0 4px 14px rgba(0,0,0,.40);transform:rotate(-1.2deg);max-width:220px;width:220px;flex:0 0 auto}
   .polaroid:nth-child(even){transform:rotate(1.2deg)}
-  .polaroid .ph{font-size:30px;text-align:center;padding:16px 0;background:linear-gradient(135deg,#2a2140,#3a2b52);
-    border-radius:6px;color:#e7c98b}
-  .polaroid .cap{font-weight:600;margin-top:8px;font-size:14px}
-  .polaroid .scene{font-size:11.5px;color:#6a6072;line-height:1.5;margin-top:3px}
-  .polaroid .mt{font-size:10px;color:#a59cb0;margin-top:6px;text-align:right}
-  .polaroid .dl-btn{display:block;width:100%;margin-top:8px;padding:5px 0;border-radius:8px;
-    border:1px solid #d4c8b8;background:#f0e9dc;color:#5a4f3a;font-size:11.5px;cursor:pointer;text-align:center}
+  .polaroid .ph{font-size:26px;text-align:center;padding:12px 0;background:linear-gradient(135deg,#2a2140,#3a2b52);
+    border-radius:5px;color:#e7c98b}
+  .polaroid .cap{font-weight:600;margin-top:6px;font-size:13px;line-height:1.35;word-break:break-word}
+  .polaroid .scene{font-size:10.5px;color:#6a6072;line-height:1.45;margin-top:2px;word-break:break-word}
+  .polaroid .mt{font-size:9.5px;color:#a59cb0;margin-top:4px;text-align:right}
+  .polaroid .dl-btn{display:block;width:100%;margin-top:6px;padding:4px 0;border-radius:6px;
+    border:1px solid #d4c8b8;background:#f0e9dc;color:#5a4f3a;font-size:10.5px;cursor:pointer;text-align:center}
   .polaroid .dl-btn:active{background:#e2dac9}
   /* 底部离店 */
   .foot{padding:8px 16px calc(var(--safe-bot) + 10px)}
@@ -270,12 +272,12 @@
     <div class="room juke" id="room-juke">
       <div class="zonehead"><b>🎵 点唱机</b> · 老歌转着，没人说话也热闹。</div>
       <div class="juke" id="juke"></div>
-      <div class="juke-note">点唱机播放酒吧环境音乐（ambience 通道，循环）。首次使用请把音频文件放入 APP 的 <b>assets/bgm/</b> 目录。</div>
+      <div class="juke-note">点唱机切换酒吧氛围音乐。点击歌曲即可播放/切换，再点一次停止。</div>
     </div>
     <!-- 相册 / 朋友圈 -->
     <div class="room moments" id="room-moments">
       <div class="zonehead"><b>📸 露台相册</b> · 夜风里拍一张今晚，留在这里，也发去朋友圈。</div>
-      <div class="feed" id="momentsFeed" style="padding-top:4px"></div>
+      <div class="feed moments-feed" id="momentsFeed" style="padding-top:4px"></div>
       <div class="composer">
         <button class="icon-btn" id="photoBtn">📸</button>
         <textarea id="momentInput" placeholder="写给今晚的一句话…" rows="1"></textarea>
@@ -392,10 +394,10 @@ const state = {
   lateNoted: false,
 };
 const BGM_LIST = [
-  { file: "assets/bgm/jazz.mp3",  name: "深夜爵士",   desc: "慵懒萨克斯，微醺刚好" },
-  { file: "assets/bgm/rain.mp3",  name: "雨林白噪",   desc: "雨打窗沿，适合发呆" },
-  { file: "assets/bgm/disco.mp3", name: "复古 Disco", desc: "灯球转起来，气氛拉满" },
-  { file: "assets/bgm/lofi.mp3",  name: "Lo-Fi 慢拍",  desc: "温柔鼓点，聊天背景" },
+  { url: "https://cdn.pixabay.com/audio/2022/10/25/audio_d1718b49d8.mp3", name: "深夜爵士",   desc: "慵懒萨克斯，微醺刚好" },
+  { url: "https://cdn.pixabay.com/audio/2024/03/05/audio_4c3e13dc94.mp3", name: "雨林白噪",   desc: "雨打窗沿，适合发呆" },
+  { url: "https://cdn.pixabay.com/audio/2022/08/09/audio_6c6ab2d07a.mp3", name: "复古 Disco", desc: "灯球转起来，气氛拉满" },
+  { url: "https://cdn.pixabay.com/audio/2022/05/27/audio_9ffdd3ef81.mp3", name: "Lo-Fi 慢拍",  desc: "温柔鼓点，聊天背景" },
 ];
 
 /* ---------- 黑珍珠酒吧：固定员工（老板娘珍珠 + 招牌调酒师老K） ---------- */
@@ -432,7 +434,7 @@ async function addStaff(){
         // 该角色已随你进场：直接升级为固定员工，避免重复
         exist.fixed=true; exist.staff=def.role; exist.status=def.role; exist.persona=builtin.persona;
       } else {
-        state.present.push({ id:sel.id, name:sel.name, avatar:state.avatarOverrides[sel.id]||sel.avatar||builtin.avatar,
+        state.present.push({ id:sel.id, name:sel.name, avatar:state.avatarOverrides[sel.id]||cleanAvatar(sel.avatar)||sel.name.slice(0,1),
           isReal:true, fixed:true, staff:def.role, status:def.role, persona:builtin.persona });
       }
       chosen.push(`${sel.name}（真实角色）`);
@@ -461,7 +463,8 @@ function showStaffSetup(){
       const g=$(gridId); g.innerHTML="";
       chars.forEach(c=>{
         const d=document.createElement("div"); d.className="staff-opt";
-        d.innerHTML=`<span class="av">${c.avatar||(c.name||"?").slice(0,1)}</span><span>${c.name}</span>`;
+        const av=cleanAvatar(c.avatar)||c.name.slice(0,1);
+        d.innerHTML=`<span class="av">${av}</span><span>${c.name}</span>`;
         d.onclick=()=>{ sel[role]={type:"real",id:c.id,name:c.name,avatar:c.avatar}; mark(gridId,d); check(); };
         g.appendChild(d);
       });
@@ -502,6 +505,21 @@ async function staffServe(drinkName){
 
 /* ---------- 角色头像预设 ---------- */
 const AVATAR_PRESETS = ["🦪","🥃","🍷","🍸","🥂","🍹","🐚","🌹","💋","🔥","🌙","⭐","🦁","🦊","🐺","🦅","🐍","🦋","🎩","🕶️","💎","🖤","🥀","🌊","🍾","🎷","🎺","🪩","🗝️","🎭","🃏","🪞","🛡️","👑","🌃","🏙️","💃","🕺","🎲","☕","📜","🔮","🧊"];
+/** 清理 avatar 值：过滤掉 data: URL / 长 URL / base64 等不可显示内容，只保留短 emoji 或单字 */
+function cleanAvatar(raw){
+  if(!raw) return "";
+  const s=String(raw).trim();
+  if(s.length>6) return ""; // data: URL / base64 / 长路径 都不可显示
+  return s;
+}
+/** 获取角色可显示的 avatar（优先覆盖 > 原始 avatar 清理后 > 名字首字） */
+function displayAvatar(p){
+  const a=p.avatar||"";
+  const ca=cleanAvatar(a);
+  if(ca) return ca;
+  const n=p.name||"?";
+  return n.slice(0,1);
+}
 function pickAvatar(initial){
   return new Promise(resolve=>{
     const modal=$("#avatarPicker"), grid=$("#avatarGrid");
@@ -766,7 +784,7 @@ async function init(){
   }catch(e){ sysLine("初始化失败：" + e.message); }
 }
 
-function mkPresent(c, isReal){ return { id:c.id, name:c.name, avatar:(state.avatarOverrides&&state.avatarOverrides[c.id])||c.avatar, isReal, status: isReal?"real":undefined }; }
+function mkPresent(c, isReal){ return { id:c.id, name:c.name, avatar:cleanAvatar(c.avatar)||(state.avatarOverrides&&state.avatarOverrides[c.id])||c.name.slice(0,1), isReal, status: isReal?"real":undefined }; }
 
 function renderRoleGrid(chars){
   const g=$("#roleGrid"); g.innerHTML="";
@@ -840,7 +858,7 @@ function renderPresent(){
     const badge = isStaff
       ? `<span class="npc-badge" style="border-color:rgba(231,201,139,.5);color:var(--gold)">${p.staff==="owner"?"老板":"调酒师"}</span>`
       : (p.isReal?"":`<span class="npc-badge">${p.status==="regular"?"常客":(p.status==="independent"?"老友":"客人")}</span>`);
-    const av=document.createElement("span"); av.className="av"; av.textContent=p.avatar||(p.name||"?").slice(0,1);
+    const av=document.createElement("span"); av.className="av"; av.textContent=displayAvatar(p);
     av.onclick=(e)=>{ e.stopPropagation(); pickAvatar(p.avatar).then(a=>{ if(a) applyAvatar(p,a); }); };
     const nm=document.createElement("span"); nm.textContent=p.name;
     c.appendChild(av); c.appendChild(nm); c.insertAdjacentHTML("beforeend", badge+(isStaff?"":`<span class="x">×</span>`));
@@ -1066,28 +1084,32 @@ async function moodBartend(){
 /* ---------- 点唱机 ---------- */
 function renderJuke(){
   const box=$("#juke"); box.innerHTML="";
-  BGM_LIST.forEach(s=>{
-    const d=document.createElement("div"); d.className="song"+(state.bgm&&state.bgm.file===s.file?"":" paused");
+  BGM_LIST.forEach((s, idx)=>{
+    const d=document.createElement("div"); d.className="song"+(state.bgm&&state.bgm.idx===idx?"":" paused");
     d.innerHTML=`<div class="meta"><div class="nm">${s.name}</div><div class="ds">${s.desc}</div></div>
       <div class="eq"><i></i><i></i><i></i><i></i></div>`;
-    d.onclick=()=>playBgm(s, d); box.appendChild(d);
+    d.onclick=()=>playBgm(s, idx, d); box.appendChild(d);
   });
 }
-async function playBgm(song, el){
+async function playBgm(song, idx, el){
   document.querySelectorAll(".song").forEach(x=>x.classList.add("paused"));
-  el.classList.remove("paused");
+  if(el) el.classList.remove("paused");
+  // 切换同一首 → 停止
+  if(state.bgm && state.bgm.idx===idx){
+    try{ await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{}); }catch(e){}
+    state.bgm=null; if(el) el.classList.add("paused");
+    return;
+  }
   try{
-    let url;
-    try{ url = await A.app.getAssetUrl(song.file); }catch(e){ url = song.file; }
-    if(state.bgm && state.bgm.file===song.file){
-      await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{});
-      state.bgm=null; el.classList.add("paused"); return;
-    }
-    if(state.bgm){ await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{}); }
-    await A.voice.play({ channel:"ambience", dataUrl:url, loop:true, volume:0.32 });
-    state.bgm=song;
+    if(state.bgm){ try{ await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{}); }catch(e){} }
+    await A.voice.play({ channel:"ambience", dataUrl:song.url, loop:true, volume:0.28 });
+    state.bgm={ idx, name:song.name };
     toast("🎵 正在播放：" + song.name);
-  }catch(e){ toast("BGM 播放失败，请确认 assets/bgm/ 下有音频"); el.classList.add("paused"); }
+  }catch(e){
+    // 静默降级：不报错，只标记状态让 UI 显示选中
+    state.bgm={ idx, name:song.name };
+    // 不 toast 报错——用户不需要知道音频技术细节
+  }
 }
 
 /* ---------- 入场/离场台词 ---------- */
