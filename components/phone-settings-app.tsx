@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, createContext, type CSSProperties, type ReactNode } from "react";
-import { Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X } from "lucide-react";
+import { Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, History, Image, Info, KeyRound, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X } from "lucide-react";
 import { ConfirmDialog } from "./ui/modal";
 import { useAccount } from "@/lib/account-context";
 import { changeAccountPassword } from "@/lib/account-client";
@@ -14,6 +14,7 @@ import { RegexManager } from "./settings/regex-manager";
 import { DataManagement } from "./settings/data-management";
 import { UserIdentitySettings } from "./settings/user-identity";
 import { AboutDeclaration } from "./settings/about-declaration";
+import { SystemUpdates } from "./settings/system-updates";
 import { BindingManager } from "./settings/binding-manager";
 import { WeixinSettings } from "./settings/weixin-settings";
 import { ToolboxSettings } from "./settings/toolbox-settings";
@@ -51,7 +52,8 @@ type SubPage =
     | "weixin"
     | "toolbox"
     | "moderation"
-    | "about";
+    | "about"
+    | "updates";
 
 const SETTINGS_MENU = [
     { id: "api", icon: HardDrive, label: "API 设置", desc: "大模型接口", iconColor: BINDING_ACCENTS.api },
@@ -66,6 +68,7 @@ const SETTINGS_MENU = [
     { id: "toolbox", icon: Wrench, label: "聊天工具箱", desc: "外部工具调用", iconColor: BINDING_ACCENTS.voice },
     { id: "identity", icon: UserCircle, label: "用户身份", desc: "个人信息", iconColor: BINDING_ACCENTS.identity },
     { id: "about", icon: Info, label: "关于与声明", desc: "版本与协议", iconColor: BINDING_ACCENTS.memory },
+    { id: "updates", icon: History, label: "系统更新", desc: "版本与更新内容", iconColor: BINDING_ACCENTS.memory },
 ] as const;
 
 const realtimeIconStyle = {
@@ -267,6 +270,8 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                 return <UserIdentitySettings />;
             case "about":
                 return <AboutDeclaration />;
+            case "updates":
+                return <SystemUpdates />;
             default:
                 return null;
         }
@@ -416,7 +421,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                         <CardGrid
                             label="User"
                             labelClassName="settings-menu-section-title"
-                            items={SETTINGS_MENU.filter(item => ["identity", "about"].includes(item.id)).map(makeCardItem)}
+                            items={SETTINGS_MENU.filter(item => ["identity", "about", "updates"].includes(item.id)).map(makeCardItem)}
                         />
                         {accountSheetOpen && (
                             <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setAccountSheetOpen(false)}>

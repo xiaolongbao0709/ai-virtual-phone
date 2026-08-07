@@ -32,6 +32,7 @@ import {
     uploadCssAssetToImageHost,
     type CssAssetUserImageHistoryMessage,
 } from "./css-asset-tools";
+import { formatChangelog } from "./changelog";
 
 // ── 通用类型 ────────────────────────────────────────────
 
@@ -1016,6 +1017,12 @@ export const MASCOT_NAVIGATE_TOOL: MascotSubTool = {
     parameterSchema: NAVIGATE_SCHEMA,
 };
 
+export const MASCOT_UPDATES_TOOL: MascotSubTool = {
+    name: "查询系统更新",
+    description: "查询小手机（虚拟手机）的当前版本号与最近更新内容。当用户问「最近更新了什么」「版本更新了吗」「有什么新功能」「系统更新了啥」时使用，直接返回更新日志文本，无需跳转。",
+    parameterSchema: { type: "object", properties: {}, additionalProperties: false },
+};
+
 // ── 文本协议下的工具列表渲染 ─────────────────────────────
 
 /** 紧凑工具列表（每轮都注入到 system prompt） */
@@ -1029,11 +1036,12 @@ export function buildMascotToolsListPrompt(): string {
     }
     // 导航工具不在套件里，schema 直接在这里展开（只一个工具，省得用 [获取指令] 再加载）
     lines.push("【独立工具】导航 — 跳转到指定页面或子页面，可直接调用。");
+    lines.push("【独立工具】查询系统更新 — 直接返回当前版本号与更新日志文本，可直接调用。当用户问「最近更新了什么 / 版本更新了吗 / 有什么新功能」时使用。");
     lines.push("  参数：");
     lines.push("    · page (必填) — 目标页面。常用：");
     lines.push("      桌面应用：chat(聊天) / characters(角色) / story(剧情) / moments(朋友圈) / settings(设置) / calendar(日历) / music(音乐) / resources(资源库) / diary(日记) / reading(阅读) / checkphone(查手机) / theme(主题) / cocreate(协作) / game(游戏) / shopping(购物) / mapmode(地图) / group_chat(群聊) / worldbuilder(世界构建) / qa(问答)");
     lines.push("      特殊页：me(主页/个人中心—含角色相册、朋友圈互动设置等)");
-    lines.push("    · subpage (可选) — 子页面。page=settings 时：presets(预设) / worldbook(世界书) / regex(正则) / api(API接口) / voice(语音) / binding(绑定) / data(数据) / identity(身份) / image-generation(生图设置) / tools(高级工具)");
+    lines.push("    · subpage (可选) — 子页面。page=settings 时：presets(预设) / worldbook(世界书) / regex(正则) / api(API接口) / voice(语音) / binding(绑定) / data(数据) / identity(身份) / image-generation(生图设置) / updates(系统更新) / tools(高级工具)");
     lines.push("                       page=me 时：moments-interaction(朋友圈互动设置) / album(角色相册，需同时传characterId)");
     lines.push("    · characterId (可选) — 角色ID，仅 page=me+subpage=album 时需要");
     lines.push("  调用示例：");
@@ -1211,6 +1219,13 @@ export function getMascotNativeToolDefinitions(expandedPackageIds: string[] = []
         parameters: MASCOT_NAVIGATE_TOOL.parameterSchema,
     });
 
+    // 系统更新查询工具：始终暴露
+    defs.push({
+        name: getMascotNativeToolName(MASCOT_UPDATES_TOOL.name),
+        description: MASCOT_UPDATES_TOOL.description,
+        parameters: MASCOT_UPDATES_TOOL.parameterSchema,
+    });
+
     // 每个套件先暴露一个 loader（除非已展开）
     const expanded = new Set(expandedPackageIds);
     for (const pkg of MASCOT_TOOL_PACKAGES) {
@@ -1246,6 +1261,7 @@ export function getMascotNativeToolDefinitions(expandedPackageIds: string[] = []
 export function buildMascotNativeNameMap(): Map<string, string> {
     const map = new Map<string, string>();
     map.set(getMascotNativeToolName(MASCOT_NAVIGATE_TOOL.name), MASCOT_NAVIGATE_TOOL.name);
+    map.set(getMascotNativeToolName(MASCOT_UPDATES_TOOL.name), MASCOT_UPDATES_TOOL.name);
     for (const pkg of MASCOT_TOOL_PACKAGES) {
         map.set(getMascotNativeLoaderName(pkg.id), `_loader:${pkg.id}`);
         for (const tool of pkg.subTools) {
@@ -1345,6 +1361,9 @@ export async function executeMascotToolCall(call: ToolCall, ctx: MascotToolConte
 
             // ─── 导航 ───
             case "导航": return await handleNavigate(call.args);
+
+            // ─── 系统更新 ───
+            case "查询系统更新": return await handleQueryUpdates();
 
             default:
                 return { name: call.name, success: false, error: `未知工具：${call.name}` };
@@ -3205,4 +3224,16 @@ export function touchExpandedPackage(currentIds: string[], packageId: string): s
 /** 套件 label → packageId */
 export function findPackageByLabel(label: string): MascotToolPackage | undefined {
     return MASCOT_TOOL_PACKAGES.find((p) => p.label === label);
+}
+
+// ── 系统更新查询 ────────────────────────────────────────
+/** 读取更新日志，拼成适合小卷回复的文本 */
+async function handleQueryUpdates(): Promise<ToolResult> {
+    const text = formatChangelog();
+    return {
+        name: "查询系统更新",
+        success: true,
+        data: text,
+        continueConversation: false,
+    };
 }
