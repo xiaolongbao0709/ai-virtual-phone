@@ -191,6 +191,14 @@
   .event-btn{padding:7px 16px;border-radius:14px;border:1px solid rgba(182,156,240,.35);
     background:rgba(182,156,240,.1);color:var(--violet);font-size:12.5px;cursor:pointer;letter-spacing:1px}
   .event-btn:active{transform:scale(.96)}
+  /* 随机事件卡片 */
+  .event-card{margin:8px 0;padding:12px 14px;border-radius:14px;background:rgba(182,156,240,.10);
+    border:1px solid rgba(182,156,240,.35);box-shadow:0 4px 14px rgba(0,0,0,.18)}
+  .ev-title{font-size:14px;font-weight:600;color:var(--txt);margin-bottom:4px}
+  .ev-desc{font-size:12.5px;line-height:1.65;color:var(--sub);white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}
+  .ev-opts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .ev-opts .btn{flex:1;min-width:120px;text-align:center;padding:9px 0;font-size:13px}
+  .ev-note{font-size:12.5px;color:var(--sub);margin-top:8px;font-style:italic}
   /* 偶遇 / 事件弹层 */
   .encounter{position:absolute;inset:auto 14px 16px 14px;z-index:28;background:rgba(18,14,30,.97);
     border:1px solid var(--glass-bd);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;
@@ -1463,7 +1471,7 @@ async function inviteReal(c){
 
 // 随机事件（P4：AI 生成丰富剧情 + 现有角色可偶遇参与 + 事件进记忆）
 async function rollRandomEvent(){
-  if(state.busy) return;
+  if(state.busy){ toast("先等上一段聊完～"); return; }
   setBusy(true);
   try{
     const ctx = state.present.map(p=>`${p.name}(${p.isReal?"角色":"客人"})`).join("、");
@@ -1474,10 +1482,40 @@ async function rollRandomEvent(){
     const seedTxt = seed.length ? ("参考线索（仅参考，不必照搬）："+seed.join("；")+"。"):"";
     const instr=`你是 黑珍珠 酒吧的即兴编剧。基于在场成员（${ctx}）和今晚氛围，生成一条突发、有画面感的酒吧小事件（例如：新来的服务员打翻酒泼到某位客人身上 / 隔壁桌突然划拳 / 停电烛光里有人告白 / 有人醉到在卡座上哼歌 / 门外进来一个熟悉的身影）。只返回 JSON：{title, desc, involves:[成员名], optionA, optionB}。用户可选择是否观看。`;
     const r=await A.ai.generate({ appTags:["bar","event"], instruction: instr+seedTxt + wbInject() });
-    const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) return;
-    let d; try{ d=JSON.parse(m[0]); }catch(e){ return; }
-    const watch = await uiConfirm(`🎲 突发事件：${d.title}\n${d.desc}\n\n要凑过去看吗？`);
-    if(!watch){ sysLine(`你们没去凑热闹，继续喝酒聊天。`); return; }
+    const m=(r.text||"").match(/\{[\s\S]*\}/);
+    if(!m){ toast("编剧这回没给剧本，再点一次试试～"); return; }
+    let d; try{ d=JSON.parse(m[0]); }catch(e){ toast("事件剧本解析失败，再点一次试试～"); return; }
+    if(!d || !d.title){ toast("事件信息不完整，再点一次试试～"); return; }
+    showEventCard(d);
+  }catch(e){
+    toast("随机事件出错：" + (e && e.message ? e.message : e));
+  }
+  finally{ setBusy(false); }
+}
+
+// 渲染事件卡片（应用内按钮，避免依赖原生 confirm 弹窗）
+function showEventCard(d){
+  const f=$("#feed"); if(!f) return;
+  const card=document.createElement("div"); card.className="event-card";
+  card.innerHTML=`<div class="ev-title">🎲 ${d.title||"突发事件"}</div>`+
+    `<div class="ev-desc">${d.desc||""}</div>`+
+    `<div class="ev-opts">`+
+      `<div class="btn primary ev-watch">凑过去看 ▸</div>`+
+      `<div class="btn ev-skip">继续聊天</div>`+
+    `</div>`;
+  f.appendChild(card); f.scrollTop=f.scrollHeight;
+  card.querySelector(".ev-watch").onclick=()=>watchEvent(d, card);
+  card.querySelector(".ev-skip").onclick=()=>{
+    card.querySelector(".ev-opts").outerHTML='<div class="ev-note">你们没去凑热闹，继续喝酒聊天。</div>';
+  };
+}
+
+// 点「凑过去看」后执行事件演出
+async function watchEvent(d, card){
+  if(state.busy){ toast("先等上一段聊完～"); return; }
+  setBusy(true);
+  try{
+    card.querySelector(".ev-opts").outerHTML='<div class="ev-note">🎲 你们凑过去看……</div>';
     let extraChar=null;
     const others=(window.__allChars||[]).filter(c=>!state.present.find(p=>p.id===c.id));
     if(others.length && Math.random()<0.4){
@@ -1500,7 +1538,10 @@ async function rollRandomEvent(){
         saveNpc(p);
       }
     });
-  }catch(e){}
+    sysLine(`🎲 事件落幕：「${d.title}」成了今晚的小插曲。`);
+  }catch(e){
+    sysLine("事件演出出错：" + (e && e.message ? e.message : e));
+  }
   finally{ setBusy(false); }
 }
 $("#eventBtn").onclick=rollRandomEvent;
