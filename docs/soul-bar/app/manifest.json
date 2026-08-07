@@ -21,6 +21,7 @@
     "user.persona.read",
     "user.preferences.read",
     "ai.generate",
+    "ai.generateImage",
     "memory.readCore",
     "memory.readLongTerm",
     "memory.readShortTerm",
