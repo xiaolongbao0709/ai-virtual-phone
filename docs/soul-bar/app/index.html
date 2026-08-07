@@ -518,7 +518,7 @@ async function reconfigStaff(){
 async function staffServe(drinkName){
   const k=state.present.find(p=>p.staff==="bartender"); if(!k) return;
   try{
-    const r=await A.ai.generate({ appTags:["bar","bartend"], instruction:`${k.persona}\n用户点了「${drinkName}」。以老K身份，用极简的动作和一句顶十句的话把酒推过去（可只写动作，不必多言）。` + wbInject(drinkName) });
+    const r=await A.ai.generate({ characterId:k.id, appTags:["bar","bartend"], instruction:`${k.persona}\n用户点了「${drinkName}」。以老K身份，用极简的动作和一句顶十句的话把酒推过去（可只写动作，不必多言）。` + wbInject(drinkName) });
     const txt=(r.text||"").trim(); if(txt) pushBubble("other", k.name, txt);
   }catch(e){}
 }
@@ -1248,7 +1248,7 @@ async function bartendForUser(charId, mood){
 要求 ingredients 有 3~5 个，每个 reason 要具体（如「金酒做骨架，清冽打底」「接骨木花增香，带一点甜润收尾」）。不要任何解释，只要 JSON。`;
     const r = c.isReal
       ? await A.ai.generate({ characterId:c.id, appTags:["bar","bartend"], instruction: instr + wbInject(mood||"") })
-      : await A.ai.generate({ appTags:["bar","bartend"], instruction: instr + wbInject(mood||"") });
+      : await A.ai.generate({ characterIds: state.present.filter(p=>p.isReal&&p.id).map(p=>p.id), appTags:["bar","bartend"], instruction: instr + wbInject(mood||"") });
     const m=(r.text||"").match(/\{[\s\S]*\}/);
     let recipe=null; if(m){ try{ recipe=JSON.parse(m[0]); }catch(e){} }
     if(!recipe || !Array.isArray(recipe.ingredients) || !recipe.ingredients.length)
@@ -1306,7 +1306,8 @@ async function takePhoto(){
 2. caption：配文（像发朋友圈的文艺短句，18字内）
 3. imagePrompt：英文 AI 生图提示词（详细描述画面构图、人物外观、酒吧氛围、灯光色调，用于生成真实照片风格图片，80词内）
 只返回 JSON {scene, caption, imagePrompt}，不要任何解释。`;
-    const r = await A.ai.generate({ appTags:["bar","photo"], instruction:instr });
+    const photoRealIds = state.present.filter(p=>p.isReal && p.id).map(p=>p.id);
+    const r = await A.ai.generate({ characterIds: photoRealIds.length ? photoRealIds : undefined, appTags:["bar","photo"], instruction:instr });
     const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) throw new Error("生成失败");
     const d=JSON.parse(m[0]);
 
@@ -1627,7 +1628,7 @@ async function npcGenerate(userLine){
   if(!npcs.length) return;
   const roster = npcs.map(p=>`- ${p.name} (id:${p.id})，人设：${p.persona||""}，当前心情：${p.mood||""}${p.memory?`，与用户的过往：${p.memory}`:""}`).join("\n");
   const instr=`你是 黑珍珠 酒吧里的几位客人，请各自自然接话、可对用户或其他人反应。\n${roster}\n用户：${state.userName}\n\n${userLine}\n请严格用 [台词@id] / [沉默@id] / [私信@id]内容 输出每位（没话就说[沉默@id]）。${drunkSuffix()}`;
-  try{ const r=await A.ai.generate({ appTags:["bar","npc"], instruction: instr + wbInject(userLine) }); parseBarOutput(r.text||""); }catch(e){}
+  try{ const r=await A.ai.generate({ characterIds: npcs.filter(p=>p.isReal&&p.id).map(p=>p.id), appTags:["bar","npc"], instruction: instr + wbInject(userLine) }); parseBarOutput(r.text||""); }catch(e){}
 }
 
 // 进场偶遇
@@ -1652,7 +1653,9 @@ async function rollRandomNpc(entranceLine){
   setBusy(true);
   try{
     const instr=`你是 黑珍珠 酒吧的神秘客人生成器。请生成一个临时客人（非手机已有角色），用于今晚偶遇。只返回 JSON：{name, persona(两句话人设), mood(当前心情一句), greet(一句入场台词)}。不要解释。`;
-    const r=await A.ai.generate({ appTags:["bar","npc_gen"], instruction:instr });
+    // NPC 生成：传入在场真实角色作为上下文（ai.generate 要求 characterIds）
+    const ctxIds = state.present.filter(p=>p.isReal && p.id).map(p=>p.id);
+    const r=await A.ai.generate({ characterIds: ctxIds.length ? ctxIds : undefined, appTags:["bar","npc_gen"], instruction:instr });
     const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) return;
     let d; try{ d=JSON.parse(m[0]); }catch(e){ return; }
     const npc={ id:"npc_"+Date.now()+"_"+Math.floor(Math.random()*999), name:d.name, persona:d.persona, mood:d.mood||"", greet:d.greet||"", avatar: AVATAR_PRESETS[Math.floor(Math.random()*AVATAR_PRESETS.length)], isReal:false, appearedVisits:[state.visitId], participatedEvents:0, participatedThisVisit:false, eventStreak:0, appearanceCount:0, status:"one-time", memory:"" };
@@ -1706,7 +1709,9 @@ async function rollRandomEvent(){
     if(state.drunk>0) seed.push("当前醉酒程度："+["清醒","微醺","上头","烂醉"][drunkLevel()]);
     const seedTxt = seed.length ? ("参考线索（仅参考，不必照搬）："+seed.join("；")+"。"):"";
     const instr=`你是 黑珍珠 酒吧的即兴编剧。基于在场成员（${ctx}）和今晚氛围，生成一条突发、有画面感的酒吧小事件（例如：新来的服务员打翻酒泼到某位客人身上 / 隔壁桌突然划拳 / 停电烛光里有人告白 / 有人醉到在卡座上哼歌 / 门外进来一个熟悉的身影）。只返回 JSON：{title, desc, involves:[成员名], optionA, optionB}。用户可选择是否观看。`;
-    const r=await A.ai.generate({ appTags:["bar","event"], instruction: instr+seedTxt + wbInject() });
+    // 收集在场真实角色 ID（ai.generate 要求至少传 characterIds）
+    const realIds = state.present.filter(p=>p.isReal && p.id).map(p=>p.id);
+    const r=await A.ai.generate({ characterIds: realIds.length ? realIds : undefined, appTags:["bar","event"], instruction: instr+seedTxt + wbInject() });
     const m=(r.text||"").match(/\{[\s\S]*\}/);
     if(!m){ toast("编剧这回没给剧本，再点一次试试～"); return; }
     let d; try{ d=JSON.parse(m[0]); }catch(e){ toast("事件剧本解析失败，再点一次试试～"); return; }
@@ -1783,6 +1788,8 @@ $("#wbFile").onchange=(e)=>{ const f=e.target.files&&e.target.files[0]; if(f) im
 /* ---------- 启动 ---------- */
 init();
 </script>
+
+
 
 
 
