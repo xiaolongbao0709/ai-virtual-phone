@@ -252,6 +252,507 @@
   .wb-edit textarea{min-height:90px;resize:vertical}
   .wb-edit .row{display:flex;gap:10px;align-items:center;margin-top:2px}
   .wb-edit .row label{display:flex;gap:5px;align-items:center;color:var(--txt);font-size:12.5px;cursor:pointer}
+
+
+  /* ═══ 融合：灵魂调酒模拟器 #kissa-game-root ═══ */
+
+@import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;600&family=Plus+Jakarta+Sans:wght@300;400;500&display=swap');
+        * {
+        }
+#kissa-game-root box-sizing: border-box;
+margin: 0;
+padding: 0;
+font-family: 'Plus Jakarta Sans', #kissa-game-root 'Shippori Mincho', #kissa-game-root sans-serif;
+-webkit-tap-highlight-color: transparent;
+html, #kissa-game-root{
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            background-color: #0d0d0d;
+            color: #e5e5e0;
+            overflow: hidden;
+        }
+#kissa-game-root .phone-container{
+            width: 100%;
+            height: 100%;
+            background: #030304;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-sizing: border-box;
+            padding-top: var(--ai-phone-game-safe-top, 88px);
+            padding-bottom: var(--ai-phone-game-safe-bottom, 24px);
+        }
+#kissa-game-root .page{
+            position: absolute;
+            top: var(--ai-phone-game-safe-top, 88px);
+            left: 0;
+            right: 0;
+            bottom: var(--ai-phone-game-safe-bottom, 24px);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px 24px;
+            transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            overflow: hidden;
+        }
+#kissa-game-root .hidden{
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.96);
+        }
+        /* ═══════ 游戏化标题 ═══════
+#kissa-game-root 左侧竖向霓虹标条 + 顶部腰封小字 + 渐变字面 + 底部渐隐细线，
+整体缓慢呼吸辉光，做出游戏 UI 的仪式感。 */
+.stamp-page-header{
+            text-align: left; z-index: 10; flex-shrink: 0;
+            position: relative; padding: 12px 0 0 16px;
+        }
+        /* 背后压一个巨型淡化汉字，歪一点 —— 拼贴的底层 */
+#kissa-game-root .ph-ghost{
+            position: absolute; left: 108px; top: -16px;
+            font-family: 'Shippori Mincho', serif;
+            font-size: 64px; line-height: 1; font-weight: 700;
+            color: rgba(255,238,246,.055);
+            transform: rotate(7deg);
+            pointer-events: none; user-select: none; z-index: -1;
+        }
+        /* 左侧霓虹标条：两段长短错开，不做对称 */
+#kissa-game-root .stamp-page-header::before{
+            content: ''; position: absolute; left: 0; top: 15px;
+            width: 2px; height: 31px; border-radius: 2px;
+            background: linear-gradient(180deg, #ffffff 0%, rgba(255,158,199,.92) 58%, rgba(255,158,199,0) 100%);
+            box-shadow: 0 0 11px rgba(255,158,199,.62);
+        }
+#kissa-game-root .stamp-page-header::after{
+            content: ''; position: absolute; left: 5px; top: 22px;
+            width: 1px; height: 14px; border-radius: 1px;
+            background: linear-gradient(180deg, rgba(255,198,223,.58), rgba(255,198,223,0));
+        }
+        /* 腰封行：反白标号块（歪的）+ 细线 + 日文小字 */
+#kissa-game-root .title-kicker{
+            display: flex; align-items: center; gap: 6px;
+            margin-bottom: 6px; height: 13px;
+        }
+#kissa-game-root .tk-num{
+            display: inline-block;
+            background: linear-gradient(135deg, #ffffff, #ffdaea);
+            color: #150f13;
+            font: 800 8px/1 'Helvetica Neue', Arial, sans-serif;
+            letter-spacing: .6px; padding: 3.5px 5px 3px;
+            transform: rotate(-4.5deg);
+            box-shadow: 0 0 11px rgba(255,170,206,.45);
+        }
+#kissa-game-root .tk-rule{ display: inline-block; width: 15px; height: 1px; background: rgba(255,186,215,.52); }
+        .tk-jp {
+            font-family: 'Shippori Mincho', serif;
+            font-size: 8.5px; font-weight: 600; letter-spacing: 2.8px;
+            color: rgba(255,192,218,.66); white-space: nowrap;
+        }
+        /* 标题本体：大衬线主字（粉白渐变）＋ 小无衬线副标（粉）；首个字用圆体＋蓝，作点睛撞色 */
+#kissa-game-root .poster-title{
+            display: block; position: relative;
+            margin: 0 0 14px; line-height: .94;
+            animation: kg-titleAura 5.4s ease-in-out infinite;
+        }
+#kissa-game-root .poster-title .pt-a{
+            display: block;
+            font-family: 'Shippori Mincho', serif;
+            font-size: 29px; font-weight: 600; letter-spacing: 4.5px;
+            color: #fdf3f7;
+        }
+        /* 标题首字：圆体＋蓝，点睛撞色（其余字仍是粉白） */
+#kissa-game-root .poster-title .pt-a .ch-blue{
+            font-family: 'Yuanti SC', 'YouYuan', '幼圆', 'PingFang SC', sans-serif;
+            letter-spacing: 2px;
+            color: #4AA3FF;
+        }
+        /* 蓝字紧邻的下一个字：暖黄，作第二点睛撞色 */
+#kissa-game-root .poster-title .pt-a .ch-yellow{
+            font-family: 'Yuanti SC', 'YouYuan', '幼圆', 'PingFang SC', sans-serif;
+            letter-spacing: 2px;
+            color: #ffd24d;
+        }
+#kissa-game-root .poster-title .pt-b{
+            display: block; position: relative;
+            margin: 2px 0 0 42px;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 12.5px; font-weight: 300; letter-spacing: 8px;
+            text-transform: uppercase;
+            color: rgba(255,198,222,.84);
+        }
+        /* 第二行左边接一根引线，把错位「钉」住 */
+#kissa-game-root .poster-title .pt-b::before{
+            content: ''; position: absolute; left: -20px; top: 50%;
+            width: 12px; height: 1px; margin-top: -.5px;
+            background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,184,214,.88));
+        }
+        /* 渐变字面（不支持 background-clip:text 的环境自动退回纯色，不会变透明） */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+#kissa-game-root .poster-title .pt-a{
+                background: linear-gradient(176deg, #ffffff 0%, #fff2f7 42%, #ffb6d4 100%);
+                -webkit-background-clip: text; background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            /* 蓝字不参与粉白渐变，单独填蓝 */
+#kissa-game-root .poster-title .pt-a .ch-blue{
+                background: none;
+                -webkit-background-clip: border-box; background-clip: border-box;
+                -webkit-text-fill-color: #4AA3FF;
+                color: #4AA3FF;
+            }
+            /* 黄字同样不参与粉白渐变，单独填黄 */
+#kissa-game-root .poster-title .pt-a .ch-yellow{
+                background: none;
+                -webkit-background-clip: border-box; background-clip: border-box;
+                -webkit-text-fill-color: #ffd24d;
+                color: #ffd24d;
+            }
+        }
+        /* 底部细线：从第二行起笔、只画一半，刻意不齐 */
+#kissa-game-root .poster-title::after{
+            content: ''; position: absolute; left: 42px; bottom: -7px;
+            width: 58%; height: 1px;
+            background: linear-gradient(90deg, rgba(255,172,208,.92) 0%, rgba(255,255,255,.22) 48%, rgba(255,255,255,0) 100%);
+        }
+@keyframes kg-titleAura {
+#kissa-game-root 0%, #kissa-game-root 100%{ filter: drop-shadow(0 0 9px rgba(255,150,195,.20)) drop-shadow(0 2px 3px rgba(0,0,0,.65)); }
+            50%      { filter: drop-shadow(0 0 17px rgba(255,150,195,.44)) drop-shadow(0 2px 3px rgba(0,0,0,.65)); }
+        }
+#kissa-game-root .stamp-page-header p{ font-size: 10.5px; color: #9b9098; letter-spacing: 1.4px; line-height: 1.5; }
+        .left-wheel-wrapper { position: absolute; left: 16px; top: 52%; transform: translateY(-50%); width: 70px; height: 400px; display: flex; flex-direction: column; align-items: center; z-index: 20; }
+#kissa-game-root .mode-switch-btn{ width: 42px; height: 42px; border-radius: 50%; background: #1c1c1a; border: 1.5px solid #d1b499; color: #d1b499; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 5px 15px rgba(0,0,0,0.4); transition: all 0.3s; margin-bottom: 12px; flex-shrink: 0; }
+        .mode-switch-btn.active { background: #d1b499; color: #141414; }
+#kissa-game-root .left-avatar-wheel{ position: relative; width: 70px; height: 320px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: grab; perspective: 800px; touch-action: none; }
+        .avatar-item { position: absolute; width: 52px; height: 52px; border-radius: 50%; background: #1c1c1a; border: 1.5px solid rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: center; font-size: 22px; transition: border-color 0.3s, box-shadow 0.3s; will-change: transform; user-select: none; box-shadow: 0 10px 20px rgba(0,0,0,0.3); overflow: hidden; }
+#kissa-game-root .avatar-item img{ width: 100%; height: 100%; object-fit: cover; }
+        /* 多选：被选中的人物 -> 蓝环 + 右下角勾 */
+        .avatar-item.is-selected { border-color: #4AA3FF; box-shadow: 0 0 20px rgba(74,163,255,0.55); }
+#kissa-game-root .avatar-item .sel-check{ position: absolute; right: -2px; bottom: -2px; width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(140deg, #5ab0ff, #2d7dd8); color: #fff; font-size: 11px; line-height: 18px; text-align: center; border: 1.5px solid #0e1116; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+        /* 第一页：选人后，头像轮盘上方浮出的「已选 n/3」圆圈徽标 */
+        .select-badge {
+            position: absolute; top: 52px; left: 50%;
+            transform: translateX(-50%) scale(.5);
+            width: 40px; height: 40px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(140deg, #5ab0ff 0%, #2d7dd8 100%);
+            color: #fff; font-weight: 800; font-size: 13px; letter-spacing: .2px;
+            border: 1.5px solid rgba(255,255,255,.35);
+            box-shadow: 0 0 16px rgba(74,163,255,.55), inset 0 0 8px rgba(255,255,255,.18);
+            opacity: 0; pointer-events: none; z-index: 40;
+            transition: opacity .22s, transform .22s cubic-bezier(.16,1,.3,1);
+        }
+#kissa-game-root .select-badge.show{ opacity: 1; transform: translateX(-50%) scale(1); }
+        /* 共调宾客 chips + 多人回想区块 */
+        .guest-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+#kissa-game-root .gc-label{ font-size: 12px; color: #b9b4ab; align-self: center; }
+        .gc-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: rgba(74,163,255,0.14); border: 1px solid rgba(74,163,255,0.4); color: #dcecff; font-size: 12px; }
+#kissa-game-root .guest-quotes-group{ display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+        .group-quote-item { display: flex; gap: 10px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 10px 12px; }
+#kissa-game-root .group-quote-item .quote-avatar{ flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: #1c1c1a; border: 1px solid rgba(255,255,255,0.18); font-size: 18px; }
+        .group-quote-item .quote-name { font-size: 12px; color: #9fd0ff; font-weight: 700; margin-bottom: 3px; }
+#kissa-game-root .group-quote-item .quote-text{ font-size: 13px; line-height: 1.6; color: #e9e4db; white-space: pre-wrap; }
+        /* 调酒档案轮盘的垂直位置：数值越大越靠下（原版是 56.5%，现下移到 66%，
+           让上方那几张卡片不再压到 "KISSA SELECT" 标题上；想再微调只改这一个值） */
+#kissa-game-root{ --archive-wheel-top: 66%; }
+        .right-wheel-stage { position: absolute; right: -60px; top: var(--archive-wheel-top, 66%); transform: translateY(-50%); width: 260px; height: 420px; pointer-events: none; }
+#kissa-game-root .stamp-wheel-track{ position: absolute; width: 100%; height: 100%; pointer-events: auto; cursor: grab; touch-action: none; }
+        .stamp-card { position: absolute; width: 220px; height: 140px; background: #f7f5ef; color: #2b2b28; padding: 12px 14px; border-radius: 2px; box-shadow: -10px 15px 30px rgba(0,0,0,0.3); display: flex; flex-direction: column; justify-content: space-between; user-select: none; cursor: pointer; transition: border-left 0.25s, box-shadow 0.25s; will-change: transform; mask-image: radial-gradient(circle at 6px 6px, transparent 4px, black 4.5px); mask-size: 16px 16px; mask-position: -6px -6px; -webkit-mask-image: radial-gradient(circle at 6px 6px, transparent 4px, black 4.5px); -webkit-mask-size: 16px 16px; -webkit-mask-position: -6px -6px; }
+#kissa-game-root .stamp-card::before{ content: ''; position: absolute; top: 6px; left: 6px; right: 6px; bottom: 6px; border: 1px solid rgba(0,0,0,0.12); pointer-events: none; }
+        .stamp-top { display: flex; justify-content: space-between; font-size: 9px; letter-spacing: 1px; color: #8c867b; text-transform: uppercase; }
+#kissa-game-root .stamp-content h3{ font-family: 'Shippori Mincho', serif; font-size: 14px; color: #1a1a18; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .stamp-content p { font-size: 9.5px; color: #66635c; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#kissa-game-root .stamp-bottom{ display: flex; justify-content: space-between; align-items: center; font-size: 9px; font-weight: 600; border-top: 1px dashed rgba(0,0,0,0.1); padding-top: 4px; }
+        .stamp-price-tag { color: #a3704c; font-family: 'Shippori Mincho', serif; font-size: 11px; letter-spacing: 1px; }
+#kissa-game-root .stamp-tag-badge{ color: #666; font-size: 8.5px; font-weight: normal; }
+        .btn-ins { background: #f0eee6; color: #191919; border: none; padding: 16px; border-radius: 30px; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; font-weight: 600; cursor: pointer; z-index: 10; transition: background 0.3s, transform 0.2s; flex-shrink: 0; width: 100%; display: flex; align-items: center; justify-content: center;}
+#kissa-game-root .btn-ins:active{ background: #ffffff; transform: scale(0.98); }
+        .btn-ins:disabled { background: #666; color: #aaa; transform: none; cursor: not-allowed; }
+#kissa-game-root .guest-info-card, #kissa-game-root .result-card{ background: #1c1c1a; border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 20px 16px; display: flex; flex-direction: column; gap: 12px; margin: 10px 0; flex: 1; overflow-y: auto; }
+        .guest-info-card::-webkit-scrollbar, .result-card::-webkit-scrollbar { width: 4px; }
+#kissa-game-root .guest-info-card::-webkit-scrollbar-thumb, #kissa-game-root .result-card::-webkit-scrollbar-thumb{ background: rgba(255,255,255,0.2); border-radius: 2px; }
+        .guest-info-header h2, .result-header h2 { font-family: 'Shippori Mincho', serif; font-size: 18px; color: #f0eee6; font-weight: 400; margin-bottom: 2px; }
+#kissa-game-root .guest-info-header .sub, #kissa-game-root .result-header .cocktail-subtitle{ font-size: 11px; color: #d1b499; letter-spacing: 1px; }
+        .info-section, .result-section { font-size: 11px; line-height: 1.5; color: #b3b3af; }
+#kissa-game-root .info-section strong, #kissa-game-root .result-section strong{ color: #e5e5e0; display: block; margin-bottom: 4px; font-weight: 500; letter-spacing: 1px; font-size: 11.5px; }
+
+        .stat-bar-group { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+#kissa-game-root .stat-row{ display: flex; align-items: center; justify-content: space-between; font-size: 10px; color: #b3b3af; }
+        .stat-bar-bg { flex: 1; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; margin: 0 8px; overflow: hidden; position: relative; }
+#kissa-game-root .stat-bar-fill{ height: 100%; background: linear-gradient(90deg, #d1b499, #f0eee6); border-radius: 2px; transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1); }
+        .bartend-header { display: flex; justify-content: space-between; align-items: center; z-index: 10; flex-shrink: 0; margin-bottom: 10px; }
+#kissa-game-root .back-btn{ background: none; border: none; color: #8c8c85; font-size: 12px; letter-spacing: 1px; cursor: pointer; padding: 5px 0; }
+        .guest-tag { font-size: 11px; letter-spacing: 1px; background: #20201e; padding: 6px 12px; border-radius: 20px; color: #d1b499; border: 1px solid rgba(255,255,255,0.05); max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#kissa-game-root .bartend-workspace, #kissa-game-root .mood-workspace{ flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative; min-height: 200px; }
+
+        .glass-container, .mood-glass-container { position: relative; width: 140px; height: 220px; display: flex; flex-direction: column; align-items: center; cursor: pointer; }
+
+#kissa-game-root .glass-cup-body, #kissa-game-root .mood-cup-body{ width: 120px; height: 120px; position: relative; background: linear-gradient(135deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.02) 50%, rgba(255,255,255,0.08) 100%); border: 1.5px solid rgba(255,255,255,0.35); border-top: 1.5px solid rgba(255,255,255,0.6); overflow: hidden; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: inset 0 0 25px rgba(255,255,255,0.15), 0 20px 30px rgba(0,0,0,0.6); display: flex; flex-direction: column; justify-content: flex-end; transition: transform 0.2s; }
+
+        .glass-rim, .mood-cup-rim { width: 120px; height: 10px; background: linear-gradient(to right, rgba(255,255,255,0.2), rgba(255,255,255,0.6), rgba(255,255,255,0.2)); position: absolute; top: -2px; left: 0; border-radius: 50%; z-index: 12; }
+#kissa-game-root .glass-stem-area, #kissa-game-root .mood-stem-area{ display: flex; flex-direction: column; align-items: center; margin-top: -2px; }
+        .glass-stem, .mood-stem { width: 3px; height: 55px; background: linear-gradient(to right, rgba(255,255,255,0.2), rgba(255,255,255,0.45), rgba(255,255,255,0.15)); }
+#kissa-game-root .glass-base, #kissa-game-root .mood-base{ width: 65px; height: 8px; background: linear-gradient(to bottom, rgba(255,255,255,0.3), rgba(255,255,255,0.08)); border-radius: 50%; box-shadow: 0 10px 20px rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.25); }
+        #kg-liquidLayersContainer { width: 100%; height: 100%; display: flex; flex-direction: column-reverse; position: relative; }
+#kissa-game-root .liquid-layer{ width: 100%; height: 0%; transition: height 0.12s linear; flex-shrink: 0; }
+        .pouring-stream { position: absolute; top: -30px; left: 50%; transform: translateX(-50%); width: 2.5px; height: 0; opacity: 0; transition: height 0.08s; z-index: 15; filter: drop-shadow(0 0 8px rgba(255,255,255,0.8)); }
+#kissa-game-root .pouring-stream.active{ height: 40px; opacity: 0.95; }
+        .hint-text { margin-top: 20px; font-size: 11px; color: #8c8c85; letter-spacing: 1px; text-align: center; }
+#kissa-game-root .ingredients-bar{ display: flex; flex-wrap: nowrap; gap: 10px; justify-content: flex-start; align-items: stretch; overflow-x: auto; overflow-y: hidden; width: 100%; padding: 10px 4px; flex-shrink: 0; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
+        .ingredients-bar::-webkit-scrollbar { display: none; }
+#kissa-game-root .ingredient-item{ flex-shrink: 0; scroll-snap-align: center; scroll-snap-stop: always; background: #1c1c1a; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 10px 14px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; transition: border-color 0.08s, background 0.08s, box-shadow 0.08s; }
+        .ingredient-item.selected { border-color: #d1b499; background: #262321; }
+#kissa-game-root .ingredient-icon{ font-size: 18px; }
+        .ingredient-name { font-size: 10px; color: #b3b3af; white-space: nowrap; }
+#kissa-game-root .cocktail-preview-banner{ width: 100%; height: 160px; background: #141414; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; margin-bottom: 8px; flex-shrink: 0; }
+        .cocktail-art-card { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; background: radial-gradient(circle at center, rgba(209,180,153,0.15) 0%, #1a1917 80%); }
+#kissa-game-root .cocktail-art-liquid{ width: 60px; height: 80px; position: absolute; bottom: 30px; clip-path: polygon(15% 0%, 85% 0%, 70% 100%, 30% 100%); display: flex; flex-direction: column-reverse; overflow: hidden; opacity: 0.85; box-shadow: 0 0 20px rgba(209,180,153,0.3); }
+        .cocktail-art-glass { width: 80px; height: 100px; position: absolute; bottom: 20px; border: 2px solid rgba(255,255,255,0.4); border-top: none; clip-path: polygon(10% 0%, 90% 0%, 75% 100%, 25% 100%); pointer-events: none; }
+#kissa-game-root .cocktail-placeholder-art{ font-size: 32px; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.6)); position: absolute; z-index: 5; top: 15px; }
+        .recipe-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;}
+#kissa-game-root .recipe-tag{ background: #262623; padding: 4px 8px; border-radius: 4px; font-size: 10px; color: #d1b499; }
+        .guest-quote-box { display: flex; align-items: flex-start; gap: 12px; background: #232320; padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05); margin-top: 4px; position: relative; }
+#kissa-game-root .quote-avatar{ width: 36px; height: 36px; border-radius: 50%; background: #141414; border: 1px solid #d1b499; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; overflow: hidden; }
+        .quote-avatar img { width: 100%; height: 100%; object-fit: cover; }
+#kissa-game-root .quote-right-content{ flex: 1; display: flex; flex-direction: column; gap: 6px; justify-content: center; min-height: 36px; }
+        .quote-text { font-size: 11px; color: #e5e5e0; font-style: italic; line-height: 1.6; }
+
+#kissa-game-root .reviews-container{ display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+        .review-item { background: #262623; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 8px 12px; font-size: 10.5px; color: #ccc; line-height: 1.4; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+#kissa-game-root .review-text{ flex: 1; }
+        .review-meta { display: flex; align-items: center; gap: 8px; font-size: 9.5px; color: #888; flex-shrink: 0; }
+#kissa-game-root .review-like{ display: flex; align-items: center; gap: 3px; color: #ff5252; }
+        .price-suggestion-box { display: flex; justify-content: space-between; align-items: center; background: #232320; border: 1px solid rgba(209,180,153,0.2); border-radius: 10px; padding: 12px 14px; margin-top: 6px; }
+#kissa-game-root .price-label{ font-size: 11px; color: #d1b499; letter-spacing: 1px; font-weight: 500; }
+        .price-value-container { display: flex; align-items: baseline; gap: 6px; }
+#kissa-game-root .price-amount{ font-family: 'Shippori Mincho', serif; font-size: 16px; color: #f0eee6; font-weight: 600; }
+        .price-badge-small { font-size: 9.5px; color: #a3704c; background: rgba(209,180,153,0.1); padding: 2px 6px; border-radius: 4px; text-transform: lowercase; }
+
+#kissa-game-root .mood-liquid{ width: 100%; height: 52%; position: relative; animation: kg-liquidWave 3.5s ease-in-out infinite alternate; }
+@keyframes kg-liquidWave { 0% { transform: translateY(0px) scaleY(1); } 100% { transform: translateY(-3px) scaleY(1.04); } }
+        .mood-input-box { width: 100%; background: #1c1c1a; border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+#kissa-game-root .mood-input-header{ display: flex; align-items: center; gap: 8px; }
+        .user-mini-avatar { width: 24px; height: 24px; border-radius: 50%; overflow: hidden; border: 1px solid rgba(255,255,255,0.2); }
+#kissa-game-root .user-mini-avatar img{ width: 100%; height: 100%; object-fit: cover; }
+        .mood-input-box label { font-size: 11px; color: #d1b499; }
+#kissa-game-root .mood-input-box textarea{ width: 100%; height: 60px; background: transparent; border: none; color: #f0eee6; font-size: 12px; resize: none; outline: none; line-height: 1.4; }
+
+        .loading-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #d1b499; animation: kg-spin 1s ease-in-out infinite; margin-right: 6px; vertical-align: middle; }
+@keyframes kg-spin { to { transform: rotate(360deg); } }
+#kissa-game-root #kg-fullScreenLoader{ position: absolute; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.90); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #d1b499; font-size: 14px; font-family: 'Shippori Mincho', serif; letter-spacing: 2px; transition: opacity 0.3s; pointer-events: none; opacity: 0; }
+        #kg-fullScreenLoader.active { opacity: 1; pointer-events: auto; }
+
+        /* ═══════════════════════════════════════════════════════════
+#kissa-game-root 视觉层：近纯黑底 + 极淡「白 + 粉」呼吸光晕
+全局不用蓝色；不画星云、不画星尘、不做旋转；
+只留缓慢明灭的白粉柔光，主 CTA 的外光晕最亮。
+═══════════════════════════════════════════════════════════ */
+html, #kissa-game-root{ background: #000; }
+
+        /* 底子还是近黑，但上下各托一层极淡的白粉光，中间再补一点点，避免板结 */
+        .phone-container {
+            background:
+                radial-gradient(ellipse 108% 56% at 50% -10%, rgba(255,234,245,.17) 0%, transparent 64%),
+                radial-gradient(ellipse  96% 50% at 50% 110%, rgba(255,182,212,.14) 0%, transparent 66%),
+                radial-gradient(ellipse  72% 68% at 50%  48%, rgba(255,214,233,.05) 0%, transparent 72%),
+                #050406;
+        }
+        /* 光晕层 A：三团白粉柔光，缓慢漂移 + 呼吸 */
+#kissa-game-root .phone-container::before{
+            content: ''; position: absolute; inset: -16%;
+            pointer-events: none; z-index: 0;
+            background:
+                radial-gradient(ellipse 52% 38% at 22% 18%, rgba(255,243,249,.22) 0%, transparent 62%),
+                radial-gradient(ellipse 46% 34% at 82% 76%, rgba(255,166,203,.20) 0%, transparent 64%),
+                radial-gradient(ellipse 38% 30% at 62% 34%, rgba(255,214,233,.11) 0%, transparent 66%);
+            filter: blur(52px);
+            animation: kg-haloDrift 24s ease-in-out infinite alternate;
+            will-change: transform, opacity;
+        }
+        /* 光晕层 B：反向漂移的两团，周期与 A 错开（24s vs 33s）
+#kissa-game-root 两层明暗永远对不上拍 → 光影一直在缓慢变化，不会一潭死水 */
+.phone-container::after{
+            content: ''; position: absolute; inset: -18%;
+            pointer-events: none; z-index: 0;
+            background:
+                radial-gradient(ellipse 44% 34% at 74% 22%, rgba(255,226,241,.15) 0%, transparent 64%),
+                radial-gradient(ellipse 50% 38% at 26% 82%, rgba(255,178,210,.13) 0%, transparent 66%);
+            filter: blur(60px);
+            animation: kg-haloDrift2 33s ease-in-out infinite alternate;
+            will-change: transform, opacity;
+        }
+
+        /* 背景呼吸星星：十来颗白粉小星，各自按不同节奏明灭 */
+#kissa-game-root .star-field{ position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+        .star-field i {
+            position: absolute; display: block;
+            width: 2px; height: 2px; border-radius: 50%;
+            background: #fff;
+            box-shadow: 0 0 6px 1px rgba(255,220,236,.80), 0 0 13px 2.5px rgba(255,178,211,.36);
+            animation: kg-starBreath 5.6s ease-in-out infinite;
+            will-change: opacity, transform;
+        }
+@keyframes kg-starBreath {
+#kissa-game-root 0%, #kissa-game-root 100%{ opacity: .10; transform: scale(.62); }
+            50%      { opacity: 1;   transform: scale(1.30); }
+        }
+        /* 各就各位：位置、大小、节奏都错开，避免整片一起闪 */
+#kissa-game-root .star-field i:nth-child(1){ top:  9%; left: 11%; animation-duration: 5.4s; animation-delay: -0.3s; }
+        .star-field i:nth-child(2)  { top: 17%; left: 78%; width: 3px; height: 3px; animation-duration: 7.1s; animation-delay: -2.4s; }
+#kissa-game-root .star-field i:nth-child(3){ top: 27%; left: 33%; width: 1.5px; height: 1.5px; animation-duration: 4.6s; animation-delay: -1.1s; }
+        .star-field i:nth-child(4)  { top: 36%; left: 88%; animation-duration: 6.3s; animation-delay: -3.7s; }
+#kissa-game-root .star-field i:nth-child(5){ top: 44%; left:  6%; width: 2.5px; height: 2.5px; animation-duration: 8.0s; animation-delay: -0.9s; }
+        .star-field i:nth-child(6)  { top: 55%; left: 66%; width: 1.5px; height: 1.5px; animation-duration: 5.0s; animation-delay: -4.2s; }
+#kissa-game-root .star-field i:nth-child(7){ top: 63%; left: 21%; animation-duration: 6.8s; animation-delay: -1.8s; }
+        .star-field i:nth-child(8)  { top: 72%; left: 92%; width: 2.5px; height: 2.5px; animation-duration: 5.9s; animation-delay: -3.1s; }
+#kissa-game-root .star-field i:nth-child(9){ top: 80%; left: 46%; width: 1.5px; height: 1.5px; animation-duration: 7.6s; animation-delay: -0.5s; }
+        .star-field i:nth-child(10) { top: 88%; left: 14%; animation-duration: 4.9s; animation-delay: -2.7s; }
+#kissa-game-root .star-field i:nth-child(11){ top: 93%; left: 72%; width: 3px; height: 3px; animation-duration: 6.6s; animation-delay: -5.0s; }
+        .star-field i:nth-child(12) { top: 50%; left: 40%; width: 1.5px; height: 1.5px; animation-duration: 8.4s; animation-delay: -6.2s; }
+
+@keyframes kg-haloDrift {
+#kissa-game-root 0%{ transform: translate3d(0, 0, 0) scale(1);           opacity: .70; }
+            50%  { transform: translate3d(3%, -2.2%, 0) scale(1.08);   opacity: 1; }
+#kissa-game-root 100%{ transform: translate3d(-2.2%, 2.6%, 0) scale(1.03); opacity: .84; }
+        }
+@keyframes kg-haloDrift2 {
+#kissa-game-root 0%{ transform: translate3d(0, 0, 0) scale(1.04);        opacity: .95; }
+            50%  { transform: translate3d(-3.4%, 2.4%, 0) scale(.96);  opacity: .52; }
+#kissa-game-root 100%{ transform: translate3d(2.6%, -2%, 0) scale(1.06);   opacity: .88; }
+        }
+
+#kissa-game-root .page{ z-index: 1; }
+        #kg-fullScreenLoader { z-index: 1200; }
+
+        /* 标题本体样式见上方「游戏化标题」区块，这里只调副文案配色 */
+#kissa-game-root .stamp-page-header p{ color: #a3969c; }
+        .hint-text { color: #9d9095; }
+
+        /* 通用按钮：深空玻璃质感 */
+#kissa-game-root .btn-ins{
+            background: linear-gradient(135deg, rgba(23,20,22,.92) 0%, rgba(19,17,19,.92) 52%, rgba(27,21,25,.92) 100%);
+            color: #ece5e9;
+            border: 1px solid rgba(205,185,196,.16);
+            -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 8px 22px rgba(0,0,0,.55);
+        }
+#kissa-game-root .btn-ins:active{
+            background: linear-gradient(135deg, rgba(35,30,34,.95) 0%, rgba(30,26,29,.95) 52%, rgba(42,32,39,.95) 100%);
+            transform: scale(0.98);
+        }
+#kissa-game-root .btn-ins:disabled{ background: rgba(19,17,19,.85); color: #6d6469; border-color: rgba(255,255,255,.05); }
+
+        /* ★ 主 CTA「为选定宾客调酒」：白粉呼吸光晕
+           —— 不旋转，只有一团柔和的白粉辉光在缓缓明灭 */
+#kissa-game-root #kg-dynamicActionBtn{
+            position: relative; overflow: visible;
+            color: #fff2f6;
+            border: 1px solid rgba(255,182,208,.30);
+            background: linear-gradient(135deg, rgba(32,21,27,.95) 0%, rgba(24,18,22,.95) 50%, rgba(38,21,30,.95) 100%);
+            animation: kg-haloBreath 4.2s ease-in-out infinite;
+            text-shadow: 0 0 7px rgba(255,198,220,.42);
+        }
+        /* 外层柔光：径向白粉，不旋转，只做呼吸缩放 */
+#kissa-game-root #kg-dynamicActionBtn::before{
+            content: ''; position: absolute; inset: -3px;
+            border-radius: 33px; z-index: -1;
+            background:
+                radial-gradient(ellipse 66% 118% at 50% 50%, rgba(255,255,255,.18) 0%, rgba(255,255,255,0) 66%),
+                radial-gradient(ellipse 92% 132% at 50% 50%, rgba(255,168,206,.34) 0%, rgba(255,168,206,0) 70%);
+            filter: blur(7px);
+            animation: kg-haloAura 4.2s ease-in-out infinite;
+        }
+#kissa-game-root #kg-dynamicActionBtn::after{
+            content: ''; position: absolute; inset: 0;
+            border-radius: 30px; z-index: -2;
+            box-shadow: 0 0 0 0 rgba(255,170,205,.50);
+            animation: kg-haloPulse 3.4s ease-out infinite;
+        }
+@keyframes kg-haloAura {
+#kissa-game-root 0%, #kissa-game-root 100%{ opacity: .55; transform: scale(0.99); }
+            50%      { opacity: .92; transform: scale(1.018); }
+        }
+@keyframes kg-haloBreath {
+#kissa-game-root 0%, #kissa-game-root 100%{ box-shadow: inset 0 1px 0 rgba(255,255,255,.20), inset 0 0 16px rgba(255,198,222,.12),
+                                   0 0 10px rgba(255,168,206,.26), 0 0 22px rgba(255,236,244,.12), 0 10px 26px rgba(0,0,0,.55); }
+#kissa-game-root 50%{ box-shadow: inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 20px rgba(255,198,222,.22),
+                                   0 0 17px rgba(255,168,206,.42), 0 0 34px rgba(255,236,244,.22), 0 10px 26px rgba(0,0,0,.55); }
+        }
+@keyframes kg-haloPulse {
+#kissa-game-root 0%{ box-shadow: 0 0 0 0   rgba(255,170,205,.28); }
+            70%  { box-shadow: 0 0 0 8px rgba(255,170,205,0); }
+#kissa-game-root 100%{ box-shadow: 0 0 0 0   rgba(255,170,205,0); }
+        }
+
+        /* 角色 / 模式切换 */
+#kissa-game-root .mode-switch-btn{
+            background: rgba(21,18,20,.88); border-color: rgba(242,172,202,.34); color: #e3c4d2;
+            box-shadow: 0 0 12px rgba(255,164,202,.18), 0 5px 15px rgba(0,0,0,.5);
+        }
+#kissa-game-root .mode-switch-btn.active{
+            background: linear-gradient(135deg, rgba(196,84,134,.92), rgba(154,62,112,.92));
+            color: #fff; box-shadow: 0 0 18px rgba(255,146,188,.42);
+        }
+#kissa-game-root .avatar-item{
+            background: rgba(19,17,19,.88);
+            border-color: rgba(208,184,197,.16);
+            box-shadow: 0 0 10px rgba(206,146,180,.13), 0 10px 20px rgba(0,0,0,.45);
+        }
+
+        /* 材料条：玻璃拟态 + 选中霓虹 */
+#kissa-game-root .ingredient-item{
+            background: rgba(19,17,19,.78);
+            border: 1px solid rgba(208,184,197,.12);
+            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+        }
+#kissa-game-root .ingredient-item.selected{
+            border-color: rgba(255,184,212,.72);
+            background: linear-gradient(140deg, rgba(46,25,39,.92), rgba(35,20,30,.92));
+            box-shadow: 0 0 16px rgba(255,164,202,.42), inset 0 0 12px rgba(255,196,222,.20);
+        }
+
+        /* 删除档案：放在档案卡片内容的最底部，随卡片滚动到最下方才出现（不再固定在界面底部）；
+#kissa-game-root 圆圈用醒目的警示红，作为“提醒/危险”的代表色，不再用近黑的暗红 */
+.archive-del-row{
+            display: flex; justify-content: center; margin-top: 16px; flex-shrink: 0;
+        }
+#kissa-game-root .archive-del-x{
+            position: static;
+            width: 32px; height: 32px; padding: 0; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-family: inherit; font-size: 14px; line-height: 1;
+            background: linear-gradient(140deg, #ff6b6b 0%, #e23744 100%);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,.30);
+            box-shadow: 0 0 16px rgba(255,77,79,.55), inset 0 0 8px rgba(255,255,255,.18);
+            -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px);
+            cursor: pointer;
+            transition: transform .18s cubic-bezier(.16,1,.3,1), background .18s, box-shadow .18s;
+        }
+#kissa-game-root .archive-del-x:hover{
+            background: linear-gradient(140deg, #ff8080 0%, #f0414f 100%);
+            box-shadow: 0 0 22px rgba(255,77,79,.70), inset 0 0 8px rgba(255,255,255,.25);
+        }
+#kissa-game-root .archive-del-x:active{ transform: scale(.86); background: linear-gradient(140deg, #e23744 0%, #c62828 100%); }
+
+        /* ═══ 轻提示 Toast：宿主 iframe 的 sandbox 不含 allow-modals，
+               原生 alert()/confirm() 会被浏览器忽略，一律自绘 ═══ */
+#kissa-game-root .toast{
+            position: absolute; left: 50%; bottom: 14%; z-index: 1600;
+            transform: translateX(-50%) translateY(12px);
+            max-width: 80%; text-align: center; line-height: 1.55;
+            background: rgba(28,19,25,.93); color: #f4e7ed;
+            border: 1px solid rgba(255,178,208,.34);
+            font-size: 12px; padding: 11px 18px; border-radius: 14px;
+            box-shadow: 0 0 24px rgba(255,156,198,.28), 0 10px 26px rgba(0,0,0,.5);
+            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+            opacity: 0; pointer-events: none;
+            transition: opacity .3s ease, transform .3s cubic-bezier(.16,1,.3,1);
+        }
+#kissa-game-root .toast.active{ opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ═══ end 游戏融合 CSS ═══ */
 </style>
 </head>
 <body>
@@ -294,8 +795,176 @@
     <!-- 调酒台（内联嵌入调酒游戏，同文档运行以复用 AiPhone 桥接） -->
     <div class="room bar" id="room-bar">
       <div class="zonehead"><b>🎮 调酒台</b> · 完整调酒游戏，和在场角色一起共调一杯。</div>
-      <div id="gameRoot" style="flex:1;min-height:0;position:relative">
-        <div class="gload" id="gameLoading">载入调酒台…</div>
+      <div id="bartop" style="padding:6px 10px 2px;flex:0 0 auto"></div>
+      <div id="kissa-game-root" style="flex:1;min-height:0;position:relative;display:flex;overflow:hidden">
+
+<div class="phone-container">
+<div class="star-field" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div id="kg-fullScreenLoader"><div class="loading-spinner" style="width:24px;height:24px;margin-bottom:12px;"></div><span id="kg-loaderText">加载中...</span></div>
+
+    <!-- 轻提示 Toast（sandbox 屏蔽了原生 alert/confirm，一律自绘） -->
+    <div class="toast" id="kg-toastBox"></div>
+    <!-- 第一页：主页面 -->
+    <div id="kg-page-1" class="page hidden">
+        <div class="stamp-page-header">
+            <span class="ph-ghost" aria-hidden="true">酒</span>
+            <div class="title-kicker">
+                <span class="tk-num">№ 01</span>
+                <span class="tk-rule"></span>
+                <span class="tk-jp">喫茶 MIXOLOGY</span>
+            </div>
+            <h1 class="poster-title" id="kg-pageMainTitle"><span class="pt-a"><span class="ch-blue">K</span><span class="ch-yellow">I</span>SSA</span><span class="pt-b">SOUL MIX</span></h1>
+            <p id="kg-pageMainSubtitle">左侧选择心仪宾客，右侧查阅调酒档案</p>
+        </div>
+        <div class="left-wheel-wrapper">
+            <button class="mode-switch-btn" id="kg-modeSwitchBtn" title="切换：让客人为你调酒">⇄</button>
+            <div class="select-badge" id="kg-selectBadge">0/3</div>
+            <div class="left-avatar-wheel" id="kg-avatarWheel"></div>
+        </div>
+        <div class="right-wheel-stage">
+            <div class="stamp-wheel-track" id="kg-stampTrack"></div>
+        </div>
+        <button class="btn-ins" id="kg-dynamicActionBtn">为选定宾客调酒</button>
+    </div>
+    <!-- 第二页：档案详细查看页 -->
+    <div id="kg-page-2" class="page hidden">
+        <div class="stamp-page-header">
+            <span class="ph-ghost" aria-hidden="true">憶</span>
+            <div class="title-kicker">
+                <span class="tk-num">№ 02</span>
+                <span class="tk-rule"></span>
+                <span class="tk-jp">記録 ARCHIVE</span>
+            </div>
+            <h1 class="poster-title"><span class="pt-a"><span class="ch-blue">S</span><span class="ch-yellow">A</span>VED</span><span class="pt-b">ARCHIVE</span></h1>
+            <p>已归档的灵魂调酒记录</p>
+        </div>
+        <div class="guest-info-card">
+            <div class="cocktail-preview-banner" id="kg-infoBannerContainer">
+                <div class="cocktail-art-card">
+                    <div class="cocktail-placeholder-art" id="kg-infoBannerEmoji">🍸</div>
+                    <div class="cocktail-art-liquid" id="kg-infoBannerLiquid"></div>
+                    <div class="cocktail-art-glass"></div>
+                </div>
+            </div>
+            <div class="guest-info-header">
+                <h2 id="kg-infoTitle">档案名称</h2>
+                <div class="sub" id="kg-infoSubtitle">风味子标题</div>
+                <div class="guest-chips" id="kg-infoGuestChips"></div>
+            </div>
+            <div class="info-section"><strong>✦ 配方结构：</strong><span id="kg-infoRecipe"></span></div>
+            <div class="info-section"><strong>✦ 五维属性：</strong><div class="stat-bar-group" id="kg-infoStatsGroup"></div></div>
+            <div class="info-section"><strong>✦ 调制技法：</strong><span id="kg-infoTechnique"></span></div>
+            <div class="info-section"><strong>✦ 风味轮廓：</strong><span id="kg-infoFlavor"></span></div>
+            <div class="info-section">
+                <strong>✦ 回想档案 / 故事（约500字）：</strong>
+                <span id="kg-infoQuote" style="font-style: italic; color: #e5e5e0; line-height: 1.6; display: block; margin-top:4px;"></span>
+                <div class="guest-quotes-group" id="kg-infoGuestQuotes"></div>
+            </div>
+            <div class="info-section"><strong>✦ 路人评价：</strong><div class="reviews-container" id="kg-infoReviews"></div></div>
+            <div class="info-section"><strong>✦ 建议售价：</strong><div class="price-suggestion-box"><span class="price-label">建议零售标价</span><div class="price-value-container"><span class="price-amount" id="kg-infoPrice">¥188</span><span class="price-badge-small" id="kg-infoPriceBadge">夯</span></div></div></div>
+            <div class="archive-del-row"><button class="archive-del-x" id="kg-deleteArchiveBtn" title="删除该档案" aria-label="删除该档案">✕</button></div>
+        </div>
+        <button class="btn-ins" id="kg-backToWheelBtn">返回选择轮盘</button>
+    </div>
+    <!-- 第三页：玩家手动调酒页（随机杯型） -->
+    <div id="kg-page-3" class="page hidden">
+        <div class="bartend-header">
+            <button class="back-btn" id="kg-backToWheelFromBar">← 返回</button>
+            <div class="guest-tag" id="kg-currentGuestTag">开始调酒</div>
+        </div>
+        <div class="bartend-workspace">
+            <div class="pouring-stream" id="kg-pouringStream"></div>
+            <div class="glass-container" id="kg-glassContainer">
+                <div class="glass-cup-body" id="kg-glassCup">
+                    <div class="glass-rim" id="kg-glassRim"></div>
+                    <div id="kg-liquidLayersContainer"></div>
+                </div>
+                <div class="glass-stem-area">
+                    <div class="glass-stem" id="kg-glassStem"></div>
+                    <div class="glass-base"></div>
+                </div>
+            </div>
+            <div class="hint-text" id="kg-hintText">选中材料后「长按」玻璃杯缓缓注入 · 同种材料不合并、各成一层 · 新材料永远叠在最上层 · 双击杯子可倒空</div>
+        </div>
+        <div style="flex-shrink: 0;">
+            <div class="ingredients-bar" id="kg-ingredientsBar"></div>
+            <button class="btn-ins" id="kg-finishBtn" style="margin-top: 10px;">完成特调</button>
+        </div>
+    </div>
+    <!-- 第四页：AI 结果页 -->
+    <div id="kg-page-4" class="page hidden">
+        <div class="stamp-page-header">
+            <span class="ph-ghost" aria-hidden="true">酔</span>
+            <div class="title-kicker">
+                <span class="tk-num">№ 03</span>
+                <span class="tk-rule"></span>
+                <span class="tk-jp">調製 RESULT</span>
+            </div>
+            <h1 class="poster-title"><span class="pt-a"><span class="ch-blue">C</span><span class="ch-yellow">O</span>CKTAIL</span><span class="pt-b">ARCHIVE</span></h1>
+            <p>专属灵魂调酒风味解构</p>
+        </div>
+        <div class="result-card">
+            <div class="cocktail-preview-banner" id="kg-cocktailBanner">
+                <div class="cocktail-art-card">
+                    <div class="cocktail-placeholder-art" id="kg-resBannerEmoji">🍸</div>
+                    <div class="cocktail-art-liquid" id="kg-resBannerLiquid"></div>
+                    <div class="cocktail-art-glass"></div>
+                </div>
+            </div>
+            <div class="result-header">
+                <h2 id="kg-resTitle">落日与灰烬</h2>
+                <div class="cocktail-subtitle" id="kg-resSubtitle">Classic Soul Cocktail Profile</div>
+                <div class="guest-chips" id="kg-resGuestChips"></div>
+            </div>
+            <div class="result-section"><strong>✦ 配方结构：</strong><div class="recipe-tags" id="kg-resTags"></div></div>
+            <div class="result-section"><strong>✦ 属性评估：</strong><div class="stat-bar-group" id="kg-resStatsGroup"></div></div>
+            <div class="result-section"><strong>✦ 调制技法：</strong><span id="kg-resTechnique"></span></div>
+            <div class="result-section"><strong>✦ 风味轮廓：</strong><span id="kg-resFlavor"></span></div>
+            <div class="result-section">
+                <strong>✦ 回想档案 / 故事（约500字）：</strong>
+                <div class="guest-quote-box">
+                    <div class="quote-avatar" id="kg-resAvatarIcon">🎨</div>
+                    <div class="quote-right-content">
+                        <div class="quote-text" id="kg-resQuote"><span class="loading-spinner"></span>等待深度回想生成（约500字）...</div>
+                        <div class="guest-quotes-group" id="kg-resGuestQuotes"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="result-section"><strong>✦ 路人评价：</strong><div class="reviews-container" id="kg-resReviews"><span style="color:#888;">生成中...</span></div></div>
+            <div class="result-section"><strong>✦ 建议售价：</strong><div class="price-suggestion-box"><span class="price-label">建议零售标价</span><div class="price-value-container"><span class="price-amount" id="kg-resPrice">¥188</span><span class="price-badge-small" id="kg-resPriceBadge">夯</span></div></div></div>
+        </div>
+        <button class="btn-ins" id="kg-restartBtn">再次开启</button>
+    </div>
+    <!-- 第五页：顾客为你特调页（不同杯型与颜色） -->
+    <div id="kg-page-5" class="page hidden">
+        <div class="bartend-header">
+            <button class="back-btn" id="kg-backToWheelFromMood">← 返回</button>
+            <div class="guest-tag" id="kg-moodGuestTag">调酒师：</div>
+        </div>
+        <div class="mood-workspace">
+            <div class="mood-glass-container" id="kg-moodGlassContainer">
+                <div class="mood-cup-body" id="kg-moodCupBody">
+                    <div class="mood-cup-rim" id="kg-moodCupRim"></div>
+                    <div class="mood-liquid" id="kg-moodLiquid"></div>
+                </div>
+                <div class="mood-stem-area" id="kg-moodStemArea">
+                    <div class="mood-stem" id="kg-moodStem"></div>
+                    <div class="mood-base" id="kg-moodBase"></div>
+                </div>
+            </div>
+            <div class="mood-input-box">
+                <div class="mood-input-header">
+                    <div class="user-mini-avatar" id="kg-userMiniAvatar">👤</div>
+                    <label>✦ 描述你此刻的近期情绪或心境：</label>
+                </div>
+                <textarea id="kg-moodInput" placeholder="例如：深夜加班有些疲惫，但内心依然在期待明天的一抹晨光..."></textarea>
+            </div>
+        </div>
+        <button class="btn-ins" id="kg-generateMoodDrinkBtn" style="margin-top:10px;">让TA为你调制专属情绪特调</button>
+    </div>
+</div>
+
+
       </div>
     </div>
     <!-- 相册 / 朋友圈 -->
@@ -1559,7 +2228,7 @@ function switchRoom(r){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.room===r));
   document.querySelectorAll(".room").forEach(x=>x.classList.toggle("active", x.id==="room-"+r));
   // 进入调酒台：确保桥接已注入（iframe 已 onload 则直接挂载）
-  if(r==="bar"){ mountGame(); }
+  if(r==="bar"){ mountGame(); renderBartop(); }
 }
 document.querySelectorAll(".tab").forEach(t=> t.onclick=()=>switchRoom(t.dataset.room));
 
@@ -1788,686 +2457,24 @@ $("#wbFile").onchange=(e)=>{ const f=e.target.files&&e.target.files[0]; if(f) im
 /* ---------- 启动 ---------- */
 init();
 </script>
-
-
-
-
-
-
-
-<!--GAME_SRCDOC_START-->
-<script type="text/html" id="__game_srcdoc__">
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Kissa / 灵魂调酒模拟器</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;600&family=Plus+Jakarta+Sans:wght@300;400;500&display=swap');
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Plus Jakarta Sans', 'Shippori Mincho', sans-serif;
-            -webkit-tap-highlight-color: transparent;
-        }
-        html, body {
-            width: 100%;
-            height: 100%;
-            margin: 0;
-            background-color: #0d0d0d;
-            color: #e5e5e0;
-            overflow: hidden;
-        }
-        .phone-container {
-            width: 100%;
-            height: 100%;
-            background: #030304;
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            box-sizing: border-box;
-            padding-top: var(--ai-phone-game-safe-top, 88px);
-            padding-bottom: var(--ai-phone-game-safe-bottom, 24px);
-        }
-        .page {
-            position: absolute;
-            top: var(--ai-phone-game-safe-top, 88px);
-            left: 0;
-            right: 0;
-            bottom: var(--ai-phone-game-safe-bottom, 24px);
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            padding: 20px 24px;
-            transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-            overflow: hidden;
-        }
-        .hidden {
-            opacity: 0;
-            pointer-events: none;
-            transform: scale(0.96);
-        }
-        /* ═══════ 游戏化标题 ═══════
-           左侧竖向霓虹标条 + 顶部腰封小字 + 渐变字面 + 底部渐隐细线，
-           整体缓慢呼吸辉光，做出游戏 UI 的仪式感。 */
-        .stamp-page-header {
-            text-align: left; z-index: 10; flex-shrink: 0;
-            position: relative; padding: 12px 0 0 16px;
-        }
-        /* 背后压一个巨型淡化汉字，歪一点 —— 拼贴的底层 */
-        .ph-ghost {
-            position: absolute; left: 108px; top: -16px;
-            font-family: 'Shippori Mincho', serif;
-            font-size: 64px; line-height: 1; font-weight: 700;
-            color: rgba(255,238,246,.055);
-            transform: rotate(7deg);
-            pointer-events: none; user-select: none; z-index: -1;
-        }
-        /* 左侧霓虹标条：两段长短错开，不做对称 */
-        .stamp-page-header::before {
-            content: ''; position: absolute; left: 0; top: 15px;
-            width: 2px; height: 31px; border-radius: 2px;
-            background: linear-gradient(180deg, #ffffff 0%, rgba(255,158,199,.92) 58%, rgba(255,158,199,0) 100%);
-            box-shadow: 0 0 11px rgba(255,158,199,.62);
-        }
-        .stamp-page-header::after {
-            content: ''; position: absolute; left: 5px; top: 22px;
-            width: 1px; height: 14px; border-radius: 1px;
-            background: linear-gradient(180deg, rgba(255,198,223,.58), rgba(255,198,223,0));
-        }
-        /* 腰封行：反白标号块（歪的）+ 细线 + 日文小字 */
-        .title-kicker {
-            display: flex; align-items: center; gap: 6px;
-            margin-bottom: 6px; height: 13px;
-        }
-        .tk-num {
-            display: inline-block;
-            background: linear-gradient(135deg, #ffffff, #ffdaea);
-            color: #150f13;
-            font: 800 8px/1 'Helvetica Neue', Arial, sans-serif;
-            letter-spacing: .6px; padding: 3.5px 5px 3px;
-            transform: rotate(-4.5deg);
-            box-shadow: 0 0 11px rgba(255,170,206,.45);
-        }
-        .tk-rule { display: inline-block; width: 15px; height: 1px; background: rgba(255,186,215,.52); }
-        .tk-jp {
-            font-family: 'Shippori Mincho', serif;
-            font-size: 8.5px; font-weight: 600; letter-spacing: 2.8px;
-            color: rgba(255,192,218,.66); white-space: nowrap;
-        }
-        /* 标题本体：大衬线主字（粉白渐变）＋ 小无衬线副标（粉）；首个字用圆体＋蓝，作点睛撞色 */
-        .poster-title {
-            display: block; position: relative;
-            margin: 0 0 14px; line-height: .94;
-            animation: titleAura 5.4s ease-in-out infinite;
-        }
-        .poster-title .pt-a {
-            display: block;
-            font-family: 'Shippori Mincho', serif;
-            font-size: 29px; font-weight: 600; letter-spacing: 4.5px;
-            color: #fdf3f7;
-        }
-        /* 标题首字：圆体＋蓝，点睛撞色（其余字仍是粉白） */
-        .poster-title .pt-a .ch-blue {
-            font-family: 'Yuanti SC', 'YouYuan', '幼圆', 'PingFang SC', sans-serif;
-            letter-spacing: 2px;
-            color: #4AA3FF;
-        }
-        /* 蓝字紧邻的下一个字：暖黄，作第二点睛撞色 */
-        .poster-title .pt-a .ch-yellow {
-            font-family: 'Yuanti SC', 'YouYuan', '幼圆', 'PingFang SC', sans-serif;
-            letter-spacing: 2px;
-            color: #ffd24d;
-        }
-        .poster-title .pt-b {
-            display: block; position: relative;
-            margin: 2px 0 0 42px;
-            font-family: 'Helvetica Neue', Arial, sans-serif;
-            font-size: 12.5px; font-weight: 300; letter-spacing: 8px;
-            text-transform: uppercase;
-            color: rgba(255,198,222,.84);
-        }
-        /* 第二行左边接一根引线，把错位「钉」住 */
-        .poster-title .pt-b::before {
-            content: ''; position: absolute; left: -20px; top: 50%;
-            width: 12px; height: 1px; margin-top: -.5px;
-            background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,184,214,.88));
-        }
-        /* 渐变字面（不支持 background-clip:text 的环境自动退回纯色，不会变透明） */
-        @supports ((-webkit-background-clip: text) or (background-clip: text)) {
-            .poster-title .pt-a {
-                background: linear-gradient(176deg, #ffffff 0%, #fff2f7 42%, #ffb6d4 100%);
-                -webkit-background-clip: text; background-clip: text;
-                -webkit-text-fill-color: transparent;
-            }
-            /* 蓝字不参与粉白渐变，单独填蓝 */
-            .poster-title .pt-a .ch-blue {
-                background: none;
-                -webkit-background-clip: border-box; background-clip: border-box;
-                -webkit-text-fill-color: #4AA3FF;
-                color: #4AA3FF;
-            }
-            /* 黄字同样不参与粉白渐变，单独填黄 */
-            .poster-title .pt-a .ch-yellow {
-                background: none;
-                -webkit-background-clip: border-box; background-clip: border-box;
-                -webkit-text-fill-color: #ffd24d;
-                color: #ffd24d;
-            }
-        }
-        /* 底部细线：从第二行起笔、只画一半，刻意不齐 */
-        .poster-title::after {
-            content: ''; position: absolute; left: 42px; bottom: -7px;
-            width: 58%; height: 1px;
-            background: linear-gradient(90deg, rgba(255,172,208,.92) 0%, rgba(255,255,255,.22) 48%, rgba(255,255,255,0) 100%);
-        }
-        @keyframes titleAura {
-            0%, 100% { filter: drop-shadow(0 0 9px rgba(255,150,195,.20)) drop-shadow(0 2px 3px rgba(0,0,0,.65)); }
-            50%      { filter: drop-shadow(0 0 17px rgba(255,150,195,.44)) drop-shadow(0 2px 3px rgba(0,0,0,.65)); }
-        }
-        .stamp-page-header p { font-size: 10.5px; color: #9b9098; letter-spacing: 1.4px; line-height: 1.5; }
-        .left-wheel-wrapper { position: absolute; left: 16px; top: 52%; transform: translateY(-50%); width: 70px; height: 400px; display: flex; flex-direction: column; align-items: center; z-index: 20; }
-        .mode-switch-btn { width: 42px; height: 42px; border-radius: 50%; background: #1c1c1a; border: 1.5px solid #d1b499; color: #d1b499; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 5px 15px rgba(0,0,0,0.4); transition: all 0.3s; margin-bottom: 12px; flex-shrink: 0; }
-        .mode-switch-btn.active { background: #d1b499; color: #141414; }
-        .left-avatar-wheel { position: relative; width: 70px; height: 320px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: grab; perspective: 800px; touch-action: none; }
-        .avatar-item { position: absolute; width: 52px; height: 52px; border-radius: 50%; background: #1c1c1a; border: 1.5px solid rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: center; font-size: 22px; transition: border-color 0.3s, box-shadow 0.3s; will-change: transform; user-select: none; box-shadow: 0 10px 20px rgba(0,0,0,0.3); overflow: hidden; }
-        .avatar-item img { width: 100%; height: 100%; object-fit: cover; }
-        /* 多选：被选中的人物 -> 蓝环 + 右下角勾 */
-        .avatar-item.is-selected { border-color: #4AA3FF; box-shadow: 0 0 20px rgba(74,163,255,0.55); }
-        .avatar-item .sel-check { position: absolute; right: -2px; bottom: -2px; width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(140deg, #5ab0ff, #2d7dd8); color: #fff; font-size: 11px; line-height: 18px; text-align: center; border: 1.5px solid #0e1116; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
-        /* 第一页：选人后，头像轮盘上方浮出的「已选 n/3」圆圈徽标 */
-        .select-badge {
-            position: absolute; top: 52px; left: 50%;
-            transform: translateX(-50%) scale(.5);
-            width: 40px; height: 40px; border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            background: linear-gradient(140deg, #5ab0ff 0%, #2d7dd8 100%);
-            color: #fff; font-weight: 800; font-size: 13px; letter-spacing: .2px;
-            border: 1.5px solid rgba(255,255,255,.35);
-            box-shadow: 0 0 16px rgba(74,163,255,.55), inset 0 0 8px rgba(255,255,255,.18);
-            opacity: 0; pointer-events: none; z-index: 40;
-            transition: opacity .22s, transform .22s cubic-bezier(.16,1,.3,1);
-        }
-        .select-badge.show { opacity: 1; transform: translateX(-50%) scale(1); }
-        /* 共调宾客 chips + 多人回想区块 */
-        .guest-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
-        .gc-label { font-size: 12px; color: #b9b4ab; align-self: center; }
-        .gc-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: rgba(74,163,255,0.14); border: 1px solid rgba(74,163,255,0.4); color: #dcecff; font-size: 12px; }
-        .guest-quotes-group { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
-        .group-quote-item { display: flex; gap: 10px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 10px 12px; }
-        .group-quote-item .quote-avatar { flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: #1c1c1a; border: 1px solid rgba(255,255,255,0.18); font-size: 18px; }
-        .group-quote-item .quote-name { font-size: 12px; color: #9fd0ff; font-weight: 700; margin-bottom: 3px; }
-        .group-quote-item .quote-text { font-size: 13px; line-height: 1.6; color: #e9e4db; white-space: pre-wrap; }
-        /* 调酒档案轮盘的垂直位置：数值越大越靠下（原版是 56.5%，现下移到 66%，
-           让上方那几张卡片不再压到 "KISSA SELECT" 标题上；想再微调只改这一个值） */
-        :root { --archive-wheel-top: 66%; }
-        .right-wheel-stage { position: absolute; right: -60px; top: var(--archive-wheel-top, 66%); transform: translateY(-50%); width: 260px; height: 420px; pointer-events: none; }
-        .stamp-wheel-track { position: absolute; width: 100%; height: 100%; pointer-events: auto; cursor: grab; touch-action: none; }
-        .stamp-card { position: absolute; width: 220px; height: 140px; background: #f7f5ef; color: #2b2b28; padding: 12px 14px; border-radius: 2px; box-shadow: -10px 15px 30px rgba(0,0,0,0.3); display: flex; flex-direction: column; justify-content: space-between; user-select: none; cursor: pointer; transition: border-left 0.25s, box-shadow 0.25s; will-change: transform; mask-image: radial-gradient(circle at 6px 6px, transparent 4px, black 4.5px); mask-size: 16px 16px; mask-position: -6px -6px; -webkit-mask-image: radial-gradient(circle at 6px 6px, transparent 4px, black 4.5px); -webkit-mask-size: 16px 16px; -webkit-mask-position: -6px -6px; }
-        .stamp-card::before { content: ''; position: absolute; top: 6px; left: 6px; right: 6px; bottom: 6px; border: 1px solid rgba(0,0,0,0.12); pointer-events: none; }
-        .stamp-top { display: flex; justify-content: space-between; font-size: 9px; letter-spacing: 1px; color: #8c867b; text-transform: uppercase; }
-        .stamp-content h3 { font-family: 'Shippori Mincho', serif; font-size: 14px; color: #1a1a18; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .stamp-content p { font-size: 9.5px; color: #66635c; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-        .stamp-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 9px; font-weight: 600; border-top: 1px dashed rgba(0,0,0,0.1); padding-top: 4px; }
-        .stamp-price-tag { color: #a3704c; font-family: 'Shippori Mincho', serif; font-size: 11px; letter-spacing: 1px; }
-        .stamp-tag-badge { color: #666; font-size: 8.5px; font-weight: normal; }
-        .btn-ins { background: #f0eee6; color: #191919; border: none; padding: 16px; border-radius: 30px; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; font-weight: 600; cursor: pointer; z-index: 10; transition: background 0.3s, transform 0.2s; flex-shrink: 0; width: 100%; display: flex; align-items: center; justify-content: center;}
-        .btn-ins:active { background: #ffffff; transform: scale(0.98); }
-        .btn-ins:disabled { background: #666; color: #aaa; transform: none; cursor: not-allowed; }
-        .guest-info-card, .result-card { background: #1c1c1a; border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 20px 16px; display: flex; flex-direction: column; gap: 12px; margin: 10px 0; flex: 1; overflow-y: auto; }
-        .guest-info-card::-webkit-scrollbar, .result-card::-webkit-scrollbar { width: 4px; }
-        .guest-info-card::-webkit-scrollbar-thumb, .result-card::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
-        .guest-info-header h2, .result-header h2 { font-family: 'Shippori Mincho', serif; font-size: 18px; color: #f0eee6; font-weight: 400; margin-bottom: 2px; }
-        .guest-info-header .sub, .result-header .cocktail-subtitle { font-size: 11px; color: #d1b499; letter-spacing: 1px; }
-        .info-section, .result-section { font-size: 11px; line-height: 1.5; color: #b3b3af; }
-        .info-section strong, .result-section strong { color: #e5e5e0; display: block; margin-bottom: 4px; font-weight: 500; letter-spacing: 1px; font-size: 11.5px; }
-        
-        .stat-bar-group { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
-        .stat-row { display: flex; align-items: center; justify-content: space-between; font-size: 10px; color: #b3b3af; }
-        .stat-bar-bg { flex: 1; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; margin: 0 8px; overflow: hidden; position: relative; }
-        .stat-bar-fill { height: 100%; background: linear-gradient(90deg, #d1b499, #f0eee6); border-radius: 2px; transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1); }
-        .bartend-header { display: flex; justify-content: space-between; align-items: center; z-index: 10; flex-shrink: 0; margin-bottom: 10px; }
-        .back-btn { background: none; border: none; color: #8c8c85; font-size: 12px; letter-spacing: 1px; cursor: pointer; padding: 5px 0; }
-        .guest-tag { font-size: 11px; letter-spacing: 1px; background: #20201e; padding: 6px 12px; border-radius: 20px; color: #d1b499; border: 1px solid rgba(255,255,255,0.05); max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .bartend-workspace, .mood-workspace { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative; min-height: 200px; }
-        
-        .glass-container, .mood-glass-container { position: relative; width: 140px; height: 220px; display: flex; flex-direction: column; align-items: center; cursor: pointer; }
-        
-        .glass-cup-body, .mood-cup-body { width: 120px; height: 120px; position: relative; background: linear-gradient(135deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.02) 50%, rgba(255,255,255,0.08) 100%); border: 1.5px solid rgba(255,255,255,0.35); border-top: 1.5px solid rgba(255,255,255,0.6); overflow: hidden; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: inset 0 0 25px rgba(255,255,255,0.15), 0 20px 30px rgba(0,0,0,0.6); display: flex; flex-direction: column; justify-content: flex-end; transition: transform 0.2s; }
-        
-        .glass-rim, .mood-cup-rim { width: 120px; height: 10px; background: linear-gradient(to right, rgba(255,255,255,0.2), rgba(255,255,255,0.6), rgba(255,255,255,0.2)); position: absolute; top: -2px; left: 0; border-radius: 50%; z-index: 12; }
-        .glass-stem-area, .mood-stem-area { display: flex; flex-direction: column; align-items: center; margin-top: -2px; }
-        .glass-stem, .mood-stem { width: 3px; height: 55px; background: linear-gradient(to right, rgba(255,255,255,0.2), rgba(255,255,255,0.45), rgba(255,255,255,0.15)); }
-        .glass-base, .mood-base { width: 65px; height: 8px; background: linear-gradient(to bottom, rgba(255,255,255,0.3), rgba(255,255,255,0.08)); border-radius: 50%; box-shadow: 0 10px 20px rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.25); }
-        #liquidLayersContainer { width: 100%; height: 100%; display: flex; flex-direction: column-reverse; position: relative; }
-        .liquid-layer { width: 100%; height: 0%; transition: height 0.12s linear; flex-shrink: 0; }
-        .pouring-stream { position: absolute; top: -30px; left: 50%; transform: translateX(-50%); width: 2.5px; height: 0; opacity: 0; transition: height 0.08s; z-index: 15; filter: drop-shadow(0 0 8px rgba(255,255,255,0.8)); }
-        .pouring-stream.active { height: 40px; opacity: 0.95; }
-        .hint-text { margin-top: 20px; font-size: 11px; color: #8c8c85; letter-spacing: 1px; text-align: center; }
-        .ingredients-bar { display: flex; flex-wrap: nowrap; gap: 10px; justify-content: flex-start; align-items: stretch; overflow-x: auto; overflow-y: hidden; width: 100%; padding: 10px 4px; flex-shrink: 0; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
-        .ingredients-bar::-webkit-scrollbar { display: none; }
-        .ingredient-item { flex-shrink: 0; scroll-snap-align: center; scroll-snap-stop: always; background: #1c1c1a; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 10px 14px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; transition: border-color 0.08s, background 0.08s, box-shadow 0.08s; }
-        .ingredient-item.selected { border-color: #d1b499; background: #262321; }
-        .ingredient-icon { font-size: 18px; }
-        .ingredient-name { font-size: 10px; color: #b3b3af; white-space: nowrap; }
-        .cocktail-preview-banner { width: 100%; height: 160px; background: #141414; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; margin-bottom: 8px; flex-shrink: 0; }
-        .cocktail-art-card { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; background: radial-gradient(circle at center, rgba(209,180,153,0.15) 0%, #1a1917 80%); }
-        .cocktail-art-liquid { width: 60px; height: 80px; position: absolute; bottom: 30px; clip-path: polygon(15% 0%, 85% 0%, 70% 100%, 30% 100%); display: flex; flex-direction: column-reverse; overflow: hidden; opacity: 0.85; box-shadow: 0 0 20px rgba(209,180,153,0.3); }
-        .cocktail-art-glass { width: 80px; height: 100px; position: absolute; bottom: 20px; border: 2px solid rgba(255,255,255,0.4); border-top: none; clip-path: polygon(10% 0%, 90% 0%, 75% 100%, 25% 100%); pointer-events: none; }
-        .cocktail-placeholder-art { font-size: 32px; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.6)); position: absolute; z-index: 5; top: 15px; }
-        .recipe-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;}
-        .recipe-tag { background: #262623; padding: 4px 8px; border-radius: 4px; font-size: 10px; color: #d1b499; }
-        .guest-quote-box { display: flex; align-items: flex-start; gap: 12px; background: #232320; padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05); margin-top: 4px; position: relative; }
-        .quote-avatar { width: 36px; height: 36px; border-radius: 50%; background: #141414; border: 1px solid #d1b499; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; overflow: hidden; }
-        .quote-avatar img { width: 100%; height: 100%; object-fit: cover; }
-        .quote-right-content { flex: 1; display: flex; flex-direction: column; gap: 6px; justify-content: center; min-height: 36px; }
-        .quote-text { font-size: 11px; color: #e5e5e0; font-style: italic; line-height: 1.6; }
-        
-        .reviews-container { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
-        .review-item { background: #262623; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 8px 12px; font-size: 10.5px; color: #ccc; line-height: 1.4; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-        .review-text { flex: 1; }
-        .review-meta { display: flex; align-items: center; gap: 8px; font-size: 9.5px; color: #888; flex-shrink: 0; }
-        .review-like { display: flex; align-items: center; gap: 3px; color: #ff5252; }
-        .price-suggestion-box { display: flex; justify-content: space-between; align-items: center; background: #232320; border: 1px solid rgba(209,180,153,0.2); border-radius: 10px; padding: 12px 14px; margin-top: 6px; }
-        .price-label { font-size: 11px; color: #d1b499; letter-spacing: 1px; font-weight: 500; }
-        .price-value-container { display: flex; align-items: baseline; gap: 6px; }
-        .price-amount { font-family: 'Shippori Mincho', serif; font-size: 16px; color: #f0eee6; font-weight: 600; }
-        .price-badge-small { font-size: 9.5px; color: #a3704c; background: rgba(209,180,153,0.1); padding: 2px 6px; border-radius: 4px; text-transform: lowercase; }
-        
-        .mood-liquid { width: 100%; height: 52%; position: relative; animation: liquidWave 3.5s ease-in-out infinite alternate; }
-        @keyframes liquidWave { 0% { transform: translateY(0px) scaleY(1); } 100% { transform: translateY(-3px) scaleY(1.04); } }
-        .mood-input-box { width: 100%; background: #1c1c1a; border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-        .mood-input-header { display: flex; align-items: center; gap: 8px; }
-        .user-mini-avatar { width: 24px; height: 24px; border-radius: 50%; overflow: hidden; border: 1px solid rgba(255,255,255,0.2); }
-        .user-mini-avatar img { width: 100%; height: 100%; object-fit: cover; }
-        .mood-input-box label { font-size: 11px; color: #d1b499; }
-        .mood-input-box textarea { width: 100%; height: 60px; background: transparent; border: none; color: #f0eee6; font-size: 12px; resize: none; outline: none; line-height: 1.4; }
-        
-        .loading-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #d1b499; animation: spin 1s ease-in-out infinite; margin-right: 6px; vertical-align: middle; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        #fullScreenLoader { position: absolute; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.90); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #d1b499; font-size: 14px; font-family: 'Shippori Mincho', serif; letter-spacing: 2px; transition: opacity 0.3s; pointer-events: none; opacity: 0; }
-        #fullScreenLoader.active { opacity: 1; pointer-events: auto; }
-
-        /* ═══════════════════════════════════════════════════════════
-           视觉层：近纯黑底 + 极淡「白 + 粉」呼吸光晕
-           全局不用蓝色；不画星云、不画星尘、不做旋转；
-           只留缓慢明灭的白粉柔光，主 CTA 的外光晕最亮。
-           ═══════════════════════════════════════════════════════════ */
-        html, body { background: #000; }
-
-        /* 底子还是近黑，但上下各托一层极淡的白粉光，中间再补一点点，避免板结 */
-        .phone-container {
-            background:
-                radial-gradient(ellipse 108% 56% at 50% -10%, rgba(255,234,245,.17) 0%, transparent 64%),
-                radial-gradient(ellipse  96% 50% at 50% 110%, rgba(255,182,212,.14) 0%, transparent 66%),
-                radial-gradient(ellipse  72% 68% at 50%  48%, rgba(255,214,233,.05) 0%, transparent 72%),
-                #050406;
-        }
-        /* 光晕层 A：三团白粉柔光，缓慢漂移 + 呼吸 */
-        .phone-container::before {
-            content: ''; position: absolute; inset: -16%;
-            pointer-events: none; z-index: 0;
-            background:
-                radial-gradient(ellipse 52% 38% at 22% 18%, rgba(255,243,249,.22) 0%, transparent 62%),
-                radial-gradient(ellipse 46% 34% at 82% 76%, rgba(255,166,203,.20) 0%, transparent 64%),
-                radial-gradient(ellipse 38% 30% at 62% 34%, rgba(255,214,233,.11) 0%, transparent 66%);
-            filter: blur(52px);
-            animation: haloDrift 24s ease-in-out infinite alternate;
-            will-change: transform, opacity;
-        }
-        /* 光晕层 B：反向漂移的两团，周期与 A 错开（24s vs 33s）
-           两层明暗永远对不上拍 → 光影一直在缓慢变化，不会一潭死水 */
-        .phone-container::after {
-            content: ''; position: absolute; inset: -18%;
-            pointer-events: none; z-index: 0;
-            background:
-                radial-gradient(ellipse 44% 34% at 74% 22%, rgba(255,226,241,.15) 0%, transparent 64%),
-                radial-gradient(ellipse 50% 38% at 26% 82%, rgba(255,178,210,.13) 0%, transparent 66%);
-            filter: blur(60px);
-            animation: haloDrift2 33s ease-in-out infinite alternate;
-            will-change: transform, opacity;
-        }
-
-        /* 背景呼吸星星：十来颗白粉小星，各自按不同节奏明灭 */
-        .star-field { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
-        .star-field i {
-            position: absolute; display: block;
-            width: 2px; height: 2px; border-radius: 50%;
-            background: #fff;
-            box-shadow: 0 0 6px 1px rgba(255,220,236,.80), 0 0 13px 2.5px rgba(255,178,211,.36);
-            animation: starBreath 5.6s ease-in-out infinite;
-            will-change: opacity, transform;
-        }
-        @keyframes starBreath {
-            0%, 100% { opacity: .10; transform: scale(.62); }
-            50%      { opacity: 1;   transform: scale(1.30); }
-        }
-        /* 各就各位：位置、大小、节奏都错开，避免整片一起闪 */
-        .star-field i:nth-child(1)  { top:  9%; left: 11%; animation-duration: 5.4s; animation-delay: -0.3s; }
-        .star-field i:nth-child(2)  { top: 17%; left: 78%; width: 3px; height: 3px; animation-duration: 7.1s; animation-delay: -2.4s; }
-        .star-field i:nth-child(3)  { top: 27%; left: 33%; width: 1.5px; height: 1.5px; animation-duration: 4.6s; animation-delay: -1.1s; }
-        .star-field i:nth-child(4)  { top: 36%; left: 88%; animation-duration: 6.3s; animation-delay: -3.7s; }
-        .star-field i:nth-child(5)  { top: 44%; left:  6%; width: 2.5px; height: 2.5px; animation-duration: 8.0s; animation-delay: -0.9s; }
-        .star-field i:nth-child(6)  { top: 55%; left: 66%; width: 1.5px; height: 1.5px; animation-duration: 5.0s; animation-delay: -4.2s; }
-        .star-field i:nth-child(7)  { top: 63%; left: 21%; animation-duration: 6.8s; animation-delay: -1.8s; }
-        .star-field i:nth-child(8)  { top: 72%; left: 92%; width: 2.5px; height: 2.5px; animation-duration: 5.9s; animation-delay: -3.1s; }
-        .star-field i:nth-child(9)  { top: 80%; left: 46%; width: 1.5px; height: 1.5px; animation-duration: 7.6s; animation-delay: -0.5s; }
-        .star-field i:nth-child(10) { top: 88%; left: 14%; animation-duration: 4.9s; animation-delay: -2.7s; }
-        .star-field i:nth-child(11) { top: 93%; left: 72%; width: 3px; height: 3px; animation-duration: 6.6s; animation-delay: -5.0s; }
-        .star-field i:nth-child(12) { top: 50%; left: 40%; width: 1.5px; height: 1.5px; animation-duration: 8.4s; animation-delay: -6.2s; }
-
-        @keyframes haloDrift {
-            0%   { transform: translate3d(0, 0, 0) scale(1);           opacity: .70; }
-            50%  { transform: translate3d(3%, -2.2%, 0) scale(1.08);   opacity: 1; }
-            100% { transform: translate3d(-2.2%, 2.6%, 0) scale(1.03); opacity: .84; }
-        }
-        @keyframes haloDrift2 {
-            0%   { transform: translate3d(0, 0, 0) scale(1.04);        opacity: .95; }
-            50%  { transform: translate3d(-3.4%, 2.4%, 0) scale(.96);  opacity: .52; }
-            100% { transform: translate3d(2.6%, -2%, 0) scale(1.06);   opacity: .88; }
-        }
-
-        .page { z-index: 1; }
-        #fullScreenLoader { z-index: 1200; }
-
-        /* 标题本体样式见上方「游戏化标题」区块，这里只调副文案配色 */
-        .stamp-page-header p { color: #a3969c; }
-        .hint-text { color: #9d9095; }
-
-        /* 通用按钮：深空玻璃质感 */
-        .btn-ins {
-            background: linear-gradient(135deg, rgba(23,20,22,.92) 0%, rgba(19,17,19,.92) 52%, rgba(27,21,25,.92) 100%);
-            color: #ece5e9;
-            border: 1px solid rgba(205,185,196,.16);
-            -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 8px 22px rgba(0,0,0,.55);
-        }
-        .btn-ins:active {
-            background: linear-gradient(135deg, rgba(35,30,34,.95) 0%, rgba(30,26,29,.95) 52%, rgba(42,32,39,.95) 100%);
-            transform: scale(0.98);
-        }
-        .btn-ins:disabled { background: rgba(19,17,19,.85); color: #6d6469; border-color: rgba(255,255,255,.05); }
-
-        /* ★ 主 CTA「为选定宾客调酒」：白粉呼吸光晕
-           —— 不旋转，只有一团柔和的白粉辉光在缓缓明灭 */
-        #dynamicActionBtn {
-            position: relative; overflow: visible;
-            color: #fff2f6;
-            border: 1px solid rgba(255,182,208,.30);
-            background: linear-gradient(135deg, rgba(32,21,27,.95) 0%, rgba(24,18,22,.95) 50%, rgba(38,21,30,.95) 100%);
-            animation: haloBreath 4.2s ease-in-out infinite;
-            text-shadow: 0 0 7px rgba(255,198,220,.42);
-        }
-        /* 外层柔光：径向白粉，不旋转，只做呼吸缩放 */
-        #dynamicActionBtn::before {
-            content: ''; position: absolute; inset: -3px;
-            border-radius: 33px; z-index: -1;
-            background:
-                radial-gradient(ellipse 66% 118% at 50% 50%, rgba(255,255,255,.18) 0%, rgba(255,255,255,0) 66%),
-                radial-gradient(ellipse 92% 132% at 50% 50%, rgba(255,168,206,.34) 0%, rgba(255,168,206,0) 70%);
-            filter: blur(7px);
-            animation: haloAura 4.2s ease-in-out infinite;
-        }
-        #dynamicActionBtn::after {
-            content: ''; position: absolute; inset: 0;
-            border-radius: 30px; z-index: -2;
-            box-shadow: 0 0 0 0 rgba(255,170,205,.50);
-            animation: haloPulse 3.4s ease-out infinite;
-        }
-        @keyframes haloAura {
-            0%, 100% { opacity: .55; transform: scale(0.99); }
-            50%      { opacity: .92; transform: scale(1.018); }
-        }
-        @keyframes haloBreath {
-            0%, 100% { box-shadow: inset 0 1px 0 rgba(255,255,255,.20), inset 0 0 16px rgba(255,198,222,.12),
-                                   0 0 10px rgba(255,168,206,.26), 0 0 22px rgba(255,236,244,.12), 0 10px 26px rgba(0,0,0,.55); }
-            50%      { box-shadow: inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 20px rgba(255,198,222,.22),
-                                   0 0 17px rgba(255,168,206,.42), 0 0 34px rgba(255,236,244,.22), 0 10px 26px rgba(0,0,0,.55); }
-        }
-        @keyframes haloPulse {
-            0%   { box-shadow: 0 0 0 0   rgba(255,170,205,.28); }
-            70%  { box-shadow: 0 0 0 8px rgba(255,170,205,0); }
-            100% { box-shadow: 0 0 0 0   rgba(255,170,205,0); }
-        }
-
-        /* 角色 / 模式切换 */
-        .mode-switch-btn {
-            background: rgba(21,18,20,.88); border-color: rgba(242,172,202,.34); color: #e3c4d2;
-            box-shadow: 0 0 12px rgba(255,164,202,.18), 0 5px 15px rgba(0,0,0,.5);
-        }
-        .mode-switch-btn.active {
-            background: linear-gradient(135deg, rgba(196,84,134,.92), rgba(154,62,112,.92));
-            color: #fff; box-shadow: 0 0 18px rgba(255,146,188,.42);
-        }
-        .avatar-item {
-            background: rgba(19,17,19,.88);
-            border-color: rgba(208,184,197,.16);
-            box-shadow: 0 0 10px rgba(206,146,180,.13), 0 10px 20px rgba(0,0,0,.45);
-        }
-
-        /* 材料条：玻璃拟态 + 选中霓虹 */
-        .ingredient-item {
-            background: rgba(19,17,19,.78);
-            border: 1px solid rgba(208,184,197,.12);
-            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-        }
-        .ingredient-item.selected {
-            border-color: rgba(255,184,212,.72);
-            background: linear-gradient(140deg, rgba(46,25,39,.92), rgba(35,20,30,.92));
-            box-shadow: 0 0 16px rgba(255,164,202,.42), inset 0 0 12px rgba(255,196,222,.20);
-        }
-
-        /* 删除档案：放在档案卡片内容的最底部，随卡片滚动到最下方才出现（不再固定在界面底部）；
-           圆圈用醒目的警示红，作为“提醒/危险”的代表色，不再用近黑的暗红 */
-        .archive-del-row {
-            display: flex; justify-content: center; margin-top: 16px; flex-shrink: 0;
-        }
-        .archive-del-x {
-            position: static;
-            width: 32px; height: 32px; padding: 0; border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-family: inherit; font-size: 14px; line-height: 1;
-            background: linear-gradient(140deg, #ff6b6b 0%, #e23744 100%);
-            color: #fff;
-            border: 1px solid rgba(255,255,255,.30);
-            box-shadow: 0 0 16px rgba(255,77,79,.55), inset 0 0 8px rgba(255,255,255,.18);
-            -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px);
-            cursor: pointer;
-            transition: transform .18s cubic-bezier(.16,1,.3,1), background .18s, box-shadow .18s;
-        }
-        .archive-del-x:hover {
-            background: linear-gradient(140deg, #ff8080 0%, #f0414f 100%);
-            box-shadow: 0 0 22px rgba(255,77,79,.70), inset 0 0 8px rgba(255,255,255,.25);
-        }
-        .archive-del-x:active { transform: scale(.86); background: linear-gradient(140deg, #e23744 0%, #c62828 100%); }
-
-        /* ═══ 轻提示 Toast：宿主 iframe 的 sandbox 不含 allow-modals，
-               原生 alert()/confirm() 会被浏览器忽略，一律自绘 ═══ */
-        .toast {
-            position: absolute; left: 50%; bottom: 14%; z-index: 1600;
-            transform: translateX(-50%) translateY(12px);
-            max-width: 80%; text-align: center; line-height: 1.55;
-            background: rgba(28,19,25,.93); color: #f4e7ed;
-            border: 1px solid rgba(255,178,208,.34);
-            font-size: 12px; padding: 11px 18px; border-radius: 14px;
-            box-shadow: 0 0 24px rgba(255,156,198,.28), 0 10px 26px rgba(0,0,0,.5);
-            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-            opacity: 0; pointer-events: none;
-            transition: opacity .3s ease, transform .3s cubic-bezier(.16,1,.3,1);
-        }
-        .toast.active { opacity: 1; transform: translateX(-50%) translateY(0); }
-    </style>
-</head>
-<body>
-<div class="phone-container">
-<div class="star-field" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-    <div id="fullScreenLoader"><div class="loading-spinner" style="width:24px;height:24px;margin-bottom:12px;"></div><span id="loaderText">加载中...</span></div>
-
-    <!-- 轻提示 Toast（sandbox 屏蔽了原生 alert/confirm，一律自绘） -->
-    <div class="toast" id="toastBox"></div>
-    <!-- 第一页：主页面 -->
-    <div id="page-1" class="page hidden">
-        <div class="stamp-page-header">
-            <span class="ph-ghost" aria-hidden="true">酒</span>
-            <div class="title-kicker">
-                <span class="tk-num">№ 01</span>
-                <span class="tk-rule"></span>
-                <span class="tk-jp">喫茶 MIXOLOGY</span>
-            </div>
-            <h1 class="poster-title" id="pageMainTitle"><span class="pt-a"><span class="ch-blue">K</span><span class="ch-yellow">I</span>SSA</span><span class="pt-b">SOUL MIX</span></h1>
-            <p id="pageMainSubtitle">左侧选择心仪宾客，右侧查阅调酒档案</p>
-        </div>
-        <div class="left-wheel-wrapper">
-            <button class="mode-switch-btn" id="modeSwitchBtn" title="切换：让客人为你调酒">⇄</button>
-            <div class="select-badge" id="selectBadge">0/3</div>
-            <div class="left-avatar-wheel" id="avatarWheel"></div>
-        </div>
-        <div class="right-wheel-stage">
-            <div class="stamp-wheel-track" id="stampTrack"></div>
-        </div>
-        <button class="btn-ins" id="dynamicActionBtn">为选定宾客调酒</button>
-    </div>
-    <!-- 第二页：档案详细查看页 -->
-    <div id="page-2" class="page hidden">
-        <div class="stamp-page-header">
-            <span class="ph-ghost" aria-hidden="true">憶</span>
-            <div class="title-kicker">
-                <span class="tk-num">№ 02</span>
-                <span class="tk-rule"></span>
-                <span class="tk-jp">記録 ARCHIVE</span>
-            </div>
-            <h1 class="poster-title"><span class="pt-a"><span class="ch-blue">S</span><span class="ch-yellow">A</span>VED</span><span class="pt-b">ARCHIVE</span></h1>
-            <p>已归档的灵魂调酒记录</p>
-        </div>
-        <div class="guest-info-card">
-            <div class="cocktail-preview-banner" id="infoBannerContainer">
-                <div class="cocktail-art-card">
-                    <div class="cocktail-placeholder-art" id="infoBannerEmoji">🍸</div>
-                    <div class="cocktail-art-liquid" id="infoBannerLiquid"></div>
-                    <div class="cocktail-art-glass"></div>
-                </div>
-            </div>
-            <div class="guest-info-header">
-                <h2 id="infoTitle">档案名称</h2>
-                <div class="sub" id="infoSubtitle">风味子标题</div>
-                <div class="guest-chips" id="infoGuestChips"></div>
-            </div>
-            <div class="info-section"><strong>✦ 配方结构：</strong><span id="infoRecipe"></span></div>
-            <div class="info-section"><strong>✦ 五维属性：</strong><div class="stat-bar-group" id="infoStatsGroup"></div></div>
-            <div class="info-section"><strong>✦ 调制技法：</strong><span id="infoTechnique"></span></div>
-            <div class="info-section"><strong>✦ 风味轮廓：</strong><span id="infoFlavor"></span></div>
-            <div class="info-section">
-                <strong>✦ 回想档案 / 故事（约500字）：</strong>
-                <span id="infoQuote" style="font-style: italic; color: #e5e5e0; line-height: 1.6; display: block; margin-top:4px;"></span>
-                <div class="guest-quotes-group" id="infoGuestQuotes"></div>
-            </div>
-            <div class="info-section"><strong>✦ 路人评价：</strong><div class="reviews-container" id="infoReviews"></div></div>
-            <div class="info-section"><strong>✦ 建议售价：</strong><div class="price-suggestion-box"><span class="price-label">建议零售标价</span><div class="price-value-container"><span class="price-amount" id="infoPrice">¥188</span><span class="price-badge-small" id="infoPriceBadge">夯</span></div></div></div>
-            <div class="archive-del-row"><button class="archive-del-x" id="deleteArchiveBtn" title="删除该档案" aria-label="删除该档案">✕</button></div>
-        </div>
-        <button class="btn-ins" id="backToWheelBtn">返回选择轮盘</button>
-    </div>
-    <!-- 第三页：玩家手动调酒页（随机杯型） -->
-    <div id="page-3" class="page hidden">
-        <div class="bartend-header">
-            <button class="back-btn" id="backToWheelFromBar">← 返回</button>
-            <div class="guest-tag" id="currentGuestTag">开始调酒</div>
-        </div>
-        <div class="bartend-workspace">
-            <div class="pouring-stream" id="pouringStream"></div>
-            <div class="glass-container" id="glassContainer">
-                <div class="glass-cup-body" id="glassCup">
-                    <div class="glass-rim" id="glassRim"></div>
-                    <div id="liquidLayersContainer"></div>
-                </div>
-                <div class="glass-stem-area">
-                    <div class="glass-stem" id="glassStem"></div>
-                    <div class="glass-base"></div>
-                </div>
-            </div>
-            <div class="hint-text" id="hintText">选中材料后「长按」玻璃杯缓缓注入 · 同种材料不合并、各成一层 · 新材料永远叠在最上层 · 双击杯子可倒空</div>
-        </div>
-        <div style="flex-shrink: 0;">
-            <div class="ingredients-bar" id="ingredientsBar"></div>
-            <button class="btn-ins" id="finishBtn" style="margin-top: 10px;">完成特调</button>
-        </div>
-    </div>
-    <!-- 第四页：AI 结果页 -->
-    <div id="page-4" class="page hidden">
-        <div class="stamp-page-header">
-            <span class="ph-ghost" aria-hidden="true">酔</span>
-            <div class="title-kicker">
-                <span class="tk-num">№ 03</span>
-                <span class="tk-rule"></span>
-                <span class="tk-jp">調製 RESULT</span>
-            </div>
-            <h1 class="poster-title"><span class="pt-a"><span class="ch-blue">C</span><span class="ch-yellow">O</span>CKTAIL</span><span class="pt-b">ARCHIVE</span></h1>
-            <p>专属灵魂调酒风味解构</p>
-        </div>
-        <div class="result-card">
-            <div class="cocktail-preview-banner" id="cocktailBanner">
-                <div class="cocktail-art-card">
-                    <div class="cocktail-placeholder-art" id="resBannerEmoji">🍸</div>
-                    <div class="cocktail-art-liquid" id="resBannerLiquid"></div>
-                    <div class="cocktail-art-glass"></div>
-                </div>
-            </div>
-            <div class="result-header">
-                <h2 id="resTitle">落日与灰烬</h2>
-                <div class="cocktail-subtitle" id="resSubtitle">Classic Soul Cocktail Profile</div>
-                <div class="guest-chips" id="resGuestChips"></div>
-            </div>
-            <div class="result-section"><strong>✦ 配方结构：</strong><div class="recipe-tags" id="resTags"></div></div>
-            <div class="result-section"><strong>✦ 属性评估：</strong><div class="stat-bar-group" id="resStatsGroup"></div></div>
-            <div class="result-section"><strong>✦ 调制技法：</strong><span id="resTechnique"></span></div>
-            <div class="result-section"><strong>✦ 风味轮廓：</strong><span id="resFlavor"></span></div>
-            <div class="result-section">
-                <strong>✦ 回想档案 / 故事（约500字）：</strong>
-                <div class="guest-quote-box">
-                    <div class="quote-avatar" id="resAvatarIcon">🎨</div>
-                    <div class="quote-right-content">
-                        <div class="quote-text" id="resQuote"><span class="loading-spinner"></span>等待深度回想生成（约500字）...</div>
-                        <div class="guest-quotes-group" id="resGuestQuotes"></div>
-                    </div>
-                </div>
-            </div>
-            <div class="result-section"><strong>✦ 路人评价：</strong><div class="reviews-container" id="resReviews"><span style="color:#888;">生成中...</span></div></div>
-            <div class="result-section"><strong>✦ 建议售价：</strong><div class="price-suggestion-box"><span class="price-label">建议零售标价</span><div class="price-value-container"><span class="price-amount" id="resPrice">¥188</span><span class="price-badge-small" id="resPriceBadge">夯</span></div></div></div>
-        </div>
-        <button class="btn-ins" id="restartBtn">再次开启</button>
-    </div>
-    <!-- 第五页：顾客为你特调页（不同杯型与颜色） -->
-    <div id="page-5" class="page hidden">
-        <div class="bartend-header">
-            <button class="back-btn" id="backToWheelFromMood">← 返回</button>
-            <div class="guest-tag" id="moodGuestTag">调酒师：</div>
-        </div>
-        <div class="mood-workspace">
-            <div class="mood-glass-container" id="moodGlassContainer">
-                <div class="mood-cup-body" id="moodCupBody">
-                    <div class="mood-cup-rim" id="moodCupRim"></div>
-                    <div class="mood-liquid" id="moodLiquid"></div>
-                </div>
-                <div class="mood-stem-area" id="moodStemArea">
-                    <div class="mood-stem" id="moodStem"></div>
-                    <div class="mood-base" id="moodBase"></div>
-                </div>
-            </div>
-            <div class="mood-input-box">
-                <div class="mood-input-header">
-                    <div class="user-mini-avatar" id="userMiniAvatar">👤</div>
-                    <label>✦ 描述你此刻的近期情绪或心境：</label>
-                </div>
-                <textarea id="moodInput" placeholder="例如：深夜加班有些疲惫，但内心依然在期待明天的一抹晨光..."></textarea>
-            </div>
-        </div>
-        <button class="btn-ins" id="generateMoodDrinkBtn" style="margin-top:10px;">让TA为你调制专属情绪特调</button>
-    </div>
-</div>
 <script>
+/* ═══ 调酒游戏融合层：直接同文档运行（覆盖原 iframe 版 mountGame）═══ */
+function mountGame(){
+  var r = document.getElementById('kissa-game-root');
+  if(r) r.style.display = 'flex';
+  if(typeof buildGameBridge === 'function' && !window.AiPhoneGame){
+    try{ var b = buildGameBridge(); if(b) window.AiPhoneGame = b; }catch(e){}
+  }
+}
+/* 立即提供桥接，游戏 DOMContentLoaded 后即可初始化（无需等切到调酒台） */
+if(typeof buildGameBridge === 'function' && !window.AiPhoneGame){
+  try{ var _b = buildGameBridge(); if(_b) window.AiPhoneGame = _b; }catch(e){}
+}
+</script>
+
+<script>
+(function(){
+
 // 👇 1. 直接把这段等待函数粘贴在脚本的最前面
 function waitForAiPhoneGame() {
     return new Promise((resolve) => {
@@ -2978,9 +2985,9 @@ function waitForAiPhoneGame() {
     let layerEls = [];              // 与 pouredLayers 一一对应的 DOM 层
     let currentManualCupStyle = null;
     let currentMoodCupStyle = null;
-    const pages = [document.getElementById('page-1'), document.getElementById('page-2'), document.getElementById('page-3'), document.getElementById('page-4'), document.getElementById('page-5')];
-    const loader = document.getElementById('fullScreenLoader');
-    const loaderText = document.getElementById('loaderText');
+    const pages = [document.getElementById('kg-page-1'), document.getElementById('kg-page-2'), document.getElementById('kg-page-3'), document.getElementById('kg-page-4'), document.getElementById('kg-page-5')];
+    const loader = document.getElementById('kg-fullScreenLoader');
+    const loaderText = document.getElementById('kg-loaderText');
     function showLoader(msg) { loaderText.innerText = msg; loader.classList.add('active'); }
     function hideLoader() { loader.classList.remove('active'); }
 
@@ -2992,7 +2999,7 @@ function waitForAiPhoneGame() {
        ────────────────────────────────────────────────────────── */
     let _toastTimer = null;
     function showToast(msg, ms) {
-        const t = document.getElementById('toastBox');
+        const t = document.getElementById('kg-toastBox');
         if (!t) return;
         t.innerText = msg;
         t.classList.add('active');
@@ -3063,7 +3070,7 @@ function waitForAiPhoneGame() {
         });
     }
     function updateSelectionChip() {
-        const badge = document.getElementById('selectBadge');
+        const badge = document.getElementById('kg-selectBadge');
         if (!badge) return;
         // 未选择时不显示；选了人 -> 上方浮出「已选 n/3」圆圈
         if (selectedGuests.length === 0) {
@@ -3092,23 +3099,23 @@ function waitForAiPhoneGame() {
     // 打开一条档案的详情页。抽成独立函数，供轮盘的轻点判定调用。
     function openArchiveDetail(targetArchive) {
         if (!targetArchive) return;
-        document.getElementById('infoTitle').innerText = targetArchive.title || '';
-        document.getElementById('infoSubtitle').innerText = targetArchive.subtitle || '';
-        document.getElementById('infoRecipe').innerText = targetArchive.recipeText || '';
-        document.getElementById('infoStatsGroup').innerHTML = renderStatsHtml(targetArchive.stats);
-        document.getElementById('infoTechnique').innerText = targetArchive.techniqueText || '';
-        document.getElementById('infoFlavor').innerText = targetArchive.flavorText || '';
-        document.getElementById('infoQuote').innerText = targetArchive.quoteText || '';
-        document.getElementById('infoReviews').innerHTML = renderReviewsHtml(targetArchive.reviews);
+        document.getElementById('kg-infoTitle').innerText = targetArchive.title || '';
+        document.getElementById('kg-infoSubtitle').innerText = targetArchive.subtitle || '';
+        document.getElementById('kg-infoRecipe').innerText = targetArchive.recipeText || '';
+        document.getElementById('kg-infoStatsGroup').innerHTML = renderStatsHtml(targetArchive.stats);
+        document.getElementById('kg-infoTechnique').innerText = targetArchive.techniqueText || '';
+        document.getElementById('kg-infoFlavor').innerText = targetArchive.flavorText || '';
+        document.getElementById('kg-infoQuote').innerText = targetArchive.quoteText || '';
+        document.getElementById('kg-infoReviews').innerHTML = renderReviewsHtml(targetArchive.reviews);
         // 多人共调档案：标题下展示「共调宾客」头像 chips；故事写在主回想框里（不再分三段）
         const _isGroup = targetArchive.guestNames && targetArchive.guestNames.length > 1;
         const _chips = _isGroup ? targetArchive.guestNames.map((n, i) => ({ name: n, icon: (targetArchive.guestIcons || [])[i] || '🍸' })) : null;
-        renderGuestChips(document.getElementById('infoGuestChips'), _chips, false);
-        renderGuestQuotes(document.getElementById('infoGuestQuotes'), null);
-        document.getElementById('infoPrice').innerText = targetArchive.price || "¥168";
-        document.getElementById('infoPriceBadge').innerText = targetArchive.priceBadge || "平平无奇";
-        document.getElementById('infoBannerEmoji').innerText = targetArchive.iconStr || '🍸';
-        document.getElementById('infoBannerLiquid').style.background = targetArchive.liquidColor || 'linear-gradient(180deg, #d1b499, #a3704c)';
+        renderGuestChips(document.getElementById('kg-infoGuestChips'), _chips, false);
+        renderGuestQuotes(document.getElementById('kg-infoGuestQuotes'), null);
+        document.getElementById('kg-infoPrice').innerText = targetArchive.price || "¥168";
+        document.getElementById('kg-infoPriceBadge').innerText = targetArchive.priceBadge || "平平无奇";
+        document.getElementById('kg-infoBannerEmoji').innerText = targetArchive.iconStr || '🍸';
+        document.getElementById('kg-infoBannerLiquid').style.background = targetArchive.liquidColor || 'linear-gradient(180deg, #d1b499, #a3704c)';
         viewingArchiveId = targetArchive.id;
         showPage(2);
     }
@@ -3118,8 +3125,8 @@ function waitForAiPhoneGame() {
         avatarPos += (targetAvatarPos - avatarPos) * 0.35;
         let activeArchives = getCurrentGuestArchives();
         if (activeArchives.length > 0) cardPos += (targetCardPos - cardPos) * 0.35;
-        const avatarWheel = document.getElementById('avatarWheel');
-        const stampTrack = document.getElementById('stampTrack');
+        const avatarWheel = document.getElementById('kg-avatarWheel');
+        const stampTrack = document.getElementById('kg-stampTrack');
         
         avatarWheel.innerHTML = '';
         guests.forEach((g, index) => {
@@ -3167,7 +3174,7 @@ function waitForAiPhoneGame() {
         requestAnimationFrame(renderWheelsSmoothly);
     }
     function bindEvents() {
-        const avatarWheel = document.getElementById('avatarWheel');
+        const avatarWheel = document.getElementById('kg-avatarWheel');
         const rightStage = document.querySelector('.right-wheel-stage');
         
         let isDragA = false, startYA = 0, downYA = 0, downXA = 0, downTA = 0, movedA = 0;
@@ -3233,44 +3240,44 @@ function waitForAiPhoneGame() {
             downIdxC = -1;
         });
         rightStage.addEventListener('pointercancel', () => { isDragC = false; downIdxC = -1; });
-        document.getElementById('modeSwitchBtn').addEventListener('click', function() {
+        document.getElementById('kg-modeSwitchBtn').addEventListener('click', function() {
             playMatchSound();
             isGuestMode = !isGuestMode;
             this.classList.toggle('active');
-            const _pt = document.getElementById('pageMainTitle');
+            const _pt = document.getElementById('kg-pageMainTitle');
             _pt.className = 'poster-title';
             _pt.innerHTML = '<span class="pt-a"><span class="ch-blue">K</span><span class="ch-yellow">I</span>SSA</span><span class="pt-b">SOUL MIX</span>';
-            document.getElementById('pageMainSubtitle').innerText = isGuestMode ? "当前模式：由选定客人为你调制专属情绪特调" : "左侧选择心仪宾客，右侧查阅调酒档案";
-            document.getElementById('dynamicActionBtn').innerText = isGuestMode ? "让TA为你调制专属情绪特调" : "为选定宾客调酒";
+            document.getElementById('kg-pageMainSubtitle').innerText = isGuestMode ? "当前模式：由选定客人为你调制专属情绪特调" : "左侧选择心仪宾客，右侧查阅调酒档案";
+            document.getElementById('kg-dynamicActionBtn').innerText = isGuestMode ? "让TA为你调制专属情绪特调" : "为选定宾客调酒";
             targetCardPos = 0;
         });
-        document.getElementById('dynamicActionBtn').addEventListener('click', async () => {
+        document.getElementById('kg-dynamicActionBtn').addEventListener('click', async () => {
             playCheersSound(); // 「为选定宾客调酒 / 让TA为你调制特调」→ 干杯碰杯声
             const actives = getActiveGuests();
             if (!actives.length) return;
             currentActiveGuests = actives.slice();
             const activeNames = actives.map(g => g.title).join('、');
             if (isGuestMode) {
-                document.getElementById('moodGuestTag').innerText = `调酒师：${activeNames}`;
-                document.getElementById('moodInput').value = "";
+                document.getElementById('kg-moodGuestTag').innerText = `调酒师：${activeNames}`;
+                document.getElementById('kg-moodInput').value = "";
                 
                 currentMoodCupStyle = getRandomCupStyle();
                 applyCupStyleToElement(
-                    document.getElementById('moodCupBody'),
-                    document.getElementById('moodCupRim'),
-                    document.getElementById('moodStem'),
+                    document.getElementById('kg-moodCupBody'),
+                    document.getElementById('kg-moodCupRim'),
+                    document.getElementById('kg-moodStem'),
                     currentMoodCupStyle
                 );
-                document.getElementById('moodLiquid').style.background = "linear-gradient(180deg, rgba(209,180,153,0.7), rgba(163,112,76,0.85))";
+                document.getElementById('kg-moodLiquid').style.background = "linear-gradient(180deg, rgba(209,180,153,0.7), rgba(163,112,76,0.85))";
                 showPage(5);
                 startMoodAmbientAudio(); 
             } else {
                 showLoader("正在为你准备吧台与酒材...");
                 currentManualCupStyle = getRandomCupStyle();
                 applyCupStyleToElement(
-                    document.getElementById('glassCup'),
-                    document.getElementById('glassRim'),
-                    document.getElementById('glassStem'),
+                    document.getElementById('kg-glassCup'),
+                    document.getElementById('kg-glassRim'),
+                    document.getElementById('kg-glassStem'),
                     currentManualCupStyle
                 );
                 try {
@@ -3288,8 +3295,8 @@ function waitForAiPhoneGame() {
                 }
                 pouredLayers = [];
                 layerEls = [];
-                document.getElementById('liquidLayersContainer').innerHTML = '';
-                const bar = document.getElementById('ingredientsBar');
+                document.getElementById('kg-liquidLayersContainer').innerHTML = '';
+                const bar = document.getElementById('kg-ingredientsBar');
                 bar.innerHTML = '';
                 dynamicIngredients.forEach((ing, i) => {
                     const item = document.createElement('div');
@@ -3304,22 +3311,22 @@ function waitForAiPhoneGame() {
                     bar.appendChild(item);
                 });
                 selectedIngredient = dynamicIngredients[0];
-                document.getElementById('currentGuestTag').innerText = `宾客：${activeNames}`;
+                document.getElementById('kg-currentGuestTag').innerText = `宾客：${activeNames}`;
                 hideLoader();
                 showPage(3);
             }
         });
-        document.getElementById('backToWheelBtn').addEventListener('click', () => { playMatchSound(); showPage(1); });
-        document.getElementById('backToWheelFromBar').addEventListener('click', () => { playMatchSound(); stopPourSound(); showPage(1); });
-        document.getElementById('backToWheelFromMood').addEventListener('click', () => { playMatchSound(); stopMoodAmbientAudio(); showPage(1); });
+        document.getElementById('kg-backToWheelBtn').addEventListener('click', () => { playMatchSound(); showPage(1); });
+        document.getElementById('kg-backToWheelFromBar').addEventListener('click', () => { playMatchSound(); stopPourSound(); showPage(1); });
+        document.getElementById('kg-backToWheelFromMood').addEventListener('click', () => { playMatchSound(); stopMoodAmbientAudio(); showPage(1); });
         
         let pourRAF = null;
         let currentLayerIdx = -1;        // 当前这次长按正在注入的层索引；-1 表示未在倒
-        const glassContainer = document.getElementById('glassContainer');
-        const pouringStream = document.getElementById('pouringStream');
+        const glassContainer = document.getElementById('kg-glassContainer');
+        const pouringStream = document.getElementById('kg-pouringStream');
 
         function flashHint(msg) {
-            const h = document.getElementById('hintText');
+            const h = document.getElementById('kg-hintText');
             if (!h) return;
             if (!h.dataset._orig) h.dataset._orig = h.innerText;
             h.innerText = msg;
@@ -3402,7 +3409,7 @@ function waitForAiPhoneGame() {
 
         // 保证每层都有对应的 DOM 元素（顺序 = 倒入顺序；最新层 append 到最后 → 顶部）
         function syncLayerEls() {
-            const container = document.getElementById('liquidLayersContainer');
+            const container = document.getElementById('kg-liquidLayersContainer');
             while (layerEls.length < pouredLayers.length) {
                 const el = document.createElement('div');
                 el.className = 'liquid-layer';
@@ -3416,7 +3423,7 @@ function waitForAiPhoneGame() {
         }
 
         function updateLiquidDisplay() {
-            const container = document.getElementById('liquidLayersContainer');
+            const container = document.getElementById('kg-liquidLayersContainer');
             if (pouredLayers.length === 0) {
                 container.innerHTML = '';
                 layerEls = [];
@@ -3450,12 +3457,12 @@ function waitForAiPhoneGame() {
             stopPouringAction();
             pouredLayers = [];
             layerEls = [];
-            document.getElementById('liquidLayersContainer').innerHTML = '';
+            document.getElementById('kg-liquidLayersContainer').innerHTML = '';
             flashHint('已倒空，重新调一杯吧');
         }
         glassContainer.addEventListener('dblclick', (e) => { e.preventDefault(); playKeySound(); emptyGlass(); });
         
-        document.getElementById('finishBtn').addEventListener('click', async () => {
+        document.getElementById('kg-finishBtn').addEventListener('click', async () => {
             playCheersSound(); // 「完成特调」→ 成酒时刻，同样是干杯声
             stopPourSound();
             let total = 0;
@@ -3566,9 +3573,9 @@ function waitForAiPhoneGame() {
             hideLoader();
         });
         
-        document.getElementById('generateMoodDrinkBtn').addEventListener('click', async () => {
+        document.getElementById('kg-generateMoodDrinkBtn').addEventListener('click', async () => {
             playCheersSound(); // 「让TA为你调制专属情绪特调」→ 干杯碰杯声
-            const moodText = document.getElementById('moodInput').value.trim();
+            const moodText = document.getElementById('kg-moodInput').value.trim();
             if (!moodText) {
                 showToast("请先输入你此刻的近期情绪或心境！");
                 return;
@@ -3658,7 +3665,7 @@ function waitForAiPhoneGame() {
             hideLoader();
         });
         
-        document.getElementById('restartBtn').addEventListener('click', () => { playMatchSound(); showPage(1); });
+        document.getElementById('kg-restartBtn').addEventListener('click', () => { playMatchSound(); showPage(1); });
     }
     
     // 多人共调：三位宾客同处一个故事里。抓取所有人【完整包】（含聊天历史/长期记忆），
@@ -3688,27 +3695,27 @@ function waitForAiPhoneGame() {
         data.flavorText = data.flavorText || '——';
         data.quoteText = data.quoteText || '……（这一杯的故事还没被说出口。）';
 
-        document.getElementById('resTitle').innerText = data.title;
-        document.getElementById('resSubtitle').innerText = data.subtitle;
+        document.getElementById('kg-resTitle').innerText = data.title;
+        document.getElementById('kg-resSubtitle').innerText = data.subtitle;
         
-        let tagsContainer = document.getElementById('resTags');
+        let tagsContainer = document.getElementById('kg-resTags');
         tagsContainer.innerHTML = String(data.recipeText).split(/[,，]/).map(r => `<div class="recipe-tag">${r.trim()}</div>`).join('');
         
-        document.getElementById('resStatsGroup').innerHTML = renderStatsHtml(data.stats);
-        document.getElementById('resTechnique').innerText = data.techniqueText;
-        document.getElementById('resFlavor').innerText = data.flavorText;
-        document.getElementById('resQuote').innerText = data.quoteText;
-        document.getElementById('resAvatarIcon').innerHTML = mainGuest.htmlIcon;
-        document.getElementById('resReviews').innerHTML = renderReviewsHtml(data.reviews);
+        document.getElementById('kg-resStatsGroup').innerHTML = renderStatsHtml(data.stats);
+        document.getElementById('kg-resTechnique').innerText = data.techniqueText;
+        document.getElementById('kg-resFlavor').innerText = data.flavorText;
+        document.getElementById('kg-resQuote').innerText = data.quoteText;
+        document.getElementById('kg-resAvatarIcon').innerHTML = mainGuest.htmlIcon;
+        document.getElementById('kg-resReviews').innerHTML = renderReviewsHtml(data.reviews);
         // 多人共调：在标题下方展示「共调宾客」头像 chips；故事统一写在主回想框里（不再分三段）
         const isGroup = actives.length > 1;
-        renderGuestChips(document.getElementById('resGuestChips'), isGroup ? actives.map(g => ({ name: g.title, icon: g.htmlIcon })) : null, false);
-        renderGuestQuotes(document.getElementById('resGuestQuotes'), null);
-        document.getElementById('resPrice').innerText = data.price || "¥188";
-        document.getElementById('resPriceBadge').innerText = data.priceBadge || "夯";
+        renderGuestChips(document.getElementById('kg-resGuestChips'), isGroup ? actives.map(g => ({ name: g.title, icon: g.htmlIcon })) : null, false);
+        renderGuestQuotes(document.getElementById('kg-resGuestQuotes'), null);
+        document.getElementById('kg-resPrice').innerText = data.price || "¥188";
+        document.getElementById('kg-resPriceBadge').innerText = data.priceBadge || "夯";
         
-        document.getElementById('resBannerEmoji').innerText = emojiStr;
-        document.getElementById('resBannerLiquid').style.background = liquidBg;
+        document.getElementById('kg-resBannerEmoji').innerText = emojiStr;
+        document.getElementById('kg-resBannerLiquid').style.background = liquidBg;
         
         // 归档保存
         let archiveItem = {
@@ -3748,7 +3755,7 @@ function waitForAiPhoneGame() {
         }
     }
     
-    document.getElementById('deleteArchiveBtn').addEventListener('click', async () => {
+    document.getElementById('kg-deleteArchiveBtn').addEventListener('click', async () => {
         playKeySound();
         // 按下即删，不做二次确认。
         // 优先用进入详情页时记录下的档案 id（比用轮盘浮点位置反推可靠）
@@ -3802,7 +3809,7 @@ function waitForAiPhoneGame() {
                 if (profile && profile.avatar) {
                     playerInfo.avatar = profile.avatar;
                     playerInfo.htmlIcon = `<img src="${profile.avatar}" alt="user" />`;
-                    document.getElementById('userMiniAvatar').innerHTML = `<img src="${profile.avatar}" alt="user" />`;
+                    document.getElementById('kg-userMiniAvatar').innerHTML = `<img src="${profile.avatar}" alt="user" />`;
                 }
                 
                 // 1. 增加检测注入的等待函数
@@ -3859,10 +3866,16 @@ function waitForAiPhoneGame() {
         });
     });
 
-<\/script>
-</body>
-</html>
+
+})();
 </script>
-<!--GAME_SRCDOC_END-->
+
+
+
+
+
+
+
+<!-- [merged] old srcdoc removed -->
 </body>
 </html>
