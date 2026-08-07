@@ -144,6 +144,9 @@
   .polaroid .cap{font-weight:600;margin-top:8px;font-size:14px}
   .polaroid .scene{font-size:11.5px;color:#6a6072;line-height:1.5;margin-top:3px}
   .polaroid .mt{font-size:10px;color:#a59cb0;margin-top:6px;text-align:right}
+  .polaroid .dl-btn{display:block;width:100%;margin-top:8px;padding:5px 0;border-radius:8px;
+    border:1px solid #d4c8b8;background:#f0e9dc;color:#5a4f3a;font-size:11.5px;cursor:pointer;text-align:center}
+  .polaroid .dl-btn:active{background:#e2dac9}
   /* 底部离店 */
   .foot{padding:8px 16px calc(var(--safe-bot) + 10px)}
   .leave-btn{width:100%;padding:12px;border-radius:14px;border:1px solid rgba(240,166,192,.4);
@@ -297,7 +300,7 @@ const STAFF = [
     persona:"黑珍珠酒吧的老板娘，人称「珍珠」。身材姣好，常穿红色吊带长裙（胸前别着金色BOSS铭牌），一头微卷长发随意披散。口才极好，风情万种又不失分寸——桃花与风流往事极多，但她从不说破。见多识广，说话滴水不漏又撩人，善于把气氛炒热，也善于在关键时刻收住。她习惯倚在吧台上和客人聊天，记得每个熟客的口味和故事，对今晚来的人也很快能接上话。她知道什么时候该笑、什么时候该沉默地看着你。",
     greet:"（倚在吧台上，抬眼一笑，红色吊带裙的肩带微微滑落又随手拨回）来啦？坐。老K，给TA来杯惯常的。" },
   { id:"staff_k", name:"老K", avatar:"🥃", isReal:false, fixed:true, staff:"bartender",
-    persona:"黑珍珠的招牌调酒师，沉默寡言，调酒技术精湛。他知道该说什么、不该说什么——多数时候只点头、擦杯子、把酒推到你面前。只有在调酒和真正关键的时刻才开口，一句顶十句。平常不主动插话，被点名才淡淡接一句。" }
+    persona:"黑珍珠的招牌调酒师「老K」。黑长马尾束在脑后，永远穿黑色双排扣马甲配衬衫领带和深色围裙，左胸别一枚银色调酒针。沉默寡言，调酒技术精湛到近乎艺术——摇酒、滤冰、装饰，行云流水不浪费一个动作。他知道该说什么、不该说什么——多数时候只点头、擦杯子、把酒推到你面前，眼神冷淡但手上的活从不出错。只有在调酒和真正关键的时刻才开口，一句顶十句。平常不主动插话，被点名才淡淡接一句。" }
 ];
 async function addStaff(){
   for(const s of STAFF){
@@ -773,18 +776,72 @@ function renderMoments(){
     e.textContent="今晚还没拍照。点 📸 让驻场摄影师拍一张，或写句话留念。";
     f.appendChild(e);
   }
-  state.moments.forEach(m=>{
+  state.moments.forEach((m, idx)=>{
     const c=document.createElement("div"); c.className="polaroid";
-    c.innerHTML=`<div class="ph">📷</div><div class="cap">${m.caption}</div>${m.scene?`<div class="scene">${m.scene}</div>`:""}<div class="mt">${m.time} · 黑珍珠</div>`;
+    c.innerHTML=`<div class="ph">📷</div><div class="cap">${m.caption}</div>${m.scene?`<div class="scene">${m.scene}</div>`:""}<div class="mt">${m.time} · 黑珍珠</div><button class="dl-btn" data-idx="${idx}">⬇ 保存图片</button>`;
     f.appendChild(c);
   });
   f.scrollTop=f.scrollHeight;
+  // 绑定下载按钮
+  f.querySelectorAll(".dl-btn").forEach(btn=>{
+    btn.onclick=()=>{ const idx=btn.getAttribute("data-idx"); downloadPolaroid(state.moments[Number(idx)]); };
+  });
 }
 $("#photoBtn").onclick=takePhoto;
 $("#photoBtnL").onclick=takePhoto;
 $("#momentSend").onclick=sendMoment;
 $("#momentInput").addEventListener("input",e=>{ e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,96)+"px"; });
 $("#momentInput").addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMoment(); } });
+
+/* ---------- 拍立得下载为图片 ---------- */
+function downloadPolaroid(m){
+  const W=400, H=520;
+  const cv=document.createElement("canvas"); cv.width=W; cv.height=H;
+  const ctx=cv.getContext("2d");
+  // 白色拍立得底
+  ctx.fillStyle="#fbf7ef"; ctx.fillRect(0,0,W,H);
+  // 底部留白（拍立得经典宽边）
+  const imgH=300, topY=20;
+  // 图片区：深紫渐变背景 + 酒吧氛围
+  const g=ctx.createLinearGradient(0,topY,0,topY+imgH);
+  g.addColorStop(0,"#2a2140"); g.addColorStop(1,"#3a2b52");
+  ctx.fillStyle=g; ctx.roundRect(16,topY,W-32,imgH,8); ctx.fill();
+  // 相机图标
+  ctx.font="48px serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillStyle="#e7c98b"; ctx.fillText("📷",W/2,topY+imgH/2);
+  // 文字区
+  let ty=topY+imgH+22;
+  // caption
+  ctx.font="bold 17px -apple-system,PingFang SC,Microsoft YaHei,sans-serif";
+  ctx.fillStyle="#2a2330"; ctx.textAlign="left"; ctx.textBaseline="top";
+  wrapText(ctx,m.caption||"微醺夜未央",24,ty,W-48,22);
+  ty+=ctx.measureText(m.caption||"").width?50:30;
+  // scene
+  if(m.scene){
+    ctx.font="13.5px -apple-system,PingFang SC,Microsoft YaHei,sans-serif";
+    ctx.fillStyle="#6a6072";
+    wrapText(ctx,m.scene,24,ty,W-48,19); ty+=40;
+  }
+  // 时间 + 定位
+  ctx.font="11.5px -apple-system,PingFang SC,Microsoft YaHei,sans-serif";
+  ctx.fillStyle="#a59cb0"; ctx.textAlign="right";
+  ctx.fillText((m.time||"")+" · 黑珍珠",W-24,H-18);
+  // 触发下载
+  const link=document.createElement("a");
+  link.download=`黑珍珠_${(m.caption||"photo").slice(0,12).replace(/[\\/:*?"<>|]/g,"_")}.png`;
+  link.href=cv.toDataURL("image/png"); link.click();
+}
+function wrapText(ctx,text,x,y,maxW,lineH){
+  if(!text) return;
+  const words=text.split("");
+  let line="", cy=y;
+  for(const ch of words){
+    const test=line+ch;
+    if(ctx.measureText(test).width>maxW&&line){ ctx.fillText(line,x,cy); line=ch; cy+=lineH; }
+    else line=test;
+  }
+  if(line) ctx.fillText(line,x,cy);
+}
 
 /* ---------- 离店：账单 + 记忆回写 ---------- */
 async function leaveBar(){
