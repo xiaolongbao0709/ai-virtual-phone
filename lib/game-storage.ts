@@ -560,6 +560,8 @@ export function loadGameDrafts(): GameHallDraft[] {
         id,
         title: cleanText(record.title, 80) || draft.title || "未命名游戏",
         draft,
+        publishedTemplateId: cleanText(record.publishedTemplateId, 160) || undefined,
+        hasUnpublishedChanges: record.hasUnpublishedChanges === true ? true : undefined,
         createdAt: cleanText(record.createdAt, 80) || new Date().toISOString(),
         updatedAt: cleanText(record.updatedAt, 80) || new Date().toISOString(),
       } satisfies GameHallDraft;

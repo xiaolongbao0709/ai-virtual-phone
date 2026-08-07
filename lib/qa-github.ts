@@ -134,6 +134,177 @@ export async function readQaGithubFile(config: QaGithubConfig, path: string, sig
     return { path: cleanPath, text, size: data.size ?? text.length, truncated: false };
 }
 
+export type QaGithubCommitSummary = { sha: string; message: string; author: string; date: string };
+
+/** 提交历史（可按分支/文件路径过滤）。 */
+export async function listQaGithubCommits(
+    config: QaGithubConfig,
+    opts: { branch?: string; path?: string; limit?: number },
+    signal?: AbortSignal,
+): Promise<QaGithubCommitSummary[]> {
+    const branch = opts.branch || (await resolveBranch(config, signal));
+    const params = new URLSearchParams({ sha: branch, per_page: String(Math.min(30, Math.max(1, opts.limit ?? 10))) });
+    if (opts.path) params.set("path", opts.path.replace(/^\/+/, ""));
+    const response = await ghFetch(config, `/repos/${config.owner}/${config.repo}/commits?${params}`, signal);
+    if (!response.ok) throw new Error(`获取提交历史失败：HTTP ${response.status}`);
+    const data = (await response.json()) as Array<{ sha: string; commit: { message: string; author?: { name?: string; date?: string } } }>;
+    return data.map((c) => ({
+        sha: c.sha,
+        message: c.commit.message.split("\n")[0],
+        author: c.commit.author?.name ?? "?",
+        date: c.commit.author?.date ?? "",
+    }));
+}
+
+export type QaGithubCommitDetail = {
+    sha: string;
+    message: string;
+    files: Array<{ filename: string; status: string; additions: number; deletions: number; patch?: string }>;
+};
+
+/** 单个提交的改动详情（含每个文件的 diff patch）。 */
+export async function getQaGithubCommit(config: QaGithubConfig, sha: string, signal?: AbortSignal): Promise<QaGithubCommitDetail> {
+    const response = await ghFetch(config, `/repos/${config.owner}/${config.repo}/commits/${encodeURIComponent(sha)}`, signal);
+    if (response.status === 404) throw new Error(`提交不存在：${sha}`);
+    if (!response.ok) throw new Error(`获取提交详情失败：HTTP ${response.status}`);
+    const data = (await response.json()) as {
+        sha: string;
+        commit: { message: string };
+        files?: Array<{ filename: string; status: string; additions?: number; deletions?: number; patch?: string }>;
+    };
+    return {
+        sha: data.sha,
+        message: data.commit.message,
+        files: (data.files || []).map((f) => ({
+            filename: f.filename,
+            status: f.status,
+            additions: f.additions ?? 0,
+            deletions: f.deletions ?? 0,
+            patch: f.patch,
+        })),
+    };
+}
+
+/** 分支列表（含各分支头 sha 与默认分支标记）。 */
+export async function listQaGithubBranches(
+    config: QaGithubConfig,
+    signal?: AbortSignal,
+): Promise<{ branches: Array<{ name: string; sha: string }>; defaultBranch: string }> {
+    const validation = await validateQaGithubConfig(config, signal);
+    const response = await ghFetch(config, `/repos/${config.owner}/${config.repo}/branches?per_page=100`, signal);
+    if (!response.ok) throw new Error(`获取分支列表失败：HTTP ${response.status}`);
+    const data = (await response.json()) as Array<{ name: string; commit: { sha: string } }>;
+    return {
+        branches: data.map((b) => ({ name: b.name, sha: b.commit.sha })),
+        defaultBranch: validation.defaultBranch || "main",
+    };
+}
+
+export type QaGithubPullSummary = { number: number; title: string; state: string; head: string; base: string; htmlUrl: string };
+
+/** PR 列表。 */
+export async function listQaGithubPulls(
+    config: QaGithubConfig,
+    state: "open" | "closed" | "all",
+    signal?: AbortSignal,
+): Promise<QaGithubPullSummary[]> {
+    const response = await ghFetch(config, `/repos/${config.owner}/${config.repo}/pulls?state=${state}&per_page=20`, signal);
+    if (!response.ok) throw new Error(`获取 PR 列表失败：HTTP ${response.status}`);
+    const data = (await response.json()) as Array<{
+        number: number; title: string; state: string; html_url?: string;
+        head: { ref: string }; base: { ref: string };
+    }>;
+    return data.map((p) => ({
+        number: p.number, title: p.title, state: p.state,
+        head: p.head.ref, base: p.base.ref,
+        htmlUrl: p.html_url || `https://github.com/${config.owner}/${config.repo}/pull/${p.number}`,
+    }));
+}
+
+export type QaGithubPullDetail = QaGithubPullSummary & {
+    body: string;
+    mergeable: boolean | null;
+    merged: boolean;
+    files: Array<{ filename: string; status: string; additions: number; deletions: number }>;
+};
+
+/** PR 详情 + 改动文件列表。 */
+export async function getQaGithubPull(config: QaGithubConfig, number: number, signal?: AbortSignal): Promise<QaGithubPullDetail> {
+    const base = `/repos/${config.owner}/${config.repo}/pulls/${number}`;
+    const response = await ghFetch(config, base, signal);
+    if (response.status === 404) throw new Error(`PR #${number} 不存在。`);
+    if (!response.ok) throw new Error(`获取 PR 详情失败：HTTP ${response.status}`);
+    const p = (await response.json()) as {
+        number: number; title: string; state: string; body?: string; html_url?: string;
+        mergeable?: boolean | null; merged?: boolean;
+        head: { ref: string }; base: { ref: string };
+    };
+    let files: QaGithubPullDetail["files"] = [];
+    try {
+        const filesResp = await ghFetch(config, `${base}/files?per_page=50`, signal);
+        if (filesResp.ok) {
+            const list = (await filesResp.json()) as Array<{ filename: string; status: string; additions?: number; deletions?: number }>;
+            files = list.map((f) => ({ filename: f.filename, status: f.status, additions: f.additions ?? 0, deletions: f.deletions ?? 0 }));
+        }
+    } catch {
+        // 文件列表拿不到不阻塞详情
+    }
+    return {
+        number: p.number, title: p.title, state: p.state,
+        head: p.head.ref, base: p.base.ref,
+        htmlUrl: p.html_url || `https://github.com/${config.owner}/${config.repo}/pull/${p.number}`,
+        body: p.body || "", mergeable: p.mergeable ?? null, merged: Boolean(p.merged), files,
+    };
+}
+
+export type QaGithubIssueSummary = { number: number; title: string; state: string; htmlUrl: string };
+
+/** Issue 列表（不含 PR）。 */
+export async function listQaGithubIssues(
+    config: QaGithubConfig,
+    state: "open" | "closed" | "all",
+    signal?: AbortSignal,
+): Promise<QaGithubIssueSummary[]> {
+    const response = await ghFetch(config, `/repos/${config.owner}/${config.repo}/issues?state=${state}&per_page=20`, signal);
+    if (!response.ok) throw new Error(`获取 issue 列表失败：HTTP ${response.status}`);
+    const data = (await response.json()) as Array<{ number: number; title: string; state: string; html_url?: string; pull_request?: unknown }>;
+    return data
+        .filter((i) => !i.pull_request)
+        .map((i) => ({
+            number: i.number, title: i.title, state: i.state,
+            htmlUrl: i.html_url || `https://github.com/${config.owner}/${config.repo}/issues/${i.number}`,
+        }));
+}
+
+export type QaGithubIssueDetail = QaGithubIssueSummary & {
+    body: string;
+    comments: Array<{ author: string; body: string }>;
+};
+
+/** Issue 详情 + 评论。 */
+export async function getQaGithubIssue(config: QaGithubConfig, number: number, signal?: AbortSignal): Promise<QaGithubIssueDetail> {
+    const base = `/repos/${config.owner}/${config.repo}/issues/${number}`;
+    const response = await ghFetch(config, base, signal);
+    if (response.status === 404) throw new Error(`Issue #${number} 不存在。`);
+    if (!response.ok) throw new Error(`获取 issue 详情失败：HTTP ${response.status}`);
+    const issue = (await response.json()) as { number: number; title: string; state: string; body?: string; html_url?: string };
+    let comments: QaGithubIssueDetail["comments"] = [];
+    try {
+        const commentsResp = await ghFetch(config, `${base}/comments?per_page=30`, signal);
+        if (commentsResp.ok) {
+            const list = (await commentsResp.json()) as Array<{ user?: { login?: string }; body?: string }>;
+            comments = list.map((c) => ({ author: c.user?.login ?? "?", body: c.body ?? "" }));
+        }
+    } catch {
+        // 评论拿不到不阻塞详情
+    }
+    return {
+        number: issue.number, title: issue.title, state: issue.state,
+        htmlUrl: issue.html_url || `https://github.com/${config.owner}/${config.repo}/issues/${issue.number}`,
+        body: issue.body || "", comments,
+    };
+}
+
 export type QaGithubSearchHit = { path: string; snippet?: string };
 
 /** 代码搜索。优先 GitHub 搜索 API；失败或无 PAT 时退化为文件树路径匹配。 */

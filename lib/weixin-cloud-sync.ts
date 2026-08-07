@@ -468,7 +468,9 @@ export async function testWeixinCloudAssistantOnce(): Promise<{ ok: boolean; sen
     res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, bucket: CLOUD_BACKUP_BUCKET }),
+      // debug 同时强制全量扫描一次：手动验证不吃「待回复标志」的空闲短路，
+      // 保证「拉消息 → 生成 → 回复」全链路真实跑一遍。
+      body: JSON.stringify({ token, bucket: CLOUD_BACKUP_BUCKET, debug: true }),
     });
   } catch {
     throw new Error("无法访问云函数。请确认已部署名为 weixin-assistant 的 Edge Function，并已关闭该函数的 JWT 校验。");

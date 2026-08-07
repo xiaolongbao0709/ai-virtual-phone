@@ -53,23 +53,69 @@ async function getRef(config: QaGithubConfig, branch: string, signal?: AbortSign
     return ref.object.sha;
 }
 
+function isMissingRefError(error: unknown): boolean {
+    return error instanceof Error && /→ 404/.test(error.message);
+}
+
+export type QaBranchResult = { name: string; from: string; sha: string; created: boolean };
+
+/** 从指定分支（默认仓库配置分支/默认分支）创建新分支。已存在时返回 created: false。 */
+export async function createQaBranch(
+    config: QaGithubConfig,
+    input: { name: string; from?: string },
+    signal?: AbortSignal,
+): Promise<QaBranchResult> {
+    const name = input.name.trim();
+    if (!name) throw new Error("分支名不能为空。");
+    const base = `/repos/${config.owner}/${config.repo}`;
+    try {
+        const existing = await getRef(config, name, signal);
+        return { name, from: name, sha: existing, created: false };
+    } catch (error) {
+        if (!isMissingRefError(error)) throw error;
+    }
+    let from = input.from?.trim() || (await resolveBranch(config, signal));
+    if (from === name) {
+        // 配置分支本身就是要建的分支：改从仓库默认分支切出
+        const repo = await ghJson<{ default_branch: string }>(config, base, { method: "GET" }, signal);
+        from = repo.default_branch || "main";
+    }
+    const fromSha = await getRef(config, from, signal);
+    await ghJson(
+        config,
+        `${base}/git/refs`,
+        { method: "POST", body: JSON.stringify({ ref: `refs/heads/${name}`, sha: fromSha }) },
+        signal,
+    );
+    return { name, from, sha: fromSha, created: true };
+}
+
 /**
  * 提交多个文件到指定分支（默认目标分支）。走 Git Data API：
  * 为每个文件建 blob → 建 tree（base_tree 保留其它文件）→ 建 commit → 更新 ref。
+ * 目标分支不存在时自动从配置分支/默认分支创建。
  */
 export async function commitQaFiles(
     config: QaGithubConfig,
-    input: { message: string; files: QaCommitFile[]; branch?: string },
+    input: { message: string; files: QaCommitFile[]; deletes?: string[]; branch?: string },
     signal?: AbortSignal,
 ): Promise<QaCommitResult> {
-    if (!input.files.length) throw new Error("没有要提交的文件。");
+    const deletes = (input.deletes ?? []).map((p) => p.replace(/^\/+/, "")).filter(Boolean);
+    if (!input.files.length && !deletes.length) throw new Error("没有要提交的文件。");
     const branch = input.branch || (await resolveBranch(config, signal));
     const base = `/repos/${config.owner}/${config.repo}`;
 
-    const parentSha = await getRef(config, branch, signal);
+    let parentSha: string;
+    try {
+        parentSha = await getRef(config, branch, signal);
+    } catch (error) {
+        if (!isMissingRefError(error) || !input.branch) throw error;
+        // 指定的目标分支不存在：从配置分支/默认分支自动创建
+        parentSha = (await createQaBranch(config, { name: branch }, signal)).sha;
+    }
     const parentCommit = await ghJson<{ tree: { sha: string } }>(config, `${base}/git/commits/${parentSha}`, { method: "GET" }, signal);
 
-    const treeItems = [];
+    const treeItems: Array<{ path: string; mode: string; type: string; sha: string | null }> = [];
     for (const file of input.files) {
         const blob = await ghJson<{ sha: string }>(
             config,
@@ -78,6 +124,10 @@ export async function commitQaFiles(
             signal,
         );
         treeItems.push({ path: file.path.replace(/^\/+/, ""), mode: "100644", type: "blob", sha: blob.sha });
+    }
+    // 删除：tree 条目 sha 为 null 即从 base_tree 中移除该文件
+    for (const path of deletes) {
+        treeItems.push({ path, mode: "100644", type: "blob", sha: null });
     }
 
     const tree = await ghJson<{ sha: string }>(
@@ -106,8 +156,74 @@ export async function commitQaFiles(
         branch,
         parentSha,
         htmlUrl: commit.html_url || `https://github.com/${config.owner}/${config.repo}/commit/${commit.sha}`,
-        fileCount: input.files.length,
+        fileCount: input.files.length + deletes.length,
     };
+}
+
+/** 删除分支（默认分支与配置分支受保护，拒绝删除）。 */
+export async function deleteQaBranch(config: QaGithubConfig, name: string, signal?: AbortSignal): Promise<void> {
+    const branch = name.trim();
+    if (!branch) throw new Error("分支名不能为空。");
+    const repo = await ghJson<{ default_branch: string }>(config, `/repos/${config.owner}/${config.repo}`, { method: "GET" }, signal);
+    if (branch === repo.default_branch) throw new Error(`「${branch}」是默认分支，拒绝删除。`);
+    if (config.branch && branch === config.branch) throw new Error(`「${branch}」是工坊当前配置的工作分支，先在仓库设置里切走再删。`);
+    const response = await fetch(
+        `${apiBase(config)}/repos/${config.owner}/${config.repo}/git/refs/heads/${encodeURIComponent(branch)}`,
+        { method: "DELETE", headers: writeHeaders(config), signal },
+    );
+    if (response.status === 404 || response.status === 422) throw new Error(`分支「${branch}」不存在。`);
+    if (!response.ok) throw new Error(`删除分支失败：HTTP ${response.status}`);
+}
+
+export type QaPullResult = { number: number; htmlUrl: string };
+
+/** 创建 Pull Request。 */
+export async function createQaPullRequest(
+    config: QaGithubConfig,
+    input: { title: string; head: string; base?: string; body?: string },
+    signal?: AbortSignal,
+): Promise<QaPullResult> {
+    const base = input.base?.trim() || (await resolveBranch(config, signal));
+    const pull = await ghJson<{ number: number; html_url?: string }>(
+        config,
+        `/repos/${config.owner}/${config.repo}/pulls`,
+        { method: "POST", body: JSON.stringify({ title: input.title, head: input.head, base, body: input.body || "" }) },
+        signal,
+    );
+    return {
+        number: pull.number,
+        htmlUrl: pull.html_url || `https://github.com/${config.owner}/${config.repo}/pull/${pull.number}`,
+    };
+}
+
+/** 合并 Pull Request。 */
+export async function mergeQaPullRequest(
+    config: QaGithubConfig,
+    input: { number: number; method?: "merge" | "squash" | "rebase" },
+    signal?: AbortSignal,
+): Promise<{ merged: boolean; sha?: string; message: string }> {
+    const result = await ghJson<{ merged?: boolean; sha?: string; message?: string }>(
+        config,
+        `/repos/${config.owner}/${config.repo}/pulls/${input.number}/merge`,
+        { method: "PUT", body: JSON.stringify({ merge_method: input.method || "merge" }) },
+        signal,
+    );
+    return { merged: Boolean(result.merged), sha: result.sha, message: result.message || "" };
+}
+
+/** 更新 issue：追加评论和/或开关状态。 */
+export async function updateQaIssue(
+    config: QaGithubConfig,
+    input: { number: number; comment?: string; state?: "open" | "closed" },
+    signal?: AbortSignal,
+): Promise<void> {
+    const base = `/repos/${config.owner}/${config.repo}/issues/${input.number}`;
+    if (input.comment?.trim()) {
+        await ghJson(config, `${base}/comments`, { method: "POST", body: JSON.stringify({ body: input.comment }) }, signal);
+    }
+    if (input.state) {
+        await ghJson(config, base, { method: "PATCH", body: JSON.stringify({ state: input.state }) }, signal);
+    }
 }
 
 export type QaIssueResult = { number: number; htmlUrl: string };

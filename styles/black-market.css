@@ -2084,14 +2084,19 @@
   gap: 8px;
 }
 
-.cp-black-market-studio-tabs.cp-black-market-studio-tabs-4 {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+/* 草稿卡片发布状态标签：关联共享档案后亮绿 */
+.cp-black-market-published-card span[data-pub="yes"] {
+  color: #79d99a;
 }
 
-.cp-black-market-studio-tabs-4 button {
-  letter-spacing: 0.08em;
-  padding: 0 2px;
+/* 关联草稿在上次发布后又存过草稿：提示有未提交的本机改动（与「已发布」标签同款同色） */
+.cp-bm-dirty-hint {
+  margin-left: 8px;
+  color: #79d99a;
+  font: 800 calc(9px*var(--app-text-scale,1)) "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-style: normal;
 }
 
 .cp-black-market-studio-tabs button {

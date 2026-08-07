@@ -304,7 +304,7 @@ export default function MusicApp({ onClose }: Props) {
                     </button>
                 </div>
                 <div className="music-header-title">
-                    {dailyView ? "每日推荐" : tab === "recommend" ? "" : tab === "search" ? "搜索" : tab === "mine" ? "我的" : "本地音乐"}
+                    {dailyView ? "每日推荐" : activePlaylist && tab === "recommend" ? "歌单详情" : tab === "recommend" ? "" : tab === "search" ? "搜索" : tab === "mine" ? "我的" : "本地音乐"}
                 </div>
                 <div className="music-header-right">
                     <button className="music-header-action" onClick={() => setShowSettings(true)} title="设置">
@@ -324,6 +324,18 @@ export default function MusicApp({ onClose }: Props) {
                     onPlayNetease={handlePlayNetease}
                     onPlayAll={handlePlayAllNetease}
                 />
+            ) : activePlaylist ? (
+                <PlaylistsTab
+                    player={player}
+                    formatTime={formatTime}
+                    onPlayNetease={handlePlayNetease}
+                    onPlayAll={handlePlayAllNetease}
+                    activePlaylist={activePlaylist}
+                    setActivePlaylist={setActivePlaylist}
+                    playlists={playlists}
+                    loading={playlistsLoading}
+                    onToast={showMusicToast}
+                />
             ) : (
                 <RecommendTab
                     formatTime={formatTime}
@@ -331,10 +343,7 @@ export default function MusicApp({ onClose }: Props) {
                     onPlayAll={handlePlayAllNetease}
                     onGoSearch={() => setTab("search")}
                     onOpenDaily={setDailyView}
-                    onOpenPlaylist={(playlist) => {
-                        setActivePlaylist(playlist);
-                        setTab("mine");
-                    }}
+                    onOpenPlaylist={setActivePlaylist}
                 />
             ))}
 

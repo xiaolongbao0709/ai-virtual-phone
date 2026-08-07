@@ -26,6 +26,8 @@ const CUSTOM_APP_DATA_PREFIX = "ai_phone_custom_app_data_v1:";
 const CUSTOM_APP_TIMELINE_PREFIX = "ai_phone_custom_app_timeline_v1:";
 
 export const CUSTOM_APPS_UPDATED_EVENT = "ai-phone-custom-apps-updated";
+/** 请求桌面为某个已安装应用摆放图标（detail: { appId }）。桌面 shell 监听并落位。 */
+export const CUSTOM_APP_PLACE_DESKTOP_EVENT = "ai-phone-custom-app-place-desktop";
 const GENERIC_PRIMARY_TAGS = new Set(["chat", "text", "custom_app", "group_chat"]);
 
 registerKvMigration(CUSTOM_APPS_KEY);
@@ -751,6 +753,7 @@ function normalizeInstalledApp(raw: unknown): InstalledCustomApp | null {
       installedAt: cleanText(record.installedAt, 80) || new Date().toISOString(),
       updatedAt: cleanText(record.updatedAt, 80) || new Date().toISOString(),
       marketItemId: cleanText(record.marketItemId, 160) || undefined,
+      hasUnpublishedChanges: record.hasUnpublishedChanges === true ? true : undefined,
     };
   } catch {
     return null;

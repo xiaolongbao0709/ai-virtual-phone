@@ -958,6 +958,25 @@
   background: rgba(196, 92, 110, 0.12);
 }
 
+/* 本地测试：未上架（没有关联的市场版） */
+.am-list-status[data-status="offline"] {
+  color: #7a8494;
+  background: rgba(120, 132, 150, 0.12);
+}
+
+/* 本地测试：关联市场版后本机改过还没提交更新（与「已上架」徽标同款同色） */
+.am-dirty-hint {
+  flex: 0 0 auto;
+  padding: 5px 11px;
+  border-radius: 999px;
+  color: #3f8d63;
+  background: rgba(70, 170, 110, 0.12);
+  font-style: normal;
+  font-size: calc(11px * var(--app-text-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .am-list-status-corner {
   position: absolute;
   top: -2px;

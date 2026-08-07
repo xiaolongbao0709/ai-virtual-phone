@@ -62,6 +62,7 @@ import {
 } from "@/lib/custom-app-tool-runtime";
 import {
   CUSTOM_APPS_UPDATED_EVENT,
+  CUSTOM_APP_PLACE_DESKTOP_EVENT,
   loadInstalledCustomApps,
 } from "@/lib/custom-app-storage";
 import {
@@ -1393,6 +1394,19 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     return () => window.removeEventListener(CUSTOM_APPS_UPDATED_EVENT, refreshCustomApps);
   }, []);
 
+  // 其他模块（如工坊 agent 装应用）请求把已安装应用的图标摆上桌面
+  const handleInstallCustomAppToDesktopRef = useRef<((app: InstalledCustomApp) => void) | null>(null);
+  useEffect(() => {
+    const placeHandler = (e: Event) => {
+      const appId = (e as CustomEvent).detail?.appId;
+      if (typeof appId !== "string" || !appId) return;
+      const app = loadInstalledCustomApps().find(item => item.id === appId);
+      if (app) handleInstallCustomAppToDesktopRef.current?.(app);
+    };
+    window.addEventListener(CUSTOM_APP_PLACE_DESKTOP_EVENT, placeHandler);
+    return () => window.removeEventListener(CUSTOM_APP_PLACE_DESKTOP_EVENT, placeHandler);
+  }, []);
+
   useEffect(() => {
     const refreshHostState = () => setCustomAppBadges(loadCustomAppBadges());
     refreshHostState();
@@ -2040,6 +2054,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       window.setTimeout(() => setCurrentPageIndex(Math.max(0, (placedPageNumber ?? 1) - 1)), 0);
     }
   }, []);
+  handleInstallCustomAppToDesktopRef.current = handleInstallCustomAppToDesktop;
 
   // Allow other components to switch apps via custom event
   const [chatInitSessionId, setChatInitSessionId] = useState<string | null>(null);

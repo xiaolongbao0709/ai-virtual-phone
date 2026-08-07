@@ -4519,16 +4519,26 @@
   transform: scale(0.98);
 }
 
-/* 创作工坊：三 tab（草稿箱 / 已发布 / 本机测试） */
-.game-studio-tabs.game-studio-tabs-3 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+/* 草稿卡片发布状态标签：已发布(绿) / 未发布(灰)，关联共享大厅条目后翻绿 */
+.game-studio-list-copy span[data-pub="yes"] {
+  background: #dcfce7;
+  color: #15803d;
 }
-.game-studio-tabs.game-studio-tabs-3::before {
-  left: calc(16.666% - 17px);
+.game-studio-list-copy span[data-pub="no"] {
+  background: rgba(120, 132, 150, 0.14);
+  color: #64748b;
 }
-.game-studio-tabs.game-studio-tabs-3[data-active-index="1"]::before {
-  left: calc(50% - 17px);
-}
-.game-studio-tabs.game-studio-tabs-3[data-active-index="2"]::before {
-  left: calc(83.333% - 17px);
+
+/* 关联草稿在上次发布后又存过草稿：提示有未提交的本机改动（与「已发布」标签同款同色） */
+.game-studio-list-copy .game-dirty-hint {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: #dcfce7;
+  color: #15803d;
+  font-style: normal;
+  font-size: calc(9px * var(--app-text-scale, 1));
+  font-weight: 900;
+  line-height: 1.45;
+  white-space: nowrap;
 }

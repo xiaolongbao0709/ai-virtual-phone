@@ -4,14 +4,28 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
-import { Check, ChevronLeft, ChevronRight, Copy, Github, History, Loader2, Plus, Send, Square, Trash2, Wrench, X } from "lucide-react";
+import { AppWindow, ArrowUp, BrushCleaning, Check, ChevronLeft, ChevronRight, Copy, Drama, Gamepad2, Github, Loader2, Menu, Play, Plus, Square, Trash2, Wrench, X } from "lucide-react";
+import { mdiHammerWrench } from "@mdi/js";
+import { CustomAppRunner } from "@/components/app-market/custom-app-runner";
+import { GameHubApp } from "@/components/game/game-hub-app";
+import { BlackMarketApp } from "@/components/shopping/black-market-app";
+import { getInstalledCustomApp } from "@/lib/custom-app-storage";
+import type { QaCreatedContent } from "@/lib/qa-agent-tools";
 import {
   applyQaCommit,
   cancelQaCommit,
+  clearQaToolHistory,
   createQaSession,
   deleteQaSession,
+  getQaActiveContextChars,
   getQaChatSnapshot,
+  getQaContextBudgetChars,
+  hasQaToolHistory,
   hydrateQaChat,
+  QA_CONTEXT_BUDGET_MAX,
+  QA_CONTEXT_BUDGET_MIN,
+  QA_DEFAULT_CONTEXT_BUDGET_CHARS,
+  setQaContextBudgetChars,
   retryQaMessage,
   revertQaAppliedCommit,
   sendQaMessage,
@@ -22,6 +36,18 @@ import {
   type QaSession,
   type QaToolStatus,
 } from "@/lib/qa-chat-store";
+import {
+  getQaPageChars,
+  setQaPageChars,
+  QA_DEFAULT_PAGE_CHARS,
+  QA_PAGE_CHARS_MIN,
+  QA_PAGE_CHARS_MAX,
+  getQaMaxRounds,
+  setQaMaxRounds,
+  QA_DEFAULT_MAX_ROUNDS,
+  QA_MAX_ROUNDS_MIN,
+  QA_MAX_ROUNDS_MAX,
+} from "@/lib/qa-prefs";
 import { resolveQaApiConfig } from "@/lib/qa-agent-engine";
 import {
   loadQaGithubConfig,
@@ -43,6 +69,7 @@ const SUGGESTIONS = [
   "聊天没有回复怎么排查？",
   "怎么部署到 Netlify / Vercel？",
   "数据存在哪里，怎么备份？",
+  "帮我写个小游戏装到本机",
 ];
 
 function formatRelativeTime(ts: number): string {
@@ -131,12 +158,15 @@ function QaCommitCard({ msg }: { msg: QaMsg }) {
         <span className="qa-commit-title">
           {status === "applied" ? "已提交" : status === "reverted" ? "已撤销" : status === "canceled" ? "已取消" : "修改提案"}
         </span>
-        <span className="qa-commit-branch">{proposal.branch || "默认分支"} · {files.length} 个文件</span>
+        <span className="qa-commit-branch">{proposal.branch || "默认分支"} · {files.length + (proposal.deletes?.length ?? 0)} 个文件</span>
       </div>
       <div className="qa-commit-msg">{proposal.message}</div>
       <ul className="qa-commit-files">
         {files.map((f) => (
           <li key={f.path}>{f.path}</li>
+        ))}
+        {(proposal.deletes ?? []).map((path) => (
+          <li key={`del-${path}`} className="qa-commit-file-delete">− {path}（删除）</li>
         ))}
       </ul>
       {error && <div className="qa-commit-error">{error}</div>}
@@ -210,11 +240,22 @@ function QaToolRow({ tool }: { tool: QaToolStatus }) {
   );
 }
 
-function QaMessageItem({ msg, isStreaming, onRetry }: { msg: QaMsg; isStreaming: boolean; onRetry: (id: string) => void }) {
+function QaMessageItem({ msg, isStreaming, onRetry, onViewImage }: { msg: QaMsg; isStreaming: boolean; onRetry: (id: string) => void; onViewImage: (url: string) => void }) {
   if (msg.role === "user") {
     return (
       <div className="qa-msg-user-row">
-        <div className="qa-msg-user">{msg.content}</div>
+        <div className="qa-msg-user">
+          {msg.images && msg.images.length > 0 && (
+            <div className="qa-msg-images">
+              {msg.images.map((url, i) => (
+                <button key={i} type="button" className="qa-msg-image" onClick={() => onViewImage(url)} aria-label="查看图片">
+                  <img src={url} alt="" />
+                </button>
+              ))}
+            </div>
+          )}
+          {msg.content}
+        </div>
       </div>
     );
   }
@@ -230,7 +271,7 @@ function QaMessageItem({ msg, isStreaming, onRetry }: { msg: QaMsg; isStreaming:
         </div>
       )}
       {thinkingOnly ? (
-        <div className="qa-thinking">{msg.reasoning ? "正在思考…" : "正在生成…"}</div>
+        <div className="qa-thinking">{msg.toolDrafting ? "正在编写工具调用…" : msg.reasoning ? "正在思考…" : "正在生成…"}</div>
       ) : (
         <div className="qa-markdown">
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={QA_MARKDOWN_COMPONENTS}>
@@ -239,6 +280,10 @@ function QaMessageItem({ msg, isStreaming, onRetry }: { msg: QaMsg; isStreaming:
           {isStreaming && <span className="qa-cursor" />}
         </div>
       )}
+      {isStreaming && msg.toolDrafting && !thinkingOnly && (
+        <div className="qa-thinking qa-tool-drafting">正在编写工具调用…</div>
+      )}
+      {msg.streamNote && <div className="qa-msg-note">{msg.streamNote}</div>}
       {msg.pendingCommit && <QaCommitCard msg={msg} />}
       {msg.aborted && <div className="qa-msg-note">已停止生成</div>}
       {msg.error && (
@@ -261,55 +306,157 @@ function QaSessionDrawer({
   onSelect,
   onDelete,
   onCreate,
-  onClose,
+  onOpenSettings,
 }: {
   sessions: QaSession[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onCreate: () => void;
-  onClose: () => void;
+  onOpenSettings: () => void;
 }) {
   return (
-    <div className="qa-drawer-backdrop" onClick={onClose}>
-      <aside className="qa-drawer" onClick={(e) => e.stopPropagation()}>
-        <div className="qa-drawer-head">
-          <span className="qa-drawer-title">对话记录</span>
-          <button type="button" className="qa-icon-btn" onClick={onClose} aria-label="关闭">
-            <X size={16} />
-          </button>
-        </div>
+    <aside className="qa-drawer">
+      <div className="qa-drawer-head">
+        <span className="qa-drawer-title">对话记录</span>
+      </div>
+      <div className="qa-drawer-list hide-scrollbar">
+        {sessions.length === 0 && <div className="qa-drawer-empty">还没有对话</div>}
+        {sessions.map((session) => (
+          <div
+            key={session.id}
+            className={`qa-drawer-item ${session.id === activeId ? "is-active" : ""}`}
+            onClick={() => onSelect(session.id)}
+          >
+            <div className="qa-drawer-item-main">
+              <span className="qa-drawer-item-title">{session.title}</span>
+              <span className="qa-drawer-item-time">{formatRelativeTime(session.updatedAt)}</span>
+            </div>
+            <button
+              type="button"
+              className="qa-icon-btn qa-drawer-item-delete"
+              aria-label="删除对话"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(session.id);
+              }}
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="qa-drawer-foot">
+        <button type="button" className="qa-drawer-new qa-drawer-settings" onClick={onOpenSettings}>
+          <Wrench size={15} strokeWidth={2} />
+          <span>工坊配置</span>
+        </button>
         <button type="button" className="qa-drawer-new" onClick={onCreate}>
-          <Plus size={15} />
+          <Plus size={16} strokeWidth={2} />
           <span>新对话</span>
         </button>
-        <div className="qa-drawer-list hide-scrollbar">
-          {sessions.length === 0 && <div className="qa-drawer-empty">还没有对话</div>}
-          {sessions.map((session) => (
-            <div
-              key={session.id}
-              className={`qa-drawer-item ${session.id === activeId ? "is-active" : ""}`}
-              onClick={() => onSelect(session.id)}
-            >
-              <div className="qa-drawer-item-main">
-                <span className="qa-drawer-item-title">{session.title}</span>
-                <span className="qa-drawer-item-time">{formatRelativeTime(session.updatedAt)}</span>
-              </div>
-              <button
-                type="button"
-                className="qa-icon-btn qa-drawer-item-delete"
-                aria-label="删除对话"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(session.id);
-                }}
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))}
+      </div>
+    </aside>
+  );
+}
+
+// ── 工坊配置面板 ─────────────────────────────────────
+
+function QaSettingsSheet({ onClose, onNotice }: { onClose: () => void; onNotice?: (msg: string) => void }) {
+  const [budget, setBudget] = useState(() => String(getQaContextBudgetChars()));
+  const [pageChars, setPageChars] = useState(() => String(getQaPageChars()));
+  const [maxRounds, setMaxRounds] = useState(() => String(getQaMaxRounds()));
+  const usedChars = getQaActiveContextChars();
+  const pct = Math.round((usedChars / getQaContextBudgetChars()) * 100);
+
+  const save = () => {
+    const parsed = Number(budget);
+    if (!Number.isFinite(parsed) || parsed < QA_CONTEXT_BUDGET_MIN || parsed > QA_CONTEXT_BUDGET_MAX) {
+      onNotice?.(`预算需为 ${QA_CONTEXT_BUDGET_MIN.toLocaleString()} - ${QA_CONTEXT_BUDGET_MAX.toLocaleString()} 之间的数字。`);
+      return;
+    }
+    const parsedPage = Number(pageChars);
+    if (!Number.isFinite(parsedPage) || parsedPage < QA_PAGE_CHARS_MIN || parsedPage > QA_PAGE_CHARS_MAX) {
+      onNotice?.(`单页字符数需为 ${QA_PAGE_CHARS_MIN.toLocaleString()} - ${QA_PAGE_CHARS_MAX.toLocaleString()} 之间的数字。`);
+      return;
+    }
+    const parsedRounds = Number(maxRounds);
+    if (!Number.isFinite(parsedRounds) || parsedRounds < QA_MAX_ROUNDS_MIN || parsedRounds > QA_MAX_ROUNDS_MAX) {
+      onNotice?.(`工具调用上限需为 ${QA_MAX_ROUNDS_MIN} - ${QA_MAX_ROUNDS_MAX} 之间的数字。`);
+      return;
+    }
+    setQaContextBudgetChars(parsed);
+    setQaPageChars(parsedPage);
+    setQaMaxRounds(parsedRounds);
+    onNotice?.("已保存工坊配置。");
+    onClose();
+  };
+
+  const reset = () => {
+    setQaContextBudgetChars(null);
+    setQaPageChars(null);
+    setQaMaxRounds(null);
+    setBudget(String(QA_DEFAULT_CONTEXT_BUDGET_CHARS));
+    setPageChars(String(QA_DEFAULT_PAGE_CHARS));
+    setMaxRounds(String(QA_DEFAULT_MAX_ROUNDS));
+    onNotice?.("已恢复默认配置。");
+  };
+
+  return (
+    <div className="qa-devnotice-backdrop" onClick={onClose}>
+      <div className="qa-devnotice" role="dialog" aria-label="工坊配置" onClick={(e) => e.stopPropagation()}>
+        <div className="qa-devnotice-title">工坊配置</div>
+        <label className="qa-settings-field">
+          <span>上下文预算（字符）</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={QA_CONTEXT_BUDGET_MIN}
+            max={QA_CONTEXT_BUDGET_MAX}
+            step={1000}
+            value={budget}
+            onChange={(e) => setBudget(e.target.value)}
+          />
+        </label>
+        <div className="qa-settings-hint">
+          上下文满 100% 时自动压缩成摘要并重新累计。中文约 1 字符 ≈ 1 token；默认 {QA_DEFAULT_CONTEXT_BUDGET_CHARS.toLocaleString()}，小上下文（32k）模型建议 30000–50000。
         </div>
-      </aside>
+        <div className="qa-settings-hint">当前会话已用 {usedChars.toLocaleString()} 字符（约 {pct}%）。</div>
+        <label className="qa-settings-field">
+          <span>单页读取字符数</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={QA_PAGE_CHARS_MIN}
+            max={QA_PAGE_CHARS_MAX}
+            step={1000}
+            value={pageChars}
+            onChange={(e) => setPageChars(e.target.value)}
+          />
+        </label>
+        <div className="qa-settings-hint">
+          小坊翻页读答疑文档 / 本机内容 / 仓库源码时，每页返回的字符数。默认 {QA_DEFAULT_PAGE_CHARS.toLocaleString()}；调大读得快但更占上下文，小上下文模型建议调小。
+        </div>
+        <label className="qa-settings-field">
+          <span>单轮工具调用上限（次）</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={QA_MAX_ROUNDS_MIN}
+            max={QA_MAX_ROUNDS_MAX}
+            step={1}
+            value={maxRounds}
+            onChange={(e) => setMaxRounds(e.target.value)}
+          />
+        </label>
+        <div className="qa-settings-hint">
+          一次提问里小坊最多连续执行多少轮工具，用完会提示「回复继续」。默认 {QA_DEFAULT_MAX_ROUNDS}；复杂任务（写游戏、改代码）可调大，想控制 token 消耗可调小。
+        </div>
+        <div className="qa-devnotice-actions is-row">
+          <button type="button" className="qa-devnotice-btn" onClick={reset}>恢复默认</button>
+          <button type="button" className="qa-devnotice-btn is-primary" onClick={save}>保存</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -376,11 +523,11 @@ function QaRepoSheet({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
           </p>
           <label className="qa-field">
             <span className="qa-field-label">Owner（用户名 / 组织）</span>
-            <input className="qa-input" value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="xiaolongbao0709" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+            <input className="qa-input" value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例：octocat" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
           </label>
           <label className="qa-field">
             <span className="qa-field-label">Repo（仓库名）</span>
-            <input className="qa-input" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="ai-virtual-phone" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+            <input className="qa-input" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="例：hello-world" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
           </label>
           <label className="qa-field">
             <span className="qa-field-label">分支（可选，默认仓库默认分支）</span>
@@ -390,7 +537,7 @@ function QaRepoSheet({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
             <span className="qa-field-label">Fine-grained PAT（私有仓库或搜索代码需要）</span>
             <input className="qa-input" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="github_pat_…" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
             <span className="qa-field-hint">
-              GitHub → Settings → Developer settings → Fine-grained tokens。只查代码勾 Contents: Read；要让工坊改代码勾 Contents: Read and write。
+              GitHub → Settings → Menu 按钮 → Developer settings → Personal access tokens → Fine-grained tokens。创建时 Repository access 记得勾选目标仓库；Permissions 只需添加 Contents 一项——只查代码选 Read-only，要让工坊改代码选 Read and write（Metadata 会自动带上，其余权限都不用勾）。
             </span>
           </label>
           <div className="qa-field">
@@ -437,22 +584,68 @@ function QaRepoSheet({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
 
 // ── App 本体 ─────────────────────────────────────────
 
-export function PhoneQaApp({ onClose }: PhoneQaAppProps) {
+export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
   const snapshot = useSyncExternalStore(subscribeQaChat, getQaChatSnapshot, getQaChatSnapshot);
   const [input, setInput] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [repoSheetOpen, setRepoSheetOpen] = useState(false);
   const [repoConnected, setRepoConnected] = useState(false);
-  const [devNoticeOpen, setDevNoticeOpen] = useState(true);
+  const [clearToolsOpen, setClearToolsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [viewerImage, setViewerImage] = useState<string | null>(null);
+  const [visionEnabled, setVisionEnabled] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [apiReady, setApiReady] = useState(true);
+  const [modelName, setModelName] = useState("");
+  const [repoWritable, setRepoWritable] = useState(false);
+  const [writeMode, setWriteMode] = useState<"confirm" | "auto">("confirm");
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const stickToBottomRef = useRef(true);
 
+  const refreshComposerMeta = useCallback(() => {
+    setApiReady(resolveQaApiConfig() != null);
+    setModelName(resolveQaApiConfig()?.defaultModel ?? "");
+    setVisionEnabled(resolveQaApiConfig()?.enableImageRecognition === true);
+    const gh = loadQaGithubConfig();
+    setRepoConnected(gh != null);
+    setRepoWritable(Boolean(gh?.token));
+    setWriteMode(gh?.writeMode ?? "confirm");
+  }, []);
+
   useEffect(() => {
     void hydrateQaChat();
-    setApiReady(resolveQaApiConfig() != null);
-    setRepoConnected(loadQaGithubConfig() != null);
+    refreshComposerMeta();
+  }, [refreshComposerMeta]);
+
+  // 清理原生 tool 调用历史（防报错）：与小卷同款——移除上下文里的工具记录与原生元数据
+  const handleClearToolHistory = useCallback(() => {
+    if (snapshot.isGenerating) {
+      onNotice?.("小坊正在执行，完成后再清理。");
+      return;
+    }
+    if (!hasQaToolHistory()) {
+      onNotice?.("没有可清理的工具调用历史。");
+      return;
+    }
+    setClearToolsOpen(true);
+  }, [snapshot.isGenerating, onNotice]);
+
+  const confirmClearToolHistory = useCallback(() => {
+    setClearToolsOpen(false);
+    const result = clearQaToolHistory();
+    onNotice?.(result && result.removed + result.cleaned > 0
+      ? `已清理 ${result.removed} 条工具记录，整理 ${result.cleaned} 条消息。`
+      : "没有可清理的工具调用历史。");
+  }, [onNotice]);
+
+  const toggleWriteMode = useCallback(() => {
+    const gh = loadQaGithubConfig();
+    if (!gh) return;
+    const next = gh.writeMode === "auto" ? "confirm" : "auto";
+    saveQaGithubConfig({ ...gh, writeMode: next });
+    setWriteMode(next);
   }, []);
 
   const activeSession = useMemo(
@@ -460,6 +653,13 @@ export function PhoneQaApp({ onClose }: PhoneQaAppProps) {
     [snapshot.sessions, snapshot.activeSessionId],
   );
   const messages = useMemo(() => activeSession?.messages ?? [], [activeSession]);
+  const createdContent = useMemo(() => activeSession?.createdContent ?? [], [activeSession]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewItem, setPreviewItem] = useState<QaCreatedContent | null>(null);
+  const previewApp = useMemo(
+    () => (previewItem?.type === "app" ? getInstalledCustomApp(previewItem.refId) : null),
+    [previewItem],
+  );
 
   // 自动滚动：用户上滚阅读时不拉回底部
   const handleScroll = useCallback(() => {
@@ -484,12 +684,32 @@ export function PhoneQaApp({ onClose }: PhoneQaAppProps) {
 
   const handleSend = useCallback(() => {
     const text = input.trim();
-    if (!text || snapshot.isGenerating) return;
+    if ((!text && pendingImages.length === 0) || snapshot.isGenerating) return;
     setInput("");
+    const images = pendingImages;
+    setPendingImages([]);
     stickToBottomRef.current = true;
     requestAnimationFrame(autoGrow);
-    void sendQaMessage(text);
-  }, [input, snapshot.isGenerating, autoGrow]);
+    void sendQaMessage(text, images.length ? images : undefined);
+  }, [input, pendingImages, snapshot.isGenerating, autoGrow]);
+
+  // 附加图片：仅识图已开启的 API 显示入口；读为 dataURL，单张限 4MB
+  const handlePickImages = useCallback((files: FileList | null) => {
+    if (!files?.length) return;
+    for (const file of Array.from(files).slice(0, 6)) {
+      if (file.size > 4 * 1024 * 1024) {
+        onNotice?.(`「${file.name}」超过 4MB，已跳过。`);
+        continue;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = typeof reader.result === "string" ? reader.result : "";
+        if (url) setPendingImages((current) => (current.length >= 6 ? current : [...current, url]));
+      };
+      reader.readAsDataURL(file);
+    }
+    if (imageInputRef.current) imageInputRef.current.value = "";
+  }, [onNotice]);
 
   const handleRetry = useCallback((assistantMsgId: string) => {
     stickToBottomRef.current = true;
@@ -503,6 +723,24 @@ export function PhoneQaApp({ onClose }: PhoneQaAppProps) {
 
   return (
     <div className="qa-app-shell">
+      <QaSessionDrawer
+        sessions={snapshot.sessions}
+        activeId={snapshot.activeSessionId}
+        onSelect={(id) => {
+          switchQaSession(id);
+          setDrawerOpen(false);
+        }}
+        onDelete={deleteQaSession}
+        onCreate={() => {
+          createQaSession();
+          setDrawerOpen(false);
+        }}
+        onOpenSettings={() => {
+          setSettingsOpen(true);
+          setDrawerOpen(false);
+        }}
+      />
+      <div className={`qa-stage ${drawerOpen ? "is-pushed" : ""}`}>
       <div className="qa-ambient" aria-hidden />
       <header className="qa-header">
         <div className="qa-header-left">
@@ -517,25 +755,15 @@ export function PhoneQaApp({ onClose }: PhoneQaAppProps) {
         <div className="qa-header-right">
           <button
             type="button"
-            className={`qa-icon-btn ${repoConnected ? "is-active" : ""}`}
-            onClick={() => setRepoSheetOpen(true)}
-            aria-label="连接仓库"
-          >
-            <Github size={17} strokeWidth={1.75} />
-          </button>
-          <button type="button" className="qa-icon-btn" onClick={() => setDrawerOpen(true)} aria-label="对话记录">
-            <History size={17} strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
             className="qa-icon-btn"
-            onClick={() => {
-              createQaSession();
-              setDrawerOpen(false);
-            }}
-            aria-label="新对话"
+            onClick={handleClearToolHistory}
+            aria-label="清理原生tool调用历史（防报错）"
+            title="清理原生tool调用历史——防报错"
           >
-            <Plus size={19} strokeWidth={1.75} />
+            <BrushCleaning size={17} strokeWidth={1.75} />
+          </button>
+          <button type="button" className="qa-icon-btn" onClick={() => setDrawerOpen((v) => !v)} aria-label="对话记录">
+            <Menu size={18} strokeWidth={1.75} />
           </button>
         </div>
       </header>
@@ -543,10 +771,16 @@ export function PhoneQaApp({ onClose }: PhoneQaAppProps) {
       <div className="qa-body hide-scrollbar" ref={bodyRef} onScroll={handleScroll}>
         {messages.length === 0 ? (
           <div className="qa-welcome">
-            <div className="qa-welcome-badge" aria-hidden />
+            <div className="qa-welcome-badge" aria-hidden>
+              <svg viewBox="0 0 24 24" width="26" height="26">
+                <path d={mdiHammerWrench} fill="currentColor" />
+              </svg>
+            </div>
             <div className="qa-welcome-title">有什么问题？</div>
             <div className="qa-welcome-sub">
-              使用问题、报错排查、部署配置，都可以问我。
+              我是小坊，工坊的驻场工程师。使用问题、报错排查、部署配置，都可以问我。
+              <br />
+              我还能动手：写小游戏 / APP / 剧场直接装进本机试玩；连接仓库后我会查源码答疑，填了有写权限的 PAT 还能帮你改代码。
               <br />
               想创作角色、世界书或美化桌面，找桌面上的小卷更合适。
             </div>
@@ -572,7 +806,7 @@ export function PhoneQaApp({ onClose }: PhoneQaAppProps) {
         ) : (
           <div className="qa-messages">
             {messages.map((msg) => (
-              <QaMessageItem key={msg.id} msg={msg} isStreaming={msg.id === streamingMsgId} onRetry={handleRetry} />
+              <QaMessageItem key={msg.id} msg={msg} isStreaming={msg.id === streamingMsgId} onRetry={handleRetry} onViewImage={setViewerImage} />
             ))}
           </div>
         )}
@@ -580,6 +814,25 @@ export function PhoneQaApp({ onClose }: PhoneQaAppProps) {
 
       <footer className="qa-composer-wrap">
         <div className={`qa-composer ${snapshot.isGenerating ? "is-generating" : ""}`}>
+          {pendingImages.length > 0 && (
+            <div className="qa-attach-strip">
+              {pendingImages.map((url, i) => (
+                <div key={i} className="qa-attach-thumb">
+                  <button type="button" className="qa-attach-view" onClick={() => setViewerImage(url)} aria-label="查看图片">
+                    <img src={url} alt="" />
+                  </button>
+                  <button
+                    type="button"
+                    className="qa-attach-remove"
+                    onClick={() => setPendingImages((current) => current.filter((_, idx) => idx !== i))}
+                    aria-label="移除图片"
+                  >
+                    <X size={11} strokeWidth={2.4} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             className="qa-composer-input hide-scrollbar"
@@ -590,67 +843,186 @@ export function PhoneQaApp({ onClose }: PhoneQaAppProps) {
               setInput(e.target.value);
               autoGrow();
             }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
           />
-          {snapshot.isGenerating ? (
-            <button type="button" className="qa-send-btn is-stop" onClick={stopQaGeneration} aria-label="停止生成">
-              <Square size={14} fill="currentColor" />
-            </button>
-          ) : (
+          <div className="qa-composer-toolbar">
+            {visionEnabled && (
+              <>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  style={{ display: "none" }}
+                  onChange={(e) => handlePickImages(e.target.files)}
+                />
+                <button
+                  type="button"
+                  className="qa-circle-btn qa-attach-btn"
+                  onClick={() => imageInputRef.current?.click()}
+                  aria-label="发送图片"
+                >
+                  <Plus size={17} strokeWidth={2.2} />
+                </button>
+              </>
+            )}
+            {modelName && <span className="qa-model-pill">{modelName}</span>}
+
+            {repoWritable && (
+              <button type="button" className="qa-mode-pill" onClick={toggleWriteMode}>
+                {writeMode === "auto" ? "全自动" : "确认后提交"}
+              </button>
+            )}
+
+            <div className="qa-composer-spacer" />
+
+            {createdContent.length > 0 && (
+              <button
+                type="button"
+                className="qa-circle-btn qa-preview-btn"
+                onClick={() => setPreviewOpen(true)}
+                aria-label="预览本轮创建的内容"
+              >
+                <Play size={16} />
+              </button>
+            )}
+
             <button
               type="button"
-              className="qa-send-btn"
-              onClick={handleSend}
-              disabled={!input.trim()}
-              aria-label="发送"
+              className={`qa-circle-btn qa-github-btn ${repoConnected ? "is-active" : ""}`}
+              onClick={() => setRepoSheetOpen(true)}
+              aria-label="连接仓库"
             >
-              <Send size={15} />
+              <Github size={16} strokeWidth={1.75} />
             </button>
-          )}
+
+            {snapshot.isGenerating ? (
+              <button type="button" className="qa-circle-btn qa-send-btn is-stop" onClick={stopQaGeneration} aria-label="停止生成">
+                <Square size={14} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="qa-circle-btn qa-send-btn"
+                onClick={handleSend}
+                disabled={!input.trim()}
+                aria-label="发送"
+              >
+                <ArrowUp size={20} strokeWidth={2.4} />
+              </button>
+            )}
+          </div>
+          <div
+            className={`qa-context-meter ${snapshot.isCompacting ? "is-compacting" : ""}`}
+            title="上下文用量：满 100% 时自动压缩成摘要并从头累计"
+          >
+            <div className="qa-context-meter-track" aria-hidden>
+              <i style={{ width: `${Math.min(100, Math.round(snapshot.contextUsage * 100))}%` }} />
+            </div>
+            <span className="qa-context-meter-label">
+              {snapshot.isCompacting ? "压缩中" : `${Math.min(999, Math.round(snapshot.contextUsage * 100))}%`}
+            </span>
+          </div>
         </div>
       </footer>
 
-      {devNoticeOpen && (
-        <div className="qa-devnotice-backdrop">
-          <div className="qa-devnotice" role="alertdialog" aria-label="开发中提示">
-            <div className="qa-devnotice-title">App 开发中</div>
-            <div className="qa-devnotice-text">工坊还在开发中，请暂时不要使用。</div>
-            <div className="qa-devnotice-actions">
-              <button type="button" className="qa-devnotice-btn is-primary" onClick={onClose}>
-                返回桌面
+      {drawerOpen && (
+        <button
+          type="button"
+          className="qa-stage-scrim"
+          aria-label="关闭对话列表"
+          onClick={() => setDrawerOpen(false)}
+        />
+      )}
+      </div>
+
+      {clearToolsOpen && (
+        <div className="qa-devnotice-backdrop" onClick={() => setClearToolsOpen(false)}>
+          <div className="qa-devnotice" role="alertdialog" aria-label="清理工具历史确认" onClick={(e) => e.stopPropagation()}>
+            <div className="qa-devnotice-title">清理工具调用历史？</div>
+            <div className="qa-devnotice-text">
+              将移除本会话上下文中的工具调用与工具结果记录，用于修复原生工具协议的报错。普通对话内容不会删除，之前的工具结论仍保留在小坊的回复文字里。
+            </div>
+            <div className="qa-devnotice-actions is-row">
+              <button type="button" className="qa-devnotice-btn" onClick={() => setClearToolsOpen(false)}>
+                取消
               </button>
-              <button type="button" className="qa-devnotice-btn" onClick={() => setDevNoticeOpen(false)}>
-                仍要看看
+              <button type="button" className="qa-devnotice-btn is-primary" onClick={confirmClearToolHistory}>
+                清理
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {repoSheetOpen && (
-        <QaRepoSheet onClose={() => setRepoSheetOpen(false)} onSaved={() => setRepoConnected(loadQaGithubConfig() != null)} />
+      {viewerImage && (
+        <div className="qa-image-viewer" role="presentation" onClick={() => setViewerImage(null)}>
+          <img src={viewerImage} alt="" />
+          <button type="button" className="qa-image-viewer-close" aria-label="关闭" onClick={() => setViewerImage(null)}>
+            <X size={20} />
+          </button>
+        </div>
       )}
 
-      {drawerOpen && (
-        <QaSessionDrawer
-          sessions={snapshot.sessions}
-          activeId={snapshot.activeSessionId}
-          onSelect={(id) => {
-            switchQaSession(id);
-            setDrawerOpen(false);
-          }}
-          onDelete={deleteQaSession}
-          onCreate={() => {
-            createQaSession();
-            setDrawerOpen(false);
-          }}
-          onClose={() => setDrawerOpen(false)}
-        />
+      {settingsOpen && (
+        <QaSettingsSheet onClose={() => setSettingsOpen(false)} onNotice={onNotice} />
+      )}
+
+      {repoSheetOpen && (
+        <QaRepoSheet onClose={() => setRepoSheetOpen(false)} onSaved={refreshComposerMeta} />
+      )}
+
+      {previewOpen && !previewItem && (
+        <div className="qa-sheet-backdrop" onClick={() => setPreviewOpen(false)}>
+          <div className="qa-sheet qa-preview-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="qa-sheet-head">
+              <span className="qa-sheet-title">
+                <Play size={16} /> 预览本轮创建
+              </span>
+              <button type="button" className="qa-icon-btn" onClick={() => setPreviewOpen(false)} aria-label="关闭">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="qa-sheet-body">
+              <p className="qa-sheet-note">本次对话里创建/更新的内容，点开直接测试，返回后回到聊天。</p>
+              {createdContent.map((item) => (
+                <button
+                  key={`${item.type}-${item.refId}`}
+                  type="button"
+                  className="qa-preview-item"
+                  onClick={() => setPreviewItem(item)}
+                >
+                  {item.type === "app" ? <AppWindow size={17} /> : item.type === "game" ? <Gamepad2 size={17} /> : <Drama size={17} />}
+                  <span className="qa-preview-item-title">{item.title}</span>
+                  <span className="qa-preview-item-type">
+                    {item.type === "app" ? "应用" : item.type === "game" ? "游戏" : "剧场"}
+                  </span>
+                  <ChevronRight size={15} />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewItem && (
+        <div className="qa-preview-runtime">
+          {previewItem.type === "app" ? (
+            previewApp ? (
+              <CustomAppRunner app={previewApp} onClose={() => setPreviewItem(null)} />
+            ) : (
+              <div className="qa-preview-missing">
+                <p>这个应用已被卸载或找不到了。</p>
+                <button type="button" className="qa-sheet-btn is-primary" onClick={() => setPreviewItem(null)}>
+                  返回
+                </button>
+              </div>
+            )
+          ) : previewItem.type === "game" ? (
+            <GameHubApp onClose={() => setPreviewItem(null)} autoOpenLocalId={previewItem.refId} />
+          ) : (
+            <BlackMarketApp onClose={() => setPreviewItem(null)} autoOpenLocalId={previewItem.refId} />
+          )}
+        </div>
       )}
     </div>
   );

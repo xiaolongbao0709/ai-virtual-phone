@@ -123,6 +123,10 @@ export type GameHallDraft = {
   id: string;
   title: string;
   draft: GameTemplateDraft;
+  /** 显式关联：本草稿发布对应的共享大厅条目 id。有值时「发布」= 同步更新该条目。 */
+  publishedTemplateId?: string;
+  /** 关联发布条目后,本机又存过草稿但还没提交更新时为 true;更新发布成功后清除 */
+  hasUnpublishedChanges?: boolean;
   createdAt: string;
   updatedAt: string;
 };

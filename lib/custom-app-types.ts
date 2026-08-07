@@ -273,6 +273,8 @@ export type InstalledCustomApp = {
   updatedAt: string;
   /** 来源标记:从应用广场安装/更新时记录市场条目 id;本地导入的没有此字段 */
   marketItemId?: string;
+  /** 关联市场版后,本机编辑/换包过但还没提交更新时为 true;发布成功或重新拉取市场版后清除 */
+  hasUnpublishedChanges?: boolean;
 };
 
 export function isCustomAppIconId(value: string): value is CustomAppIconId {

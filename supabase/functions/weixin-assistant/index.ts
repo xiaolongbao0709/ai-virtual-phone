@@ -30,12 +30,22 @@ const MESSAGE_PREFIX = "weixin-cloud/messages";
 const INCOMING_MEDIA_PREFIX = "weixin-cloud/media";
 const INCOMING_IMAGE_MAX_BYTES = 6_000_000;
 const LOCK_PREFIX = "weixin-cloud/locks";
+const PENDING_FLAG_PREFIX = "weixin-cloud/pending";
 const ILINK_BASE = "https://ilinkai.weixin.qq.com";
 const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
 const BASE_INFO = { channel_version: "1.0.2" };
 // 锁 TTL 必须远小于「函数被平台掐掉后到下次可重试」的可接受等待：
 // 云函数被墙钟杀掉时 finally 不会执行、锁无法主动释放，只能等 TTL 过期。
 const AUTO_REPLY_LOCK_TTL_MS = 3 * 60 * 1000;
+
+// 待回复标志与真实状态可能脱钩（函数中途被墙钟掐掉、标志写入失败等），
+// 空闲时每隔这么久做一次全量扫描自愈；期间新消息仍由入库路径实时置位标志。
+const PENDING_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+
+// 运行包体积可达 MB 级（含提示词模板、贴纸与参考图 base64），不能每轮全量
+// 下载。索引条目的 updatedAt 随小手机每次同步更新，作为缓存失效依据；TTL 兜底。
+const RUNTIME_PACKAGE_CACHE_TTL_MS = 10 * 60 * 1000;
+const runtimePackageCache = new Map();
 
 // 单轮回复的截止时间（云端由 pollOnce options.deadlineAt 下发；本地 CLI 无限制）。
 // 用于给 LLM/生图/TTS 分配剩余预算，保证整轮在云函数墙钟内完成。
@@ -63,7 +73,7 @@ export async function pollOnce(env, targetBotId, options = {}) {
       skippedForDeadline += 1;
       continue;
     }
-    const runtime = await getObjectJson(env, item.path);
+    const runtime = await loadRuntimePackage(env, item);
     const state = await loadBotState(env, item.botId);
     const polledAt = new Date().toISOString();
 
@@ -90,12 +100,23 @@ export async function pollOnce(env, targetBotId, options = {}) {
     await saveBotState(env, item.botId, state);
 
     let storedMessages = 0;
+    let lastStoredExternalId = "";
     for (const message of messages) {
-      const stored = await storeIncomingMessage(env, runtime, message, polledAt);
-      if (stored) storedMessages += 1;
+      const storedId = await storeIncomingMessage(env, runtime, message, polledAt);
+      if (storedId) {
+        storedMessages += 1;
+        lastStoredExternalId = storedId;
+      }
+    }
+    if (storedMessages > 0) {
+      await savePendingFlag(env, item.botId, {
+        pending: true,
+        lastInboundExternalId: lastStoredExternalId,
+        pendingMarkedAt: polledAt,
+      });
     }
 
-    const autoReply = await autoReplyPendingMessages(env, runtime).catch(async (err) => {
+    const autoReply = await autoReplyPendingMessages(env, runtime, { force: options?.debug === true }).catch(async (err) => {
       const message = errorMessage(err);
       state.lastAutoReplyError = message;
       await saveBotState(env, item.botId, state);
@@ -178,7 +199,7 @@ async function storeIncomingMessage(env, runtime, raw, receivedAt) {
     raw,
     needsReply: true,
   }, null, 2), "application/json");
-  return true;
+  return externalId;
 }
 
 function extractIncomingMediaItem(raw) {
@@ -267,9 +288,19 @@ function sniffImageMimeType(bytes) {
   return "";
 }
 
-async function autoReplyPendingMessages(env, runtime) {
+async function autoReplyPendingMessages(env, runtime, options = {}) {
   if (String(env.WEIXIN_AUTO_REPLY || "").trim().toLowerCase() === "false") {
     return { status: "disabled", pending: 0, sent: 0 };
+  }
+
+  // 空闲轮询只读几百字节的待回复标志，不再每轮全量下载消息目录
+  // （那会随消息积压滚雪球，实测能烧掉 30G+/天的 Cached Egress）。
+  // 标志缺失（老部署首轮）或超过兜底间隔时仍做全量扫描。
+  if (options.force !== true) {
+    const flag = await loadPendingFlag(env, runtime.bot.id);
+    if (flag && flag.pending !== true && !reconcileScanDue(flag)) {
+      return { status: "idle", pending: 0, sent: 0 };
+    }
   }
 
   const lock = await acquireAutoReplyLock(env, runtime.bot.id);
@@ -280,7 +311,10 @@ async function autoReplyPendingMessages(env, runtime) {
     .filter(item => item.message.direction === "inbound" && item.message.needsReply === true && !item.message.repliedAt)
     .sort((a, b) => messageTime(a.message).localeCompare(messageTime(b.message)));
 
-  if (pending.length === 0) return { status: "skipped", pending: 0, sent: 0 };
+  if (pending.length === 0) {
+    await savePendingFlag(env, runtime.bot.id, { pending: false, lastScanAt: new Date().toISOString() });
+    return { status: "skipped", pending: 0, sent: 0 };
+  }
 
   const latest = pending[pending.length - 1].message;
   const stopTyping = await startIlinkTyping(runtime.bot?.botToken, latest.raw);
@@ -329,6 +363,7 @@ async function autoReplyPendingMessages(env, runtime) {
       failedCount: sendErrors.length,
       sendResults,
     });
+    await clearPendingFlagIfCovered(env, runtime.bot.id, pending);
 
     return {
       status: sendErrors.length ? "partial_sent" : "sent",
@@ -1348,7 +1383,9 @@ async function storeOutgoingMessage(env, runtime, externalId, content, raw) {
 
 async function loadCloudMessagesForBot(env, botId, limit = 200) {
   const prefix = `${MESSAGE_PREFIX}/${sanitizePathPart(botId)}/`;
-  const objects = await listObjects(env, prefix, limit);
+  // 按创建时间倒序取最新 limit 条：按名字升序在目录超过 limit 后取到的是
+  // 最旧的一批，新消息进不了处理窗口，自动回复会静默失效。
+  const objects = await listObjects(env, prefix, limit, { column: "created_at", order: "desc" });
   const rows = [];
   for (const object of objects) {
     if (!object.name || object.name.endsWith("/")) continue;
@@ -1377,6 +1414,57 @@ async function loadBotState(env, botId) {
   return await getObjectJson(env, path).catch(() => ({ botId, getUpdatesBuf: "" }));
 }
 
+async function loadRuntimePackage(env, item) {
+  const key = `${env.SUPABASE_URL || ""}/${env.SUPABASE_BUCKET || DEFAULT_BUCKET}/${item.path}`;
+  const updatedAt = String(item.updatedAt || "");
+  const cached = runtimePackageCache.get(key);
+  if (cached && cached.updatedAt === updatedAt && Date.now() - cached.cachedAtMs < RUNTIME_PACKAGE_CACHE_TTL_MS) {
+    return cached.runtime;
+  }
+  const runtime = await getObjectJson(env, item.path);
+  if (runtimePackageCache.size >= 8) {
+    runtimePackageCache.delete(runtimePackageCache.keys().next().value);
+  }
+  runtimePackageCache.set(key, { runtime, updatedAt, cachedAtMs: Date.now() });
+  return runtime;
+}
+
+function pendingFlagPath(botId) {
+  return `${PENDING_FLAG_PREFIX}/${sanitizePathPart(botId)}.json`;
+}
+
+async function loadPendingFlag(env, botId) {
+  return await getObjectJson(env, pendingFlagPath(botId)).catch(() => null);
+}
+
+// 标志写失败不致命：最坏情况回复延迟一个兜底扫描周期，由全量扫描自愈。
+async function savePendingFlag(env, botId, flag) {
+  await putObject(env, pendingFlagPath(botId), JSON.stringify({
+    format: "ai-phone-weixin-pending-flag",
+    version: 1,
+    botId,
+    updatedAt: new Date().toISOString(),
+    ...flag,
+  }, null, 2), "application/json").catch(() => {});
+}
+
+function reconcileScanDue(flag) {
+  const lastScanAt = Date.parse(flag?.lastScanAt || "");
+  if (!Number.isFinite(lastScanAt)) return true;
+  return Date.now() - lastScanAt >= PENDING_RECONCILE_INTERVAL_MS;
+}
+
+// 回复完成后清标志；若生成期间又有新消息入库（标志指向的 externalId
+// 不在本轮已回复集合里），保留标志让下一轮继续处理，避免消息被漏掉。
+async function clearPendingFlagIfCovered(env, botId, repliedItems) {
+  const repliedIds = new Set(repliedItems.map(item => String(item.message.externalId || "")));
+  const current = await loadPendingFlag(env, botId);
+  if (current?.pending === true && current.lastInboundExternalId && !repliedIds.has(String(current.lastInboundExternalId))) {
+    return;
+  }
+  await savePendingFlag(env, botId, { pending: false, lastScanAt: new Date().toISOString() });
+}
+
 async function saveBotState(env, botId, state) {
   const path = `${STATE_PREFIX}/${sanitizePathPart(botId)}.json`;
   await putObject(env, path, JSON.stringify({ ...state, botId }, null, 2), "application/json");
@@ -1398,7 +1486,7 @@ async function putObject(env, path, body, contentType) {
   if (!res.ok) throw new Error(`Supabase PUT ${res.status}: ${(await res.text()).slice(0, 300)}`);
 }
 
-async function listObjects(env, prefix = "", limit = 100) {
+async function listObjects(env, prefix = "", limit = 100, sortBy = { column: "name", order: "asc" }) {
   const bucket = env.SUPABASE_BUCKET || DEFAULT_BUCKET;
   const res = await fetch(`${normalizeRequiredUrl(env.SUPABASE_URL, "SUPABASE_URL")}/storage/v1/object/list/${bucket}`, {
     method: "POST",
@@ -1407,7 +1495,7 @@ async function listObjects(env, prefix = "", limit = 100) {
       prefix,
       limit: Math.max(1, Math.min(1000, Math.floor(limit))),
       offset: 0,
-      sortBy: { column: "name", order: "asc" },
+      sortBy,
     }),
     cache: "no-store",
   });
