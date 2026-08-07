@@ -294,8 +294,8 @@ const BGM_LIST = [
 /* ---------- 黑珍珠酒吧：固定员工（老板娘珍珠 + 招牌调酒师老K） ---------- */
 const STAFF = [
   { id:"staff_pearl", name:"珍珠", avatar:"🦪", isReal:false, fixed:true, staff:"owner",
-    persona:"黑珍珠酒吧的女老板，身材姣好、口才极好，风情万种，桃花与风流往事极多。见多识广，说话滴水不漏又撩人，善于把气氛炒热，也善于在关键时刻收住。她记得每个熟客的口味和故事，对今晚来的人也很快能接上话。",
-    greet:"（抬眼一笑）来啦？坐。老K，给她/他调一杯。" },
+    persona:"黑珍珠酒吧的老板娘，人称「珍珠」。身材姣好，常穿红色吊带长裙（胸前别着金色BOSS铭牌），一头微卷长发随意披散。口才极好，风情万种又不失分寸——桃花与风流往事极多，但她从不说破。见多识广，说话滴水不漏又撩人，善于把气氛炒热，也善于在关键时刻收住。她习惯倚在吧台上和客人聊天，记得每个熟客的口味和故事，对今晚来的人也很快能接上话。她知道什么时候该笑、什么时候该沉默地看着你。",
+    greet:"（倚在吧台上，抬眼一笑，红色吊带裙的肩带微微滑落又随手拨回）来啦？坐。老K，给TA来杯惯常的。" },
   { id:"staff_k", name:"老K", avatar:"🥃", isReal:false, fixed:true, staff:"bartender",
     persona:"黑珍珠的招牌调酒师，沉默寡言，调酒技术精湛。他知道该说什么、不该说什么——多数时候只点头、擦杯子、把酒推到你面前。只有在调酒和真正关键的时刻才开口，一句顶十句。平常不主动插话，被点名才淡淡接一句。" }
 ];
@@ -423,7 +423,7 @@ async function enterBar(){
   await addStaff();
   renderPresent(); renderBartop(); renderJuke(); renderMoments();
   const guests = state.present.filter(p=>!p.fixed).map(p=>p.name).join("、");
-  sysLine(`你走进了黑珍珠。${guests?guests+"已经在卡座上了，":""}老板娘珍珠抬眼打了个招呼，老K 在吧台后擦着杯子。`);
+  sysLine(`你走进了黑珍珠。${guests?guests+"已经在卡座上了，":""}珍珠倚在吧台上抬眼一笑，老K 在身后默默擦着杯子。`);
   // 今日特调提示栏（老K 的手笔）
   await genTodaysSpecials();
   // 进场偶遇：常客可能本来就在，或撞上一个陌生人
