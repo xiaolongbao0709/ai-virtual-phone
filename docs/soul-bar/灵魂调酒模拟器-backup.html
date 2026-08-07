@@ -1,0 +1,2065 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Kissa / 灵魂调酒模拟器</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;600&family=Plus+Jakarta+Sans:wght@300;400;500&display=swap');
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Plus Jakarta Sans', 'Shippori Mincho', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            background-color: #0d0d0d;
+            color: #e5e5e0;
+            overflow: hidden;
+        }
+        .phone-container {
+            width: 100%;
+            height: 100%;
+            background: #030304;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-sizing: border-box;
+            padding-top: var(--ai-phone-game-safe-top, 88px);
+            padding-bottom: var(--ai-phone-game-safe-bottom, 24px);
+        }
+        .page {
+            position: absolute;
+            top: var(--ai-phone-game-safe-top, 88px);
+            left: 0;
+            right: 0;
+            bottom: var(--ai-phone-game-safe-bottom, 24px);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px 24px;
+            transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            overflow: hidden;
+        }
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.96);
+        }
+        /* ═══════ 游戏化标题 ═══════
+           左侧竖向霓虹标条 + 顶部腰封小字 + 渐变字面 + 底部渐隐细线，
+           整体缓慢呼吸辉光，做出游戏 UI 的仪式感。 */
+        .stamp-page-header {
+            text-align: left; z-index: 10; flex-shrink: 0;
+            position: relative; padding: 12px 0 0 16px;
+        }
+        /* 背后压一个巨型淡化汉字，歪一点 —— 拼贴的底层 */
+        .ph-ghost {
+            position: absolute; left: 108px; top: -16px;
+            font-family: 'Shippori Mincho', serif;
+            font-size: 64px; line-height: 1; font-weight: 700;
+            color: rgba(255,238,246,.055);
+            transform: rotate(7deg);
+            pointer-events: none; user-select: none; z-index: -1;
+        }
+        /* 左侧霓虹标条：两段长短错开，不做对称 */
+        .stamp-page-header::before {
+            content: ''; position: absolute; left: 0; top: 15px;
+            width: 2px; height: 31px; border-radius: 2px;
+            background: linear-gradient(180deg, #ffffff 0%, rgba(255,158,199,.92) 58%, rgba(255,158,199,0) 100%);
+            box-shadow: 0 0 11px rgba(255,158,199,.62);
+        }
+        .stamp-page-header::after {
+            content: ''; position: absolute; left: 5px; top: 22px;
+            width: 1px; height: 14px; border-radius: 1px;
+            background: linear-gradient(180deg, rgba(255,198,223,.58), rgba(255,198,223,0));
+        }
+        /* 腰封行：反白标号块（歪的）+ 细线 + 日文小字 */
+        .title-kicker {
+            display: flex; align-items: center; gap: 6px;
+            margin-bottom: 6px; height: 13px;
+        }
+        .tk-num {
+            display: inline-block;
+            background: linear-gradient(135deg, #ffffff, #ffdaea);
+            color: #150f13;
+            font: 800 8px/1 'Helvetica Neue', Arial, sans-serif;
+            letter-spacing: .6px; padding: 3.5px 5px 3px;
+            transform: rotate(-4.5deg);
+            box-shadow: 0 0 11px rgba(255,170,206,.45);
+        }
+        .tk-rule { display: inline-block; width: 15px; height: 1px; background: rgba(255,186,215,.52); }
+        .tk-jp {
+            font-family: 'Shippori Mincho', serif;
+            font-size: 8.5px; font-weight: 600; letter-spacing: 2.8px;
+            color: rgba(255,192,218,.66); white-space: nowrap;
+        }
+        /* 标题本体：大衬线主字（粉白渐变）＋ 小无衬线副标（粉）；首个字用圆体＋蓝，作点睛撞色 */
+        .poster-title {
+            display: block; position: relative;
+            margin: 0 0 14px; line-height: .94;
+            animation: titleAura 5.4s ease-in-out infinite;
+        }
+        .poster-title .pt-a {
+            display: block;
+            font-family: 'Shippori Mincho', serif;
+            font-size: 29px; font-weight: 600; letter-spacing: 4.5px;
+            color: #fdf3f7;
+        }
+        /* 标题首字：圆体＋蓝，点睛撞色（其余字仍是粉白） */
+        .poster-title .pt-a .ch-blue {
+            font-family: 'Yuanti SC', 'YouYuan', '幼圆', 'PingFang SC', sans-serif;
+            letter-spacing: 2px;
+            color: #4AA3FF;
+        }
+        /* 蓝字紧邻的下一个字：暖黄，作第二点睛撞色 */
+        .poster-title .pt-a .ch-yellow {
+            font-family: 'Yuanti SC', 'YouYuan', '幼圆', 'PingFang SC', sans-serif;
+            letter-spacing: 2px;
+            color: #ffd24d;
+        }
+        .poster-title .pt-b {
+            display: block; position: relative;
+            margin: 2px 0 0 42px;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 12.5px; font-weight: 300; letter-spacing: 8px;
+            text-transform: uppercase;
+            color: rgba(255,198,222,.84);
+        }
+        /* 第二行左边接一根引线，把错位「钉」住 */
+        .poster-title .pt-b::before {
+            content: ''; position: absolute; left: -20px; top: 50%;
+            width: 12px; height: 1px; margin-top: -.5px;
+            background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,184,214,.88));
+        }
+        /* 渐变字面（不支持 background-clip:text 的环境自动退回纯色，不会变透明） */
+        @supports ((-webkit-background-clip: text) or (background-clip: text)) {
+            .poster-title .pt-a {
+                background: linear-gradient(176deg, #ffffff 0%, #fff2f7 42%, #ffb6d4 100%);
+                -webkit-background-clip: text; background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            /* 蓝字不参与粉白渐变，单独填蓝 */
+            .poster-title .pt-a .ch-blue {
+                background: none;
+                -webkit-background-clip: border-box; background-clip: border-box;
+                -webkit-text-fill-color: #4AA3FF;
+                color: #4AA3FF;
+            }
+            /* 黄字同样不参与粉白渐变，单独填黄 */
+            .poster-title .pt-a .ch-yellow {
+                background: none;
+                -webkit-background-clip: border-box; background-clip: border-box;
+                -webkit-text-fill-color: #ffd24d;
+                color: #ffd24d;
+            }
+        }
+        /* 底部细线：从第二行起笔、只画一半，刻意不齐 */
+        .poster-title::after {
+            content: ''; position: absolute; left: 42px; bottom: -7px;
+            width: 58%; height: 1px;
+            background: linear-gradient(90deg, rgba(255,172,208,.92) 0%, rgba(255,255,255,.22) 48%, rgba(255,255,255,0) 100%);
+        }
+        @keyframes titleAura {
+            0%, 100% { filter: drop-shadow(0 0 9px rgba(255,150,195,.20)) drop-shadow(0 2px 3px rgba(0,0,0,.65)); }
+            50%      { filter: drop-shadow(0 0 17px rgba(255,150,195,.44)) drop-shadow(0 2px 3px rgba(0,0,0,.65)); }
+        }
+        .stamp-page-header p { font-size: 10.5px; color: #9b9098; letter-spacing: 1.4px; line-height: 1.5; }
+        .left-wheel-wrapper { position: absolute; left: 16px; top: 52%; transform: translateY(-50%); width: 70px; height: 400px; display: flex; flex-direction: column; align-items: center; z-index: 20; }
+        .mode-switch-btn { width: 42px; height: 42px; border-radius: 50%; background: #1c1c1a; border: 1.5px solid #d1b499; color: #d1b499; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 5px 15px rgba(0,0,0,0.4); transition: all 0.3s; margin-bottom: 12px; flex-shrink: 0; }
+        .mode-switch-btn.active { background: #d1b499; color: #141414; }
+        .left-avatar-wheel { position: relative; width: 70px; height: 320px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: grab; perspective: 800px; touch-action: none; }
+        .avatar-item { position: absolute; width: 52px; height: 52px; border-radius: 50%; background: #1c1c1a; border: 1.5px solid rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: center; font-size: 22px; transition: border-color 0.3s, box-shadow 0.3s; will-change: transform; user-select: none; box-shadow: 0 10px 20px rgba(0,0,0,0.3); overflow: hidden; }
+        .avatar-item img { width: 100%; height: 100%; object-fit: cover; }
+        /* 多选：被选中的人物 -> 蓝环 + 右下角勾 */
+        .avatar-item.is-selected { border-color: #4AA3FF; box-shadow: 0 0 20px rgba(74,163,255,0.55); }
+        .avatar-item .sel-check { position: absolute; right: -2px; bottom: -2px; width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(140deg, #5ab0ff, #2d7dd8); color: #fff; font-size: 11px; line-height: 18px; text-align: center; border: 1.5px solid #0e1116; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+        /* 第一页：选人后，头像轮盘上方浮出的「已选 n/3」圆圈徽标 */
+        .select-badge {
+            position: absolute; top: 52px; left: 50%;
+            transform: translateX(-50%) scale(.5);
+            width: 40px; height: 40px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(140deg, #5ab0ff 0%, #2d7dd8 100%);
+            color: #fff; font-weight: 800; font-size: 13px; letter-spacing: .2px;
+            border: 1.5px solid rgba(255,255,255,.35);
+            box-shadow: 0 0 16px rgba(74,163,255,.55), inset 0 0 8px rgba(255,255,255,.18);
+            opacity: 0; pointer-events: none; z-index: 40;
+            transition: opacity .22s, transform .22s cubic-bezier(.16,1,.3,1);
+        }
+        .select-badge.show { opacity: 1; transform: translateX(-50%) scale(1); }
+        /* 共调宾客 chips + 多人回想区块 */
+        .guest-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+        .gc-label { font-size: 12px; color: #b9b4ab; align-self: center; }
+        .gc-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: rgba(74,163,255,0.14); border: 1px solid rgba(74,163,255,0.4); color: #dcecff; font-size: 12px; }
+        .guest-quotes-group { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+        .group-quote-item { display: flex; gap: 10px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 10px 12px; }
+        .group-quote-item .quote-avatar { flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: #1c1c1a; border: 1px solid rgba(255,255,255,0.18); font-size: 18px; }
+        .group-quote-item .quote-name { font-size: 12px; color: #9fd0ff; font-weight: 700; margin-bottom: 3px; }
+        .group-quote-item .quote-text { font-size: 13px; line-height: 1.6; color: #e9e4db; white-space: pre-wrap; }
+        /* 调酒档案轮盘的垂直位置：数值越大越靠下（原版是 56.5%，现下移到 66%，
+           让上方那几张卡片不再压到 "KISSA SELECT" 标题上；想再微调只改这一个值） */
+        :root { --archive-wheel-top: 66%; }
+        .right-wheel-stage { position: absolute; right: -60px; top: var(--archive-wheel-top, 66%); transform: translateY(-50%); width: 260px; height: 420px; pointer-events: none; }
+        .stamp-wheel-track { position: absolute; width: 100%; height: 100%; pointer-events: auto; cursor: grab; touch-action: none; }
+        .stamp-card { position: absolute; width: 220px; height: 140px; background: #f7f5ef; color: #2b2b28; padding: 12px 14px; border-radius: 2px; box-shadow: -10px 15px 30px rgba(0,0,0,0.3); display: flex; flex-direction: column; justify-content: space-between; user-select: none; cursor: pointer; transition: border-left 0.25s, box-shadow 0.25s; will-change: transform; mask-image: radial-gradient(circle at 6px 6px, transparent 4px, black 4.5px); mask-size: 16px 16px; mask-position: -6px -6px; -webkit-mask-image: radial-gradient(circle at 6px 6px, transparent 4px, black 4.5px); -webkit-mask-size: 16px 16px; -webkit-mask-position: -6px -6px; }
+        .stamp-card::before { content: ''; position: absolute; top: 6px; left: 6px; right: 6px; bottom: 6px; border: 1px solid rgba(0,0,0,0.12); pointer-events: none; }
+        .stamp-top { display: flex; justify-content: space-between; font-size: 9px; letter-spacing: 1px; color: #8c867b; text-transform: uppercase; }
+        .stamp-content h3 { font-family: 'Shippori Mincho', serif; font-size: 14px; color: #1a1a18; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .stamp-content p { font-size: 9.5px; color: #66635c; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .stamp-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 9px; font-weight: 600; border-top: 1px dashed rgba(0,0,0,0.1); padding-top: 4px; }
+        .stamp-price-tag { color: #a3704c; font-family: 'Shippori Mincho', serif; font-size: 11px; letter-spacing: 1px; }
+        .stamp-tag-badge { color: #666; font-size: 8.5px; font-weight: normal; }
+        .btn-ins { background: #f0eee6; color: #191919; border: none; padding: 16px; border-radius: 30px; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; font-weight: 600; cursor: pointer; z-index: 10; transition: background 0.3s, transform 0.2s; flex-shrink: 0; width: 100%; display: flex; align-items: center; justify-content: center;}
+        .btn-ins:active { background: #ffffff; transform: scale(0.98); }
+        .btn-ins:disabled { background: #666; color: #aaa; transform: none; cursor: not-allowed; }
+        .guest-info-card, .result-card { background: #1c1c1a; border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 20px 16px; display: flex; flex-direction: column; gap: 12px; margin: 10px 0; flex: 1; overflow-y: auto; }
+        .guest-info-card::-webkit-scrollbar, .result-card::-webkit-scrollbar { width: 4px; }
+        .guest-info-card::-webkit-scrollbar-thumb, .result-card::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+        .guest-info-header h2, .result-header h2 { font-family: 'Shippori Mincho', serif; font-size: 18px; color: #f0eee6; font-weight: 400; margin-bottom: 2px; }
+        .guest-info-header .sub, .result-header .cocktail-subtitle { font-size: 11px; color: #d1b499; letter-spacing: 1px; }
+        .info-section, .result-section { font-size: 11px; line-height: 1.5; color: #b3b3af; }
+        .info-section strong, .result-section strong { color: #e5e5e0; display: block; margin-bottom: 4px; font-weight: 500; letter-spacing: 1px; font-size: 11.5px; }
+        
+        .stat-bar-group { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+        .stat-row { display: flex; align-items: center; justify-content: space-between; font-size: 10px; color: #b3b3af; }
+        .stat-bar-bg { flex: 1; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; margin: 0 8px; overflow: hidden; position: relative; }
+        .stat-bar-fill { height: 100%; background: linear-gradient(90deg, #d1b499, #f0eee6); border-radius: 2px; transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1); }
+        .bartend-header { display: flex; justify-content: space-between; align-items: center; z-index: 10; flex-shrink: 0; margin-bottom: 10px; }
+        .back-btn { background: none; border: none; color: #8c8c85; font-size: 12px; letter-spacing: 1px; cursor: pointer; padding: 5px 0; }
+        .guest-tag { font-size: 11px; letter-spacing: 1px; background: #20201e; padding: 6px 12px; border-radius: 20px; color: #d1b499; border: 1px solid rgba(255,255,255,0.05); max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .bartend-workspace, .mood-workspace { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative; min-height: 200px; }
+        
+        .glass-container, .mood-glass-container { position: relative; width: 140px; height: 220px; display: flex; flex-direction: column; align-items: center; cursor: pointer; }
+        
+        .glass-cup-body, .mood-cup-body { width: 120px; height: 120px; position: relative; background: linear-gradient(135deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.02) 50%, rgba(255,255,255,0.08) 100%); border: 1.5px solid rgba(255,255,255,0.35); border-top: 1.5px solid rgba(255,255,255,0.6); overflow: hidden; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: inset 0 0 25px rgba(255,255,255,0.15), 0 20px 30px rgba(0,0,0,0.6); display: flex; flex-direction: column; justify-content: flex-end; transition: transform 0.2s; }
+        
+        .glass-rim, .mood-cup-rim { width: 120px; height: 10px; background: linear-gradient(to right, rgba(255,255,255,0.2), rgba(255,255,255,0.6), rgba(255,255,255,0.2)); position: absolute; top: -2px; left: 0; border-radius: 50%; z-index: 12; }
+        .glass-stem-area, .mood-stem-area { display: flex; flex-direction: column; align-items: center; margin-top: -2px; }
+        .glass-stem, .mood-stem { width: 3px; height: 55px; background: linear-gradient(to right, rgba(255,255,255,0.2), rgba(255,255,255,0.45), rgba(255,255,255,0.15)); }
+        .glass-base, .mood-base { width: 65px; height: 8px; background: linear-gradient(to bottom, rgba(255,255,255,0.3), rgba(255,255,255,0.08)); border-radius: 50%; box-shadow: 0 10px 20px rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.25); }
+        #liquidLayersContainer { width: 100%; height: 100%; display: flex; flex-direction: column-reverse; position: relative; }
+        .liquid-layer { width: 100%; height: 0%; transition: height 0.12s linear; flex-shrink: 0; }
+        .pouring-stream { position: absolute; top: -30px; left: 50%; transform: translateX(-50%); width: 2.5px; height: 0; opacity: 0; transition: height 0.08s; z-index: 15; filter: drop-shadow(0 0 8px rgba(255,255,255,0.8)); }
+        .pouring-stream.active { height: 40px; opacity: 0.95; }
+        .hint-text { margin-top: 20px; font-size: 11px; color: #8c8c85; letter-spacing: 1px; text-align: center; }
+        .ingredients-bar { display: flex; flex-wrap: nowrap; gap: 10px; justify-content: flex-start; align-items: stretch; overflow-x: auto; overflow-y: hidden; width: 100%; padding: 10px 4px; flex-shrink: 0; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
+        .ingredients-bar::-webkit-scrollbar { display: none; }
+        .ingredient-item { flex-shrink: 0; scroll-snap-align: center; scroll-snap-stop: always; background: #1c1c1a; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 10px 14px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; transition: border-color 0.08s, background 0.08s, box-shadow 0.08s; }
+        .ingredient-item.selected { border-color: #d1b499; background: #262321; }
+        .ingredient-icon { font-size: 18px; }
+        .ingredient-name { font-size: 10px; color: #b3b3af; white-space: nowrap; }
+        .cocktail-preview-banner { width: 100%; height: 160px; background: #141414; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; margin-bottom: 8px; flex-shrink: 0; }
+        .cocktail-art-card { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; background: radial-gradient(circle at center, rgba(209,180,153,0.15) 0%, #1a1917 80%); }
+        .cocktail-art-liquid { width: 60px; height: 80px; position: absolute; bottom: 30px; clip-path: polygon(15% 0%, 85% 0%, 70% 100%, 30% 100%); display: flex; flex-direction: column-reverse; overflow: hidden; opacity: 0.85; box-shadow: 0 0 20px rgba(209,180,153,0.3); }
+        .cocktail-art-glass { width: 80px; height: 100px; position: absolute; bottom: 20px; border: 2px solid rgba(255,255,255,0.4); border-top: none; clip-path: polygon(10% 0%, 90% 0%, 75% 100%, 25% 100%); pointer-events: none; }
+        .cocktail-placeholder-art { font-size: 32px; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.6)); position: absolute; z-index: 5; top: 15px; }
+        .recipe-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;}
+        .recipe-tag { background: #262623; padding: 4px 8px; border-radius: 4px; font-size: 10px; color: #d1b499; }
+        .guest-quote-box { display: flex; align-items: flex-start; gap: 12px; background: #232320; padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05); margin-top: 4px; position: relative; }
+        .quote-avatar { width: 36px; height: 36px; border-radius: 50%; background: #141414; border: 1px solid #d1b499; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; overflow: hidden; }
+        .quote-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .quote-right-content { flex: 1; display: flex; flex-direction: column; gap: 6px; justify-content: center; min-height: 36px; }
+        .quote-text { font-size: 11px; color: #e5e5e0; font-style: italic; line-height: 1.6; }
+        
+        .reviews-container { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+        .review-item { background: #262623; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 8px 12px; font-size: 10.5px; color: #ccc; line-height: 1.4; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+        .review-text { flex: 1; }
+        .review-meta { display: flex; align-items: center; gap: 8px; font-size: 9.5px; color: #888; flex-shrink: 0; }
+        .review-like { display: flex; align-items: center; gap: 3px; color: #ff5252; }
+        .price-suggestion-box { display: flex; justify-content: space-between; align-items: center; background: #232320; border: 1px solid rgba(209,180,153,0.2); border-radius: 10px; padding: 12px 14px; margin-top: 6px; }
+        .price-label { font-size: 11px; color: #d1b499; letter-spacing: 1px; font-weight: 500; }
+        .price-value-container { display: flex; align-items: baseline; gap: 6px; }
+        .price-amount { font-family: 'Shippori Mincho', serif; font-size: 16px; color: #f0eee6; font-weight: 600; }
+        .price-badge-small { font-size: 9.5px; color: #a3704c; background: rgba(209,180,153,0.1); padding: 2px 6px; border-radius: 4px; text-transform: lowercase; }
+        
+        .mood-liquid { width: 100%; height: 52%; position: relative; animation: liquidWave 3.5s ease-in-out infinite alternate; }
+        @keyframes liquidWave { 0% { transform: translateY(0px) scaleY(1); } 100% { transform: translateY(-3px) scaleY(1.04); } }
+        .mood-input-box { width: 100%; background: #1c1c1a; border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+        .mood-input-header { display: flex; align-items: center; gap: 8px; }
+        .user-mini-avatar { width: 24px; height: 24px; border-radius: 50%; overflow: hidden; border: 1px solid rgba(255,255,255,0.2); }
+        .user-mini-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .mood-input-box label { font-size: 11px; color: #d1b499; }
+        .mood-input-box textarea { width: 100%; height: 60px; background: transparent; border: none; color: #f0eee6; font-size: 12px; resize: none; outline: none; line-height: 1.4; }
+        
+        .loading-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #d1b499; animation: spin 1s ease-in-out infinite; margin-right: 6px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #fullScreenLoader { position: absolute; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.90); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #d1b499; font-size: 14px; font-family: 'Shippori Mincho', serif; letter-spacing: 2px; transition: opacity 0.3s; pointer-events: none; opacity: 0; }
+        #fullScreenLoader.active { opacity: 1; pointer-events: auto; }
+
+        /* ═══════════════════════════════════════════════════════════
+           视觉层：近纯黑底 + 极淡「白 + 粉」呼吸光晕
+           全局不用蓝色；不画星云、不画星尘、不做旋转；
+           只留缓慢明灭的白粉柔光，主 CTA 的外光晕最亮。
+           ═══════════════════════════════════════════════════════════ */
+        html, body { background: #000; }
+
+        /* 底子还是近黑，但上下各托一层极淡的白粉光，中间再补一点点，避免板结 */
+        .phone-container {
+            background:
+                radial-gradient(ellipse 108% 56% at 50% -10%, rgba(255,234,245,.17) 0%, transparent 64%),
+                radial-gradient(ellipse  96% 50% at 50% 110%, rgba(255,182,212,.14) 0%, transparent 66%),
+                radial-gradient(ellipse  72% 68% at 50%  48%, rgba(255,214,233,.05) 0%, transparent 72%),
+                #050406;
+        }
+        /* 光晕层 A：三团白粉柔光，缓慢漂移 + 呼吸 */
+        .phone-container::before {
+            content: ''; position: absolute; inset: -16%;
+            pointer-events: none; z-index: 0;
+            background:
+                radial-gradient(ellipse 52% 38% at 22% 18%, rgba(255,243,249,.22) 0%, transparent 62%),
+                radial-gradient(ellipse 46% 34% at 82% 76%, rgba(255,166,203,.20) 0%, transparent 64%),
+                radial-gradient(ellipse 38% 30% at 62% 34%, rgba(255,214,233,.11) 0%, transparent 66%);
+            filter: blur(52px);
+            animation: haloDrift 24s ease-in-out infinite alternate;
+            will-change: transform, opacity;
+        }
+        /* 光晕层 B：反向漂移的两团，周期与 A 错开（24s vs 33s）
+           两层明暗永远对不上拍 → 光影一直在缓慢变化，不会一潭死水 */
+        .phone-container::after {
+            content: ''; position: absolute; inset: -18%;
+            pointer-events: none; z-index: 0;
+            background:
+                radial-gradient(ellipse 44% 34% at 74% 22%, rgba(255,226,241,.15) 0%, transparent 64%),
+                radial-gradient(ellipse 50% 38% at 26% 82%, rgba(255,178,210,.13) 0%, transparent 66%);
+            filter: blur(60px);
+            animation: haloDrift2 33s ease-in-out infinite alternate;
+            will-change: transform, opacity;
+        }
+
+        /* 背景呼吸星星：十来颗白粉小星，各自按不同节奏明灭 */
+        .star-field { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+        .star-field i {
+            position: absolute; display: block;
+            width: 2px; height: 2px; border-radius: 50%;
+            background: #fff;
+            box-shadow: 0 0 6px 1px rgba(255,220,236,.80), 0 0 13px 2.5px rgba(255,178,211,.36);
+            animation: starBreath 5.6s ease-in-out infinite;
+            will-change: opacity, transform;
+        }
+        @keyframes starBreath {
+            0%, 100% { opacity: .10; transform: scale(.62); }
+            50%      { opacity: 1;   transform: scale(1.30); }
+        }
+        /* 各就各位：位置、大小、节奏都错开，避免整片一起闪 */
+        .star-field i:nth-child(1)  { top:  9%; left: 11%; animation-duration: 5.4s; animation-delay: -0.3s; }
+        .star-field i:nth-child(2)  { top: 17%; left: 78%; width: 3px; height: 3px; animation-duration: 7.1s; animation-delay: -2.4s; }
+        .star-field i:nth-child(3)  { top: 27%; left: 33%; width: 1.5px; height: 1.5px; animation-duration: 4.6s; animation-delay: -1.1s; }
+        .star-field i:nth-child(4)  { top: 36%; left: 88%; animation-duration: 6.3s; animation-delay: -3.7s; }
+        .star-field i:nth-child(5)  { top: 44%; left:  6%; width: 2.5px; height: 2.5px; animation-duration: 8.0s; animation-delay: -0.9s; }
+        .star-field i:nth-child(6)  { top: 55%; left: 66%; width: 1.5px; height: 1.5px; animation-duration: 5.0s; animation-delay: -4.2s; }
+        .star-field i:nth-child(7)  { top: 63%; left: 21%; animation-duration: 6.8s; animation-delay: -1.8s; }
+        .star-field i:nth-child(8)  { top: 72%; left: 92%; width: 2.5px; height: 2.5px; animation-duration: 5.9s; animation-delay: -3.1s; }
+        .star-field i:nth-child(9)  { top: 80%; left: 46%; width: 1.5px; height: 1.5px; animation-duration: 7.6s; animation-delay: -0.5s; }
+        .star-field i:nth-child(10) { top: 88%; left: 14%; animation-duration: 4.9s; animation-delay: -2.7s; }
+        .star-field i:nth-child(11) { top: 93%; left: 72%; width: 3px; height: 3px; animation-duration: 6.6s; animation-delay: -5.0s; }
+        .star-field i:nth-child(12) { top: 50%; left: 40%; width: 1.5px; height: 1.5px; animation-duration: 8.4s; animation-delay: -6.2s; }
+
+        @keyframes haloDrift {
+            0%   { transform: translate3d(0, 0, 0) scale(1);           opacity: .70; }
+            50%  { transform: translate3d(3%, -2.2%, 0) scale(1.08);   opacity: 1; }
+            100% { transform: translate3d(-2.2%, 2.6%, 0) scale(1.03); opacity: .84; }
+        }
+        @keyframes haloDrift2 {
+            0%   { transform: translate3d(0, 0, 0) scale(1.04);        opacity: .95; }
+            50%  { transform: translate3d(-3.4%, 2.4%, 0) scale(.96);  opacity: .52; }
+            100% { transform: translate3d(2.6%, -2%, 0) scale(1.06);   opacity: .88; }
+        }
+
+        .page { z-index: 1; }
+        #fullScreenLoader { z-index: 1200; }
+
+        /* 标题本体样式见上方「游戏化标题」区块，这里只调副文案配色 */
+        .stamp-page-header p { color: #a3969c; }
+        .hint-text { color: #9d9095; }
+
+        /* 通用按钮：深空玻璃质感 */
+        .btn-ins {
+            background: linear-gradient(135deg, rgba(23,20,22,.92) 0%, rgba(19,17,19,.92) 52%, rgba(27,21,25,.92) 100%);
+            color: #ece5e9;
+            border: 1px solid rgba(205,185,196,.16);
+            -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 8px 22px rgba(0,0,0,.55);
+        }
+        .btn-ins:active {
+            background: linear-gradient(135deg, rgba(35,30,34,.95) 0%, rgba(30,26,29,.95) 52%, rgba(42,32,39,.95) 100%);
+            transform: scale(0.98);
+        }
+        .btn-ins:disabled { background: rgba(19,17,19,.85); color: #6d6469; border-color: rgba(255,255,255,.05); }
+
+        /* ★ 主 CTA「为选定宾客调酒」：白粉呼吸光晕
+           —— 不旋转，只有一团柔和的白粉辉光在缓缓明灭 */
+        #dynamicActionBtn {
+            position: relative; overflow: visible;
+            color: #fff2f6;
+            border: 1px solid rgba(255,182,208,.30);
+            background: linear-gradient(135deg, rgba(32,21,27,.95) 0%, rgba(24,18,22,.95) 50%, rgba(38,21,30,.95) 100%);
+            animation: haloBreath 4.2s ease-in-out infinite;
+            text-shadow: 0 0 7px rgba(255,198,220,.42);
+        }
+        /* 外层柔光：径向白粉，不旋转，只做呼吸缩放 */
+        #dynamicActionBtn::before {
+            content: ''; position: absolute; inset: -3px;
+            border-radius: 33px; z-index: -1;
+            background:
+                radial-gradient(ellipse 66% 118% at 50% 50%, rgba(255,255,255,.18) 0%, rgba(255,255,255,0) 66%),
+                radial-gradient(ellipse 92% 132% at 50% 50%, rgba(255,168,206,.34) 0%, rgba(255,168,206,0) 70%);
+            filter: blur(7px);
+            animation: haloAura 4.2s ease-in-out infinite;
+        }
+        #dynamicActionBtn::after {
+            content: ''; position: absolute; inset: 0;
+            border-radius: 30px; z-index: -2;
+            box-shadow: 0 0 0 0 rgba(255,170,205,.50);
+            animation: haloPulse 3.4s ease-out infinite;
+        }
+        @keyframes haloAura {
+            0%, 100% { opacity: .55; transform: scale(0.99); }
+            50%      { opacity: .92; transform: scale(1.018); }
+        }
+        @keyframes haloBreath {
+            0%, 100% { box-shadow: inset 0 1px 0 rgba(255,255,255,.20), inset 0 0 16px rgba(255,198,222,.12),
+                                   0 0 10px rgba(255,168,206,.26), 0 0 22px rgba(255,236,244,.12), 0 10px 26px rgba(0,0,0,.55); }
+            50%      { box-shadow: inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 20px rgba(255,198,222,.22),
+                                   0 0 17px rgba(255,168,206,.42), 0 0 34px rgba(255,236,244,.22), 0 10px 26px rgba(0,0,0,.55); }
+        }
+        @keyframes haloPulse {
+            0%   { box-shadow: 0 0 0 0   rgba(255,170,205,.28); }
+            70%  { box-shadow: 0 0 0 8px rgba(255,170,205,0); }
+            100% { box-shadow: 0 0 0 0   rgba(255,170,205,0); }
+        }
+
+        /* 角色 / 模式切换 */
+        .mode-switch-btn {
+            background: rgba(21,18,20,.88); border-color: rgba(242,172,202,.34); color: #e3c4d2;
+            box-shadow: 0 0 12px rgba(255,164,202,.18), 0 5px 15px rgba(0,0,0,.5);
+        }
+        .mode-switch-btn.active {
+            background: linear-gradient(135deg, rgba(196,84,134,.92), rgba(154,62,112,.92));
+            color: #fff; box-shadow: 0 0 18px rgba(255,146,188,.42);
+        }
+        .avatar-item {
+            background: rgba(19,17,19,.88);
+            border-color: rgba(208,184,197,.16);
+            box-shadow: 0 0 10px rgba(206,146,180,.13), 0 10px 20px rgba(0,0,0,.45);
+        }
+
+        /* 材料条：玻璃拟态 + 选中霓虹 */
+        .ingredient-item {
+            background: rgba(19,17,19,.78);
+            border: 1px solid rgba(208,184,197,.12);
+            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+        }
+        .ingredient-item.selected {
+            border-color: rgba(255,184,212,.72);
+            background: linear-gradient(140deg, rgba(46,25,39,.92), rgba(35,20,30,.92));
+            box-shadow: 0 0 16px rgba(255,164,202,.42), inset 0 0 12px rgba(255,196,222,.20);
+        }
+
+        /* 删除档案：放在档案卡片内容的最底部，随卡片滚动到最下方才出现（不再固定在界面底部）；
+           圆圈用醒目的警示红，作为“提醒/危险”的代表色，不再用近黑的暗红 */
+        .archive-del-row {
+            display: flex; justify-content: center; margin-top: 16px; flex-shrink: 0;
+        }
+        .archive-del-x {
+            position: static;
+            width: 32px; height: 32px; padding: 0; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-family: inherit; font-size: 14px; line-height: 1;
+            background: linear-gradient(140deg, #ff6b6b 0%, #e23744 100%);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,.30);
+            box-shadow: 0 0 16px rgba(255,77,79,.55), inset 0 0 8px rgba(255,255,255,.18);
+            -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px);
+            cursor: pointer;
+            transition: transform .18s cubic-bezier(.16,1,.3,1), background .18s, box-shadow .18s;
+        }
+        .archive-del-x:hover {
+            background: linear-gradient(140deg, #ff8080 0%, #f0414f 100%);
+            box-shadow: 0 0 22px rgba(255,77,79,.70), inset 0 0 8px rgba(255,255,255,.25);
+        }
+        .archive-del-x:active { transform: scale(.86); background: linear-gradient(140deg, #e23744 0%, #c62828 100%); }
+
+        /* ═══ 轻提示 Toast：宿主 iframe 的 sandbox 不含 allow-modals，
+               原生 alert()/confirm() 会被浏览器忽略，一律自绘 ═══ */
+        .toast {
+            position: absolute; left: 50%; bottom: 14%; z-index: 1600;
+            transform: translateX(-50%) translateY(12px);
+            max-width: 80%; text-align: center; line-height: 1.55;
+            background: rgba(28,19,25,.93); color: #f4e7ed;
+            border: 1px solid rgba(255,178,208,.34);
+            font-size: 12px; padding: 11px 18px; border-radius: 14px;
+            box-shadow: 0 0 24px rgba(255,156,198,.28), 0 10px 26px rgba(0,0,0,.5);
+            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+            opacity: 0; pointer-events: none;
+            transition: opacity .3s ease, transform .3s cubic-bezier(.16,1,.3,1);
+        }
+        .toast.active { opacity: 1; transform: translateX(-50%) translateY(0); }
+    </style>
+</head>
+<body>
+<div class="phone-container">
+<div class="star-field" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div id="fullScreenLoader"><div class="loading-spinner" style="width:24px;height:24px;margin-bottom:12px;"></div><span id="loaderText">加载中...</span></div>
+
+    <!-- 轻提示 Toast（sandbox 屏蔽了原生 alert/confirm，一律自绘） -->
+    <div class="toast" id="toastBox"></div>
+    <!-- 第一页：主页面 -->
+    <div id="page-1" class="page hidden">
+        <div class="stamp-page-header">
+            <span class="ph-ghost" aria-hidden="true">酒</span>
+            <div class="title-kicker">
+                <span class="tk-num">№ 01</span>
+                <span class="tk-rule"></span>
+                <span class="tk-jp">喫茶 MIXOLOGY</span>
+            </div>
+            <h1 class="poster-title" id="pageMainTitle"><span class="pt-a"><span class="ch-blue">K</span><span class="ch-yellow">I</span>SSA</span><span class="pt-b">SOUL MIX</span></h1>
+            <p id="pageMainSubtitle">左侧选择心仪宾客，右侧查阅调酒档案</p>
+        </div>
+        <div class="left-wheel-wrapper">
+            <button class="mode-switch-btn" id="modeSwitchBtn" title="切换：让客人为你调酒">⇄</button>
+            <div class="select-badge" id="selectBadge">0/3</div>
+            <div class="left-avatar-wheel" id="avatarWheel"></div>
+        </div>
+        <div class="right-wheel-stage">
+            <div class="stamp-wheel-track" id="stampTrack"></div>
+        </div>
+        <button class="btn-ins" id="dynamicActionBtn">为选定宾客调酒</button>
+    </div>
+    <!-- 第二页：档案详细查看页 -->
+    <div id="page-2" class="page hidden">
+        <div class="stamp-page-header">
+            <span class="ph-ghost" aria-hidden="true">憶</span>
+            <div class="title-kicker">
+                <span class="tk-num">№ 02</span>
+                <span class="tk-rule"></span>
+                <span class="tk-jp">記録 ARCHIVE</span>
+            </div>
+            <h1 class="poster-title"><span class="pt-a"><span class="ch-blue">S</span><span class="ch-yellow">A</span>VED</span><span class="pt-b">ARCHIVE</span></h1>
+            <p>已归档的灵魂调酒记录</p>
+        </div>
+        <div class="guest-info-card">
+            <div class="cocktail-preview-banner" id="infoBannerContainer">
+                <div class="cocktail-art-card">
+                    <div class="cocktail-placeholder-art" id="infoBannerEmoji">🍸</div>
+                    <div class="cocktail-art-liquid" id="infoBannerLiquid"></div>
+                    <div class="cocktail-art-glass"></div>
+                </div>
+            </div>
+            <div class="guest-info-header">
+                <h2 id="infoTitle">档案名称</h2>
+                <div class="sub" id="infoSubtitle">风味子标题</div>
+                <div class="guest-chips" id="infoGuestChips"></div>
+            </div>
+            <div class="info-section"><strong>✦ 配方结构：</strong><span id="infoRecipe"></span></div>
+            <div class="info-section"><strong>✦ 五维属性：</strong><div class="stat-bar-group" id="infoStatsGroup"></div></div>
+            <div class="info-section"><strong>✦ 调制技法：</strong><span id="infoTechnique"></span></div>
+            <div class="info-section"><strong>✦ 风味轮廓：</strong><span id="infoFlavor"></span></div>
+            <div class="info-section">
+                <strong>✦ 回想档案 / 故事（约500字）：</strong>
+                <span id="infoQuote" style="font-style: italic; color: #e5e5e0; line-height: 1.6; display: block; margin-top:4px;"></span>
+                <div class="guest-quotes-group" id="infoGuestQuotes"></div>
+            </div>
+            <div class="info-section"><strong>✦ 路人评价：</strong><div class="reviews-container" id="infoReviews"></div></div>
+            <div class="info-section"><strong>✦ 建议售价：</strong><div class="price-suggestion-box"><span class="price-label">建议零售标价</span><div class="price-value-container"><span class="price-amount" id="infoPrice">¥188</span><span class="price-badge-small" id="infoPriceBadge">夯</span></div></div></div>
+            <div class="archive-del-row"><button class="archive-del-x" id="deleteArchiveBtn" title="删除该档案" aria-label="删除该档案">✕</button></div>
+        </div>
+        <button class="btn-ins" id="backToWheelBtn">返回选择轮盘</button>
+    </div>
+    <!-- 第三页：玩家手动调酒页（随机杯型） -->
+    <div id="page-3" class="page hidden">
+        <div class="bartend-header">
+            <button class="back-btn" id="backToWheelFromBar">← 返回</button>
+            <div class="guest-tag" id="currentGuestTag">开始调酒</div>
+        </div>
+        <div class="bartend-workspace">
+            <div class="pouring-stream" id="pouringStream"></div>
+            <div class="glass-container" id="glassContainer">
+                <div class="glass-cup-body" id="glassCup">
+                    <div class="glass-rim" id="glassRim"></div>
+                    <div id="liquidLayersContainer"></div>
+                </div>
+                <div class="glass-stem-area">
+                    <div class="glass-stem" id="glassStem"></div>
+                    <div class="glass-base"></div>
+                </div>
+            </div>
+            <div class="hint-text" id="hintText">选中材料后「长按」玻璃杯缓缓注入 · 同种材料不合并、各成一层 · 新材料永远叠在最上层 · 双击杯子可倒空</div>
+        </div>
+        <div style="flex-shrink: 0;">
+            <div class="ingredients-bar" id="ingredientsBar"></div>
+            <button class="btn-ins" id="finishBtn" style="margin-top: 10px;">完成特调</button>
+        </div>
+    </div>
+    <!-- 第四页：AI 结果页 -->
+    <div id="page-4" class="page hidden">
+        <div class="stamp-page-header">
+            <span class="ph-ghost" aria-hidden="true">酔</span>
+            <div class="title-kicker">
+                <span class="tk-num">№ 03</span>
+                <span class="tk-rule"></span>
+                <span class="tk-jp">調製 RESULT</span>
+            </div>
+            <h1 class="poster-title"><span class="pt-a"><span class="ch-blue">C</span><span class="ch-yellow">O</span>CKTAIL</span><span class="pt-b">ARCHIVE</span></h1>
+            <p>专属灵魂调酒风味解构</p>
+        </div>
+        <div class="result-card">
+            <div class="cocktail-preview-banner" id="cocktailBanner">
+                <div class="cocktail-art-card">
+                    <div class="cocktail-placeholder-art" id="resBannerEmoji">🍸</div>
+                    <div class="cocktail-art-liquid" id="resBannerLiquid"></div>
+                    <div class="cocktail-art-glass"></div>
+                </div>
+            </div>
+            <div class="result-header">
+                <h2 id="resTitle">落日与灰烬</h2>
+                <div class="cocktail-subtitle" id="resSubtitle">Classic Soul Cocktail Profile</div>
+                <div class="guest-chips" id="resGuestChips"></div>
+            </div>
+            <div class="result-section"><strong>✦ 配方结构：</strong><div class="recipe-tags" id="resTags"></div></div>
+            <div class="result-section"><strong>✦ 属性评估：</strong><div class="stat-bar-group" id="resStatsGroup"></div></div>
+            <div class="result-section"><strong>✦ 调制技法：</strong><span id="resTechnique"></span></div>
+            <div class="result-section"><strong>✦ 风味轮廓：</strong><span id="resFlavor"></span></div>
+            <div class="result-section">
+                <strong>✦ 回想档案 / 故事（约500字）：</strong>
+                <div class="guest-quote-box">
+                    <div class="quote-avatar" id="resAvatarIcon">🎨</div>
+                    <div class="quote-right-content">
+                        <div class="quote-text" id="resQuote"><span class="loading-spinner"></span>等待深度回想生成（约500字）...</div>
+                        <div class="guest-quotes-group" id="resGuestQuotes"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="result-section"><strong>✦ 路人评价：</strong><div class="reviews-container" id="resReviews"><span style="color:#888;">生成中...</span></div></div>
+            <div class="result-section"><strong>✦ 建议售价：</strong><div class="price-suggestion-box"><span class="price-label">建议零售标价</span><div class="price-value-container"><span class="price-amount" id="resPrice">¥188</span><span class="price-badge-small" id="resPriceBadge">夯</span></div></div></div>
+        </div>
+        <button class="btn-ins" id="restartBtn">再次开启</button>
+    </div>
+    <!-- 第五页：顾客为你特调页（不同杯型与颜色） -->
+    <div id="page-5" class="page hidden">
+        <div class="bartend-header">
+            <button class="back-btn" id="backToWheelFromMood">← 返回</button>
+            <div class="guest-tag" id="moodGuestTag">调酒师：</div>
+        </div>
+        <div class="mood-workspace">
+            <div class="mood-glass-container" id="moodGlassContainer">
+                <div class="mood-cup-body" id="moodCupBody">
+                    <div class="mood-cup-rim" id="moodCupRim"></div>
+                    <div class="mood-liquid" id="moodLiquid"></div>
+                </div>
+                <div class="mood-stem-area" id="moodStemArea">
+                    <div class="mood-stem" id="moodStem"></div>
+                    <div class="mood-base" id="moodBase"></div>
+                </div>
+            </div>
+            <div class="mood-input-box">
+                <div class="mood-input-header">
+                    <div class="user-mini-avatar" id="userMiniAvatar">👤</div>
+                    <label>✦ 描述你此刻的近期情绪或心境：</label>
+                </div>
+                <textarea id="moodInput" placeholder="例如：深夜加班有些疲惫，但内心依然在期待明天的一抹晨光..."></textarea>
+            </div>
+        </div>
+        <button class="btn-ins" id="generateMoodDrinkBtn" style="margin-top:10px;">让TA为你调制专属情绪特调</button>
+    </div>
+</div>
+<script>
+// 👇 1. 直接把这段等待函数粘贴在脚本的最前面
+function waitForAiPhoneGame() {
+    return new Promise((resolve) => {
+        if (window.AiPhoneGame) return resolve(window.AiPhoneGame);
+        const checkInterval = setInterval(() => {
+            if (window.AiPhoneGame) {
+                clearInterval(checkInterval);
+                resolve(window.AiPhoneGame);
+            }
+        }, 50);
+    });
+}
+    let guests = [];
+    let savedArchives = [];
+    let viewingArchiveId = null;   // 当前正在详情页查阅的档案 id（删除时用它精确定位）
+    let playerInfo = { name: "玩家", avatar: "", htmlIcon: "👤" };
+    let isGuestMode = false; 
+    
+    // --- 音效系统（黑莓触屏音效，无按键杂音） ---
+    let audioCtx = null;
+    function getAudioContext() {
+        if (!audioCtx) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextClass) {
+                audioCtx = new AudioContextClass();
+            }
+        }
+        if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        return audioCtx;
+    }
+    document.addEventListener('pointerdown', () => {
+        const ctx = getAudioContext();
+        if (ctx) {
+            if (ctx.state === 'suspended') ctx.resume();
+            startBarChatter(); 
+        }
+    }, { once: true });
+
+    // ── 共用的白噪声缓冲（避免每次点击都重新生成） ──
+    let _noiseBuf = null;
+    function getNoiseBuffer(ctx) {
+        if (_noiseBuf && _noiseBuf.sampleRate === ctx.sampleRate) return _noiseBuf;
+        const len = Math.floor(ctx.sampleRate * 0.35);
+        const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+        const d = buf.getChannelData(0);
+        for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+        _noiseBuf = buf;
+        return buf;
+    }
+
+    // ── 音效总线（统一控制 UI 音效音量，不影响语音播报） ──
+    let sfxBus = null;
+    function getSfxBus(ctx) {
+        if (sfxBus) return sfxBus;
+        sfxBus = ctx.createGain();
+        sfxBus.gain.setValueAtTime(1.0, ctx.currentTime);
+        sfxBus.connect(ctx.destination);
+        return sfxBus;
+    }
+
+    // 一小段噪声，经过滤波器后作为敲击瞬态
+    function noiseBurst(ctx, dest, opts) {
+        const src = ctx.createBufferSource();
+        src.buffer = getNoiseBuffer(ctx);
+        src.loop = false;
+        // 每次从不同位置读取，避免完全一致的重复感
+        const filt = ctx.createBiquadFilter();
+        filt.type = opts.type || 'bandpass';
+        filt.frequency.setValueAtTime(opts.freq, ctx.currentTime + (opts.delay || 0));
+        if (opts.q != null) filt.Q.setValueAtTime(opts.q, ctx.currentTime + (opts.delay || 0));
+        const g = ctx.createGain();
+        const t0 = ctx.currentTime + (opts.delay || 0);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(Math.max(0.0002, opts.gain), t0 + 0.0009);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + opts.decay);
+        src.connect(filt); filt.connect(g); g.connect(dest);
+        src.start(t0, Math.random() * 0.2);
+        src.stop(t0 + opts.decay + 0.02);
+    }
+
+    /* ──────────────────────────────────────────────────────────
+       黑莓（BlackBerry）实体键盘按键音
+       原来那个 1400→400Hz 的电子"哔"声已彻底移除。
+       现在由三层合成一个干脆的塑料键"嗒"声：
+         1) 4kHz 以上的高频瞬态  → 指甲触到键帽的"咔"
+         2) 2.4kHz 带通共振      → 键帽塑料本身的脆响
+         3) 200Hz 左右的低频闷响 → 键轴触底的"托"
+       ────────────────────────────────────────────────────────── */
+    function playKeySound() {
+        try {
+            const ctx = getAudioContext();
+            if (!ctx || ctx.state !== 'running') return;
+            const bus = getSfxBus(ctx);
+            const t = ctx.currentTime;
+            const vary = 0.94 + Math.random() * 0.12; // 每次略有差异，避免机械重复
+
+            // 1) 高频瞬态：键帽触发的一瞬
+            noiseBurst(ctx, bus, { type: 'highpass', freq: 4200 * vary, gain: 0.075, decay: 0.007 });
+            // 2) 塑料共振体：黑莓键帽标志性的"脆"
+            noiseBurst(ctx, bus, { type: 'bandpass', freq: 2450 * vary, q: 6.5, gain: 0.085, decay: 0.026 });
+            // 3) 键轴触底闷响
+            const thock = ctx.createOscillator();
+            const tg = ctx.createGain();
+            thock.type = 'triangle';
+            thock.frequency.setValueAtTime(226 * vary, t);
+            thock.frequency.exponentialRampToValueAtTime(148 * vary, t + 0.028);
+            tg.gain.setValueAtTime(0.0001, t);
+            tg.gain.exponentialRampToValueAtTime(0.075, t + 0.0012);
+            tg.gain.exponentialRampToValueAtTime(0.0001, t + 0.032);
+            thock.connect(tg); tg.connect(bus);
+            thock.start(t); thock.stop(t + 0.04);
+        } catch(e) {}
+    }
+
+    /* ──────────────────────────────────────────────────────────
+       干杯（Cheers）：两只玻璃杯相碰
+       玻璃是非谐振体，用一组非整数倍分音 + 长尾余韵模拟；
+       两次撞击相隔约 80ms，正好是真实碰杯的"叮—叮"。
+       ────────────────────────────────────────────────────────── */
+    function glassStrike(ctx, bus, baseFreq, delay, amp) {
+        const t0 = ctx.currentTime + delay;
+        // 玻璃的非谐分音比与各自的衰减时间
+        const partials = [
+            { r: 1.00, a: 1.00, d: 1.75 },
+            { r: 2.67, a: 0.52, d: 1.15 },
+            { r: 4.71, a: 0.28, d: 0.78 },
+            { r: 7.42, a: 0.15, d: 0.52 },
+            { r: 10.9, a: 0.07, d: 0.34 }
+        ];
+        partials.forEach(p => {
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.type = 'sine';
+            // 轻微失谐制造真实的拍频抖动
+            osc.frequency.setValueAtTime(baseFreq * p.r * (1 + (Math.random() * 0.008 - 0.004)), t0);
+            g.gain.setValueAtTime(0.0001, t0);
+            g.gain.exponentialRampToValueAtTime(Math.max(0.0002, amp * p.a), t0 + 0.0015);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + p.d);
+            osc.connect(g); g.connect(bus);
+            osc.start(t0); osc.stop(t0 + p.d + 0.05);
+        });
+        // 撞击瞬间的"叮"尖头
+        noiseBurst(ctx, bus, { type: 'highpass', freq: 5200, gain: amp * 0.38, decay: 0.012, delay: delay });
+        // 杯身质量感的低频
+        const body = ctx.createOscillator();
+        const bg = ctx.createGain();
+        body.type = 'sine';
+        body.frequency.setValueAtTime(190 + Math.random() * 25, t0);
+        bg.gain.setValueAtTime(0.0001, t0);
+        bg.gain.exponentialRampToValueAtTime(amp * 0.22, t0 + 0.002);
+        bg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.16);
+        body.connect(bg); bg.connect(bus);
+        body.start(t0); body.stop(t0 + 0.2);
+    }
+
+    function playClinkSound() {
+        try {
+            const ctx = getAudioContext();
+            if (!ctx || ctx.state !== 'running') return;
+            const bus = getSfxBus(ctx);
+            const detune = 0.97 + Math.random() * 0.06;
+            // 第一杯：主音，清亮
+            glassStrike(ctx, bus, 1046 * detune, 0.000, 0.040);
+            // 第二杯：稍高、稍轻，制造"两只杯子"的层次
+            glassStrike(ctx, bus, 1244 * detune, 0.082, 0.028);
+        } catch(e) {}
+    }
+
+    // 兼容旧调用名：全站普通点击 = 黑莓键盘音
+    function playClickSound() { playKeySound(); }
+    function playMatchSound() { playKeySound(); }
+    // 语义化别名：调酒 / 特调等"成酒时刻"用干杯声
+    function playCheersSound() { playClinkSound(); }
+
+    let chatterNode = null;
+    let chatterGain = null;
+    function startBarChatter() {
+        try {
+            const ctx = getAudioContext();
+            if (!ctx || ctx.state !== 'running' || chatterNode) return;
+            const bufferSize = ctx.sampleRate * 4;
+            const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+            chatterNode = ctx.createBufferSource();
+            chatterNode.buffer = buffer;
+            chatterNode.loop = true;
+            const filter = ctx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.setValueAtTime(380, ctx.currentTime);
+            filter.Q.setValueAtTime(1.2, ctx.currentTime);
+            chatterGain = ctx.createGain();
+            chatterGain.gain.setValueAtTime(0.025, ctx.currentTime);
+            chatterNode.connect(filter);
+            filter.connect(chatterGain);
+            chatterGain.connect(ctx.destination);
+            chatterNode.start();
+        } catch(e) {}
+    }
+
+    let moodAmbientNodes = [];
+    let moodAmbientGain = null;
+    let fireCracklesTimer = null;
+    function startMoodAmbientAudio() {
+        try {
+            const ctx = getAudioContext();
+            if (!ctx || ctx.state !== 'running' || moodAmbientGain) return;
+            moodAmbientGain = ctx.createGain();
+            moodAmbientGain.gain.setValueAtTime(0.01, ctx.currentTime);
+            moodAmbientGain.gain.linearRampToValueAtTime(0.08, ctx.currentTime + 1.5);
+            moodAmbientGain.connect(ctx.destination);
+            const bufferSize = ctx.sampleRate * 4;
+            const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+            const fireRumble = ctx.createBufferSource();
+            fireRumble.buffer = buffer;
+            fireRumble.loop = true;
+            const fireFilter = ctx.createBiquadFilter();
+            fireFilter.type = 'lowpass';
+            fireFilter.frequency.setValueAtTime(220, ctx.currentTime);
+            fireRumble.connect(fireFilter);
+            fireFilter.connect(moodAmbientGain);
+            fireRumble.start();
+            moodAmbientNodes.push(fireRumble);
+            function triggerCrackle() {
+                if (!moodAmbientGain) return;
+                try {
+                    const cNode = ctx.createBufferSource();
+                    const cBufSize = ctx.sampleRate * 0.05;
+                    const cBuf = ctx.createBuffer(1, cBufSize, ctx.sampleRate);
+                    const cData = cBuf.getChannelData(0);
+                    for (let i = 0; i < cBufSize; i++) cData[i] = (Math.random() * 2 - 1);
+                    cNode.buffer = cBuf;
+                    const cFilter = ctx.createBiquadFilter();
+                    cFilter.type = 'highpass';
+                    cFilter.frequency.setValueAtTime(1500 + Math.random() * 2000, ctx.currentTime);
+                    const cGain = ctx.createGain();
+                    cGain.gain.setValueAtTime(0.15 + Math.random() * 0.2, ctx.currentTime);
+                    cGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+                    cNode.connect(cFilter);
+                    cFilter.connect(cGain);
+                    cGain.connect(moodAmbientGain);
+                    cNode.start();
+                } catch(e) {}
+                
+                fireCracklesTimer = setTimeout(triggerCrackle, 200 + Math.random() * 800);
+            }
+            triggerCrackle();
+            const murmurNode = ctx.createBufferSource();
+            murmurNode.buffer = buffer;
+            murmurNode.loop = true;
+            const murmurFilter = ctx.createBiquadFilter();
+            murmurFilter.type = 'bandpass';
+            murmurFilter.frequency.setValueAtTime(500, ctx.currentTime);
+            murmurFilter.Q.setValueAtTime(1.5, ctx.currentTime);
+            const murmurGain = ctx.createGain();
+            murmurGain.gain.setValueAtTime(0.4, ctx.currentTime);
+            murmurNode.connect(murmurFilter);
+            murmurFilter.connect(murmurGain);
+            murmurGain.connect(moodAmbientGain);
+            murmurNode.start();
+            moodAmbientNodes.push(murmurNode);
+        } catch(e) {}
+    }
+    function stopMoodAmbientAudio() {
+        try {
+            if (fireCracklesTimer) {
+                clearTimeout(fireCracklesTimer);
+                fireCracklesTimer = null;
+            }
+            if (moodAmbientGain && audioCtx) {
+                moodAmbientGain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+                setTimeout(() => {
+                    moodAmbientNodes.forEach(node => {
+                        try { node.stop(); node.disconnect(); } catch(e) {}
+                    });
+                    moodAmbientNodes = [];
+                    if (moodAmbientGain) {
+                        moodAmbientGain.disconnect();
+                        moodAmbientGain = null;
+                    }
+                }, 500);
+            }
+        } catch(e) {}
+    }
+    function playIceSound() {
+        try {
+            const ctx = getAudioContext();
+            if (!ctx || ctx.state !== 'running') return;
+            [2200, 3100, 4200].forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq + (Math.random() * 200 - 100), ctx.currentTime);
+                gain.gain.setValueAtTime(0.08 / (i + 1), ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.08);
+            });
+        } catch(e) {}
+    }
+    let pourNoiseNode = null;
+    let pourGainNode = null;
+    function startPourSound() {
+        try {
+            const ctx = getAudioContext();
+            if (!ctx || ctx.state !== 'running' || pourNoiseNode) return;
+            const bufferSize = ctx.sampleRate * 2;
+            const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+            
+            pourNoiseNode = ctx.createBufferSource();
+            pourNoiseNode.buffer = buffer;
+            pourNoiseNode.loop = true;
+            const filter = ctx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.setValueAtTime(750, ctx.currentTime);
+            filter.Q.setValueAtTime(3.5, ctx.currentTime);
+            pourGainNode = ctx.createGain();
+            pourGainNode.gain.setValueAtTime(0.01, ctx.currentTime);
+            pourGainNode.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.1);
+            pourNoiseNode.connect(filter);
+            filter.connect(pourGainNode);
+            pourGainNode.connect(ctx.destination);
+            pourNoiseNode.start();
+        } catch(e) {}
+    }
+    function stopPourSound() {
+        try {
+            if (pourGainNode && audioCtx) {
+                pourGainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+                setTimeout(() => {
+                    if (pourNoiseNode) {
+                        pourNoiseNode.stop();
+                        pourNoiseNode.disconnect();
+                        pourNoiseNode = null;
+                        pourGainNode = null;
+                    }
+                }, 120);
+            }
+        } catch(e) {}
+    }
+
+
+    // --- 随机酒杯造型定义 ---
+    const cupStyles = [
+        {
+            name: "马提尼杯 (Martini)",
+            clipPath: "polygon(0% 0%, 100% 0%, 50% 100%)",
+            stemHeight: "55px",
+            rimWidth: "120px",
+            bodyWidth: "120px",
+            bodyHeight: "120px",
+            hasRim: true
+        },
+        {
+            name: "古典杯 (Rocks/Tumbler)",
+            clipPath: "polygon(10% 0%, 90% 0%, 85% 100%, 15% 100%)",
+            stemHeight: "20px",
+            rimWidth: "110px",
+            bodyWidth: "110px",
+            bodyHeight: "110px",
+            hasRim: true
+        },
+        {
+            name: "郁金香高脚杯 (Coupe / Tulip)",
+            clipPath: "polygon(20% 0%, 80% 0%, 90% 40%, 65% 100%, 35% 100%, 10% 40%)",
+            stemHeight: "60px",
+            rimWidth: "100px",
+            bodyWidth: "110px",
+            bodyHeight: "115px",
+            hasRim: true
+        },
+        {
+            name: "长饮高脚杯 (Highball)",
+            clipPath: "polygon(15% 0%, 85% 0%, 80% 100%, 20% 100%)",
+            stemHeight: "35px",
+            rimWidth: "95px",
+            bodyWidth: "95px",
+            bodyHeight: "135px",
+            hasRim: true
+        },
+        {
+            name: "波尔多红酒杯 (Wine Glass)",
+            clipPath: "polygon(30% 0%, 70% 0%, 95% 45%, 75% 90%, 55% 100%, 45% 100%, 25% 90%, 5% 45%)",
+            stemHeight: "65px",
+            rimWidth: "90px",
+            bodyWidth: "115px",
+            bodyHeight: "125px",
+            hasRim: false
+        }
+    ];
+    function getRandomCupStyle() {
+        return cupStyles[Math.floor(Math.random() * cupStyles.length)];
+    }
+    function applyCupStyleToElement(bodyEl, rimEl, stemEl, style) {
+        bodyEl.style.clipPath = style.clipPath;
+        bodyEl.style.webkitClipPath = style.clipPath;
+        bodyEl.style.width = style.bodyWidth;
+        bodyEl.style.height = style.bodyHeight;
+        if (rimEl) {
+            rimEl.style.width = style.bodyWidth;
+            rimEl.style.display = style.hasRim ? 'block' : 'none';
+        }
+        if (stemEl) {
+            stemEl.style.height = style.stemHeight;
+        }
+    }
+    let avatarPos = 0.0; let targetAvatarPos = 0.0;
+    let cardPos = 0.0; let targetCardPos = 0.0;
+    let selectedGuest = null;
+    let selectedGuests = [];        // 多选集合（点击头像切换）；空数组 = 未显式选择
+    let currentActiveGuests = [];   // 本次调酒真正参与的宾客（单选=中间那位，多选=选中集合）
+    const MAX_GUESTS = 3;           // 一次最多共调 3 位
+
+    function escapeHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"]/g, function(ch) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch];
+        });
+    }
+    // 多人回想：把每位宾客的 quote/reviews 渲染成区块
+    function renderGuestQuotes(container, guestQuotes) {
+        if (!container) return;
+        if (!guestQuotes || !guestQuotes.length) { container.innerHTML = ''; return; }
+        container.innerHTML = guestQuotes.map(function(q) {
+            const reviews = (q.reviews && q.reviews.length) ? renderReviewsHtml(q.reviews) : '';
+            return '<div class="group-quote-item">' +
+                       '<div class="quote-avatar">' + (q.icon || '🍸') + '</div>' +
+                       '<div class="quote-right-content">' +
+                           '<div class="quote-name">' + escapeHtml(q.name || '') + '</div>' +
+                           '<div class="quote-text">' + escapeHtml(q.quoteText || '') + '</div>' +
+                           reviews +
+                       '</div>' +
+                   '</div>';
+        }).join('');
+    }
+    function renderGuestChips(container, guestQuotes, showIcon) {
+        if (!container) return;
+        if (!guestQuotes || !guestQuotes.length) { container.innerHTML = ''; return; }
+        const useIcon = showIcon !== false; // 默认显示头像；结果页传 false 仅显示人名
+        container.innerHTML = '<span class="gc-label">共调宾客：</span>' +
+            guestQuotes.map(function(q) {
+                const iconHtml = (useIcon && q.icon) ? (q.icon + ' ') : '';
+                return '<span class="gc-chip">' + iconHtml + escapeHtml(q.name || '') + '</span>';
+            }).join('');
+    }
+    let selectedIngredient = null;
+    let dynamicIngredients = [];
+    // 本地调酒材料池（进入手动调酒页时随机抽 3~6 种，避免每次都相同）
+    const MATERIAL_POOL = [
+        { name: "月光清酒", icon: "🍶", color: "#e3e8f0", stream: "#ffffff" },
+        { name: "苦艾酒", icon: "🌿", color: "#4a7c59", stream: "#74c69d" },
+        { name: "血色石榴", icon: "🍒", color: "#800f2f", stream: "#ff4d6d" },
+        { name: "蜜桃利口", icon: "🍑", color: "#ffb3a1", stream: "#ffd1c1" },
+        { name: "柚子和风", icon: "🍋", color: "#f4d35e", stream: "#fff1a8" },
+        { name: "薄荷烈酒", icon: "🌱", color: "#3fa34d", stream: "#8fe6a0" },
+        { name: "玫瑰糖浆", icon: "🌹", color: "#d6336c", stream: "#ff9ec4" },
+        { name: "海盐焦糖", icon: "🍮", color: "#caa15a", stream: "#e8cd95" },
+        { name: "烟熏威士忌", icon: "🥃", color: "#b5651d", stream: "#e0a96d" },
+        { name: "荔枝甘露", icon: "🍃", color: "#f7c8e0", stream: "#ffe1f0" },
+        { name: "咖啡利口", icon: "☕", color: "#6f4e37", stream: "#a9785a" },
+        { name: "青柠萃取", icon: "🍈", color: "#a8d08d", stream: "#d4f0c0" },
+        { name: "红石榴糖浆", icon: "🔴", color: "#c1121f", stream: "#ff5a6e" },
+        { name: "香草伏特加", icon: "🌼", color: "#f1e3c0", stream: "#fff4d6" },
+        { name: "百香果", icon: "🥭", color: "#f6c453", stream: "#ffe39e" },
+        { name: "紫罗兰利口", icon: "💜", color: "#6a4c93", stream: "#b794d4" }
+    ];
+    function shuffleArray(arr) {
+        const a = arr.slice();
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+    }
+    function pickRandomIngredients() {
+        const n = 3 + Math.floor(Math.random() * 4); // 3..6
+        return shuffleArray(MATERIAL_POOL).slice(0, n);
+    }
+    // 海报拼贴标题：把 "AAA BBB" 拆成两行错位排版
+    // （首词走大衬线渐变字面，余词走小号无衬线宽字距，第二行整体右移）
+    function setPosterTitle(el, text) {
+        if (!el) return;
+        const parts = String(text || '').trim().split(/\s+/);
+        const head = parts.shift() || '';
+        const tail = parts.join(' ');
+        el.className = 'poster-title';
+        el.textContent = '';
+        const a = document.createElement('span');
+        a.className = 'pt-a'; a.textContent = head;
+        el.appendChild(a);
+        if (tail) {
+            const b = document.createElement('span');
+            b.className = 'pt-b'; b.textContent = tail;
+            el.appendChild(b);
+        }
+    }
+
+    let pouredLayers = [];          // 每一次倒酒 = 一层（同种不合并），按时间顺序，最新在顶
+    let layerEls = [];              // 与 pouredLayers 一一对应的 DOM 层
+    let currentManualCupStyle = null;
+    let currentMoodCupStyle = null;
+    const pages = [document.getElementById('page-1'), document.getElementById('page-2'), document.getElementById('page-3'), document.getElementById('page-4'), document.getElementById('page-5')];
+    const loader = document.getElementById('fullScreenLoader');
+    const loaderText = document.getElementById('loaderText');
+    function showLoader(msg) { loaderText.innerText = msg; loader.classList.add('active'); }
+    function hideLoader() { loader.classList.remove('active'); }
+
+    /* ── 轻提示 Toast ──────────────────────────────────────────
+       宿主 game-hub-app.tsx 里 iframe 的 sandbox 是
+         "allow-scripts allow-same-origin"，不含 allow-modals，
+       浏览器会直接忽略 alert() / confirm()（confirm 恒返回 false），
+       所以全程不用原生弹窗，只用这个自绘的轻提示条。
+       ────────────────────────────────────────────────────────── */
+    let _toastTimer = null;
+    function showToast(msg, ms) {
+        const t = document.getElementById('toastBox');
+        if (!t) return;
+        t.innerText = msg;
+        t.classList.add('active');
+        clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => t.classList.remove('active'), ms || 2200);
+    }
+    
+    function showPage(index) { 
+        if (index !== 5) {
+            stopMoodAmbientAudio();
+        }
+        // 回到主转盘页时清空多选：默认「不选择人物 = 为中间宾客调酒」
+        if (index === 1) {
+            selectedGuests = [];
+            updateSelectionChip();
+        }
+        pages.forEach((p, i) => i === index - 1 ? p.classList.remove('hidden') : p.classList.add('hidden')); 
+    }
+    function extractJSON(text) {
+        try {
+            const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+            return match ? JSON.parse(match[0]) : null;
+        } catch(e) { return null; }
+    }
+    
+    function renderStatsHtml(stats) {
+        stats = stats || {};
+        return `
+            <div class="stat-row"><span>酒精度 (ABV)</span><div class="stat-bar-bg"><div class="stat-bar-fill" style="width: ${stats.abv || 0}%"></div></div><span>${stats.abv || 0}%</span></div>
+            <div class="stat-row"><span>甜度 (Sweet)</span><div class="stat-bar-bg"><div class="stat-bar-fill" style="width: ${stats.sweetness || 0}%"></div></div><span>${stats.sweetness || 0}%</span></div>
+            <div class="stat-row"><span>酸度 (Acid)</span><div class="stat-bar-bg"><div class="stat-bar-fill" style="width: ${stats.acidity || 0}%"></div></div><span>${stats.acidity || 0}%</span></div>
+            <div class="stat-row"><span>苦度 (Bitter)</span><div class="stat-bar-bg"><div class="stat-bar-fill" style="width: ${stats.bitterness || 0}%"></div></div><span>${stats.bitterness || 0}%</span></div>
+            <div class="stat-row"><span>辛辣 (Spice)</span><div class="stat-bar-bg"><div class="stat-bar-fill" style="width: ${stats.spice || 0}%"></div></div><span>${stats.spice || 0}%</span></div>
+        `;
+    }
+    function renderReviewsHtml(reviews) {
+        if (!reviews || !reviews.length) return '<div class="review-item"><span class="review-text">暂无路人评价</span></div>';
+        return reviews.map(r => `
+            <div class="review-item">
+                <span class="review-text">${r.text}</span>
+                <span class="review-meta"><span class="review-like">❤️ ${r.likes}</span>💬 ${r.replies}</span>
+            </div>
+        `).join('');
+    }
+    function getCurrentSelectedGuest() {
+        if (!guests.length) return null;
+        let idx = (Math.round(targetAvatarPos) % guests.length + guests.length) % guests.length;
+        return guests[idx];
+    }
+    // 当前参与调酒的宾客集合：
+    //   - 若玩家显式多选了人物 -> 用选中的集合
+    //   - 否则（不选择人物）-> 用转盘正中间那一位（为TA调酒）
+    function getActiveGuests() {
+        if (selectedGuests.length) return selectedGuests;
+        const c = getCurrentSelectedGuest();
+        return c ? [c] : [];
+    }
+    function getCurrentGuestArchives() {
+        const actives = getActiveGuests();
+        const activeIds = actives.map(g => g.id);
+        if (!activeIds.length) return [];
+        return savedArchives.filter(a => {
+            const ids = a.guestIds || (a.guestId ? [a.guestId] : []);
+            if (!ids.length) return false;
+            // 显示「活跃集合 ⊆ 档案归属集合」的档案（单人看单人/含TA的合调；多人看全员到齐的合调）
+            const subset = activeIds.every(id => ids.indexOf(id) !== -1);
+            return subset && (isGuestMode ? (a.mode === 'mood') : (a.mode !== 'mood'));
+        });
+    }
+    function updateSelectionChip() {
+        const badge = document.getElementById('selectBadge');
+        if (!badge) return;
+        // 未选择时不显示；选了人 -> 上方浮出「已选 n/3」圆圈
+        if (selectedGuests.length === 0) {
+            badge.className = 'select-badge';
+            badge.textContent = '0/' + MAX_GUESTS;
+        } else {
+            badge.className = 'select-badge show';
+            badge.textContent = selectedGuests.length + '/' + MAX_GUESTS;
+        }
+    }
+    function toggleGuestSelection(guest) {
+        if (!guest) return;
+        const i = selectedGuests.findIndex(s => s.id === guest.id);
+        if (i >= 0) {
+            selectedGuests.splice(i, 1);            // 再点一次 = 取消
+        } else {
+            if (selectedGuests.length >= MAX_GUESTS) {
+                showToast('一次最多共调 ' + MAX_GUESTS + ' 位宾客');
+                return;
+            }
+            selectedGuests.push(guest);
+        }
+        targetCardPos = 0;                          // 切换归属集合后，右侧档案从头展示
+        updateSelectionChip();
+    }
+    // 打开一条档案的详情页。抽成独立函数，供轮盘的轻点判定调用。
+    function openArchiveDetail(targetArchive) {
+        if (!targetArchive) return;
+        document.getElementById('infoTitle').innerText = targetArchive.title || '';
+        document.getElementById('infoSubtitle').innerText = targetArchive.subtitle || '';
+        document.getElementById('infoRecipe').innerText = targetArchive.recipeText || '';
+        document.getElementById('infoStatsGroup').innerHTML = renderStatsHtml(targetArchive.stats);
+        document.getElementById('infoTechnique').innerText = targetArchive.techniqueText || '';
+        document.getElementById('infoFlavor').innerText = targetArchive.flavorText || '';
+        document.getElementById('infoQuote').innerText = targetArchive.quoteText || '';
+        document.getElementById('infoReviews').innerHTML = renderReviewsHtml(targetArchive.reviews);
+        // 多人共调档案：标题下展示「共调宾客」头像 chips；故事写在主回想框里（不再分三段）
+        const _isGroup = targetArchive.guestNames && targetArchive.guestNames.length > 1;
+        const _chips = _isGroup ? targetArchive.guestNames.map((n, i) => ({ name: n, icon: (targetArchive.guestIcons || [])[i] || '🍸' })) : null;
+        renderGuestChips(document.getElementById('infoGuestChips'), _chips, false);
+        renderGuestQuotes(document.getElementById('infoGuestQuotes'), null);
+        document.getElementById('infoPrice').innerText = targetArchive.price || "¥168";
+        document.getElementById('infoPriceBadge').innerText = targetArchive.priceBadge || "平平无奇";
+        document.getElementById('infoBannerEmoji').innerText = targetArchive.iconStr || '🍸';
+        document.getElementById('infoBannerLiquid').style.background = targetArchive.liquidColor || 'linear-gradient(180deg, #d1b499, #a3704c)';
+        viewingArchiveId = targetArchive.id;
+        showPage(2);
+    }
+
+    function renderWheelsSmoothly() {
+        if (!guests.length) return;
+        avatarPos += (targetAvatarPos - avatarPos) * 0.35;
+        let activeArchives = getCurrentGuestArchives();
+        if (activeArchives.length > 0) cardPos += (targetCardPos - cardPos) * 0.35;
+        const avatarWheel = document.getElementById('avatarWheel');
+        const stampTrack = document.getElementById('stampTrack');
+        
+        avatarWheel.innerHTML = '';
+        guests.forEach((g, index) => {
+            let offset = index - avatarPos;
+            while (offset < -guests.length / 2) offset += guests.length;
+            while (offset > guests.length / 2) offset -= guests.length;
+            if (Math.abs(offset) < 2.5) {
+                const avatar = document.createElement('div');
+                const isSel = selectedGuests.some(s => s.id === g.id);
+                avatar.className = 'avatar-item' + (isSel ? ' is-selected' : '');
+                avatar.innerHTML = g.htmlIcon + (isSel ? '<span class="sel-check">✓</span>' : '');
+                avatar.style.transform = `translateY(${offset * 50}px) scale(${Math.max(0.6, 1 - Math.abs(offset) * 0.18)}) rotateX(${offset * -15}deg)`;
+                avatar.style.opacity = Math.max(0.15, 1 - Math.abs(offset) * 0.35);
+                avatar.style.zIndex = Math.round((1 - Math.abs(offset) / 3) * 10);
+                if (Math.abs(offset) < 0.35) { avatar.style.borderColor = '#d1b499'; avatar.style.boxShadow = '0 0 20px rgba(209,180,153,0.35)'; }
+                avatar.dataset.idx = index;
+                avatarWheel.appendChild(avatar);
+            }
+        });
+        stampTrack.innerHTML = '';
+        if (activeArchives.length === 0) {
+            const emptyCard = document.createElement('div');
+            emptyCard.className = 'stamp-card';
+            emptyCard.innerHTML = `<div class="stamp-top"><span>ARCHIVE</span><span>EMPTY</span></div><div class="stamp-content"><h3>暂无档案</h3><p>${isGuestMode ? '点击下方获取专属情绪特调' : '请为该客人调制专属酒品'}</p></div><div class="stamp-bottom"><span class="stamp-price-tag">¥0</span><span class="stamp-tag-badge">平平无奇</span></div>`;
+            stampTrack.appendChild(emptyCard);
+        } else {
+            activeArchives.forEach((archive, index) => {
+                let offset = index - cardPos;
+                while (offset < -activeArchives.length / 2) offset += activeArchives.length;
+                while (offset > activeArchives.length / 2) offset -= activeArchives.length;
+                if (Math.abs(offset) < 2.5) {
+                    const card = document.createElement('div');
+                    card.className = 'stamp-card';
+                    card.style.transform = `translate(${20 + Math.abs(offset) * -10}px, ${offset * 75}px) rotate(${offset * 8}deg) scale(${Math.max(0.75, 1 - Math.abs(offset) * 0.12)})`;
+                    card.style.opacity = Math.max(0.15, 1 - Math.abs(offset) * 0.35);
+                    card.style.zIndex = Math.round((1 - Math.abs(offset) / 3) * 10);
+                    if (Math.abs(offset) < 0.35) { card.style.borderLeft = '4px solid #a3704c'; card.style.boxShadow = '-15px 15px 30px rgba(0,0,0,0.4)'; }
+                    card.innerHTML = `<div class="stamp-top"><span>${archive.iconStr || '🍸'}</span><span>#${index + 1}</span></div><div class="stamp-content"><h3>${archive.title}</h3><p>${archive.desc}</p></div><div class="stamp-bottom"><span class="stamp-price-tag">${archive.price || "¥168"}</span><span class="stamp-tag-badge">${archive.priceBadge || "平平无奇"}</span></div>`;
+                    // 只打索引，不绑 click：卡片每帧都会被重建，click 绑在这里收不到
+                    card.dataset.idx = index;
+                    stampTrack.appendChild(card);
+                }
+            });
+        }
+        requestAnimationFrame(renderWheelsSmoothly);
+    }
+    function bindEvents() {
+        const avatarWheel = document.getElementById('avatarWheel');
+        const rightStage = document.querySelector('.right-wheel-stage');
+        
+        let isDragA = false, startYA = 0, downYA = 0, downXA = 0, downTA = 0, movedA = 0;
+        avatarWheel.addEventListener('pointerdown', e => { isDragA = true; startYA = e.clientY; downYA = e.clientY; downXA = e.clientX; downTA = Date.now(); movedA = 0; avatarWheel.setPointerCapture(e.pointerId); });
+        avatarWheel.addEventListener('pointermove', e => {
+            if (!isDragA) return;
+            movedA = Math.max(movedA, Math.abs(e.clientY - downYA), Math.abs(e.clientX - downXA));
+            if(isDragA) { targetAvatarPos -= (e.clientY - startYA) * 0.013; startYA = e.clientY; }
+        });
+        avatarWheel.addEventListener('pointerup', e => {
+            if (!isDragA) return;
+            isDragA = false;
+            const isTap = movedA < 8 && (Date.now() - downTA) < 700;
+            if (isTap) {
+                // 用几何位置反推被点的头像（pointer capture 会把 e.target 劫持到 wheel 本身）
+                const rect = avatarWheel.getBoundingClientRect();
+                const centerY = rect.top + rect.height / 2;
+                const offsetAtPointer = (e.clientY - centerY) / 50;
+                let idx = Math.round(avatarPos + offsetAtPointer);
+                idx = ((idx % guests.length) + guests.length) % guests.length;
+                if (guests[idx]) {
+                    playKeySound();
+                    toggleGuestSelection(guests[idx]);
+                    return;
+                }
+            }
+            targetAvatarPos = Math.round(targetAvatarPos);
+            targetCardPos = 0;
+        });
+        // 右侧档案轮盘：拖拽翻页 + 轻点打开详情。
+        // 这里必须自己判定「轻点」，不能依赖卡片上的 click，原因有二：
+        //   ① 卡片 DOM 每帧被 renderWheelsSmoothly 重建，按下和抬起已不是同一个元素；
+        //   ② setPointerCapture 会把 click 劫持到 stage 上，卡片的 click 根本收不到。
+        let isDragC = false, startYC = 0, downYC = 0, downXC = 0, downTC = 0, downIdxC = -1, movedC = 0;
+        rightStage.addEventListener('pointerdown', e => {
+            isDragC = true;
+            startYC = e.clientY;
+            downYC = e.clientY; downXC = e.clientX; downTC = Date.now(); movedC = 0;
+            const el = (e.target && e.target.closest) ? e.target.closest('.stamp-card') : null;
+            downIdxC = (el && el.dataset && el.dataset.idx !== undefined) ? parseInt(el.dataset.idx, 10) : -1;
+            rightStage.setPointerCapture(e.pointerId);
+        });
+        rightStage.addEventListener('pointermove', e => {
+            if (!isDragC) return;
+            movedC = Math.max(movedC, Math.abs(e.clientY - downYC), Math.abs(e.clientX - downXC));
+            if (getCurrentGuestArchives().length > 0) { targetCardPos -= (e.clientY - startYC) * 0.013; startYC = e.clientY; }
+        });
+        rightStage.addEventListener('pointerup', () => {
+            if (!isDragC) return;
+            isDragC = false;
+            const list = getCurrentGuestArchives();
+            const isTap = movedC < 8 && (Date.now() - downTC) < 700;
+            if (list.length > 0) targetCardPos = Math.round(targetCardPos);
+            if (!isTap || list.length === 0 || downIdxC < 0 || isNaN(downIdxC)) { downIdxC = -1; return; }
+            const centerIdx = ((Math.round(targetCardPos) % list.length) + list.length) % list.length;
+            if (downIdxC === centerIdx) {
+                playMatchSound();
+                openArchiveDetail(list[centerIdx]);      // 点的就是正中那张 -> 直接打开
+            } else {
+                playKeySound();
+                targetCardPos = downIdxC;                // 点的是侧边那张 -> 先转到它
+            }
+            downIdxC = -1;
+        });
+        rightStage.addEventListener('pointercancel', () => { isDragC = false; downIdxC = -1; });
+        document.getElementById('modeSwitchBtn').addEventListener('click', function() {
+            playMatchSound();
+            isGuestMode = !isGuestMode;
+            this.classList.toggle('active');
+            const _pt = document.getElementById('pageMainTitle');
+            _pt.className = 'poster-title';
+            _pt.innerHTML = '<span class="pt-a"><span class="ch-blue">K</span><span class="ch-yellow">I</span>SSA</span><span class="pt-b">SOUL MIX</span>';
+            document.getElementById('pageMainSubtitle').innerText = isGuestMode ? "当前模式：由选定客人为你调制专属情绪特调" : "左侧选择心仪宾客，右侧查阅调酒档案";
+            document.getElementById('dynamicActionBtn').innerText = isGuestMode ? "让TA为你调制专属情绪特调" : "为选定宾客调酒";
+            targetCardPos = 0;
+        });
+        document.getElementById('dynamicActionBtn').addEventListener('click', async () => {
+            playCheersSound(); // 「为选定宾客调酒 / 让TA为你调制特调」→ 干杯碰杯声
+            const actives = getActiveGuests();
+            if (!actives.length) return;
+            currentActiveGuests = actives.slice();
+            const activeNames = actives.map(g => g.title).join('、');
+            if (isGuestMode) {
+                document.getElementById('moodGuestTag').innerText = `调酒师：${activeNames}`;
+                document.getElementById('moodInput').value = "";
+                
+                currentMoodCupStyle = getRandomCupStyle();
+                applyCupStyleToElement(
+                    document.getElementById('moodCupBody'),
+                    document.getElementById('moodCupRim'),
+                    document.getElementById('moodStem'),
+                    currentMoodCupStyle
+                );
+                document.getElementById('moodLiquid').style.background = "linear-gradient(180deg, rgba(209,180,153,0.7), rgba(163,112,76,0.85))";
+                showPage(5);
+                startMoodAmbientAudio(); 
+            } else {
+                showLoader("正在为你准备吧台与酒材...");
+                currentManualCupStyle = getRandomCupStyle();
+                applyCupStyleToElement(
+                    document.getElementById('glassCup'),
+                    document.getElementById('glassRim'),
+                    document.getElementById('glassStem'),
+                    currentManualCupStyle
+                );
+                try {
+                    const pkg = await window.AiPhoneGame.getRoleLightPackage(actives[0].id);
+                    const prompt = `根据角色性格，提供6种用于鸡尾酒的独特调酒材料。必须返回JSON数组格式：[{"name":"材料名","icon":"emoji图标","color":"#液体颜色hex","stream":"#水流颜色hex"}]，不要输出其他废话。`;
+                    const res = await window.AiPhoneGame.callLLM({ characterId: actives[0].id, messages: [...pkg.messages, {role: "user", content: prompt}] });
+                    let parsed = extractJSON(res.content);
+                    if (!parsed || !Array.isArray(parsed) || parsed.length === 0) throw new Error();
+                    // 角色材料也随机抽 3~6 种，保证数量随机、不堆满
+                    const n = 3 + Math.floor(Math.random() * 4);
+                    dynamicIngredients = shuffleArray(parsed).slice(0, Math.min(n, parsed.length));
+                } catch(e) {
+                    // 失败则本地材料池随机 3~6 种
+                    dynamicIngredients = pickRandomIngredients();
+                }
+                pouredLayers = [];
+                layerEls = [];
+                document.getElementById('liquidLayersContainer').innerHTML = '';
+                const bar = document.getElementById('ingredientsBar');
+                bar.innerHTML = '';
+                dynamicIngredients.forEach((ing, i) => {
+                    const item = document.createElement('div');
+                    item.className = 'ingredient-item' + (i === 0 ? ' selected' : '');
+                    item.innerHTML = `<div class="ingredient-icon">${ing.icon}</div><div class="ingredient-name">${ing.name}</div>`;
+                    item.onclick = () => {
+                        playClickSound();
+                        bar.querySelectorAll('.ingredient-item').forEach(el => el.classList.remove('selected'));
+                        item.classList.add('selected');
+                        selectedIngredient = ing;
+                    };
+                    bar.appendChild(item);
+                });
+                selectedIngredient = dynamicIngredients[0];
+                document.getElementById('currentGuestTag').innerText = `宾客：${activeNames}`;
+                hideLoader();
+                showPage(3);
+            }
+        });
+        document.getElementById('backToWheelBtn').addEventListener('click', () => { playMatchSound(); showPage(1); });
+        document.getElementById('backToWheelFromBar').addEventListener('click', () => { playMatchSound(); stopPourSound(); showPage(1); });
+        document.getElementById('backToWheelFromMood').addEventListener('click', () => { playMatchSound(); stopMoodAmbientAudio(); showPage(1); });
+        
+        let pourRAF = null;
+        let currentLayerIdx = -1;        // 当前这次长按正在注入的层索引；-1 表示未在倒
+        const glassContainer = document.getElementById('glassContainer');
+        const pouringStream = document.getElementById('pouringStream');
+
+        function flashHint(msg) {
+            const h = document.getElementById('hintText');
+            if (!h) return;
+            if (!h.dataset._orig) h.dataset._orig = h.innerText;
+            h.innerText = msg;
+            clearTimeout(flashHint._t);
+            flashHint._t = setTimeout(() => { h.innerText = h.dataset._orig; }, 1600);
+        }
+
+        // 长按玻璃杯 → 缓缓注入当前选中的材料；松手即停。
+        // 关键规则：同种材料不合并——每一次长按都新建一层；
+        //          新材料永远叠在最上层（column-reverse 下后 append 的在最上）。
+        // 真实倒酒节奏：瓶口刚倾斜时是一线细流，约 0.7 秒后才稳成正常流速。
+        // 用 requestAnimationFrame 按真实时间积分（而不是 setInterval 定量跳变），
+        // 液面才是连续爬升的，不会一格一格顿。
+        const POUR_RATE = 6.6;      // 稳定基础流速：% 杯量 / 秒（一层 25% 约 3.8 秒；长按加速后更快）
+        const POUR_RAMP = 460;      // 起流缓冲时长（毫秒）：细流 → 满速
+        const POUR_BOOST_TIME = 3600; // 持续按住达到最大加速所需时长（毫秒）
+        const POUR_BOOST_MAX = 1.8;   // 长按加速上限倍率（配合基础流速，最高约 3.3 倍速）
+
+        function startPouringAction() {
+            if (!selectedIngredient) return;
+            if (pourRAF) return;
+            playIceSound();
+            startPourSound();
+            pouringStream.style.background = selectedIngredient.stream || '#fff';
+            pouringStream.classList.add('active');
+
+            const layer = {
+                name: selectedIngredient.name,
+                count: 0,
+                color: selectedIngredient.color,
+                icon: selectedIngredient.icon,
+                stream: selectedIngredient.stream
+            };
+            pouredLayers.push(layer);
+            currentLayerIdx = pouredLayers.length - 1;
+            syncLayerEls();
+
+            const t0 = performance.now();
+            let last = t0;
+            const tick = (now) => {
+                const dt = Math.min((now - last) / 1000, 0.05);   // 秒；夹住防后台标签页跳变
+                last = now;
+
+                let total = 0;
+                for (let i = 0; i < pouredLayers.length; i++) total += pouredLayers[i].count;
+                const room = 100 - total;
+                if (room <= 0.001) { stopPouringAction(); return; }
+
+                // smoothstep 缓冲：起流由细渐粗
+                const r = Math.min(1, (now - t0) / POUR_RAMP);
+                const eased = r * r * (3 - 2 * r);
+                // 持续按住加速：起流缓冲结束后，流速随时间继续爬升，最高 POUR_BOOST_MAX 倍
+                const held = Math.max(0, now - t0 - POUR_RAMP);
+                const boost = 1 + Math.min(held / POUR_BOOST_TIME, 1) * (POUR_BOOST_MAX - 1);
+
+                pouredLayers[currentLayerIdx].count += Math.min(POUR_RATE * eased * boost * dt, room);
+                pouringStream.style.width = (1.4 + 1.8 * eased * boost).toFixed(2) + 'px';
+                updateLiquidDisplay();
+                pourRAF = requestAnimationFrame(tick);
+            };
+            pourRAF = requestAnimationFrame(tick);
+        }
+
+        function stopPouringAction() {
+            if (pourRAF) { cancelAnimationFrame(pourRAF); pourRAF = null; }
+            // 刚按下就松手 → 丢掉这一层空层，免得留下 0% 的幽灵层
+            if (currentLayerIdx >= 0 &&
+                currentLayerIdx === pouredLayers.length - 1 &&
+                pouredLayers[currentLayerIdx] &&
+                pouredLayers[currentLayerIdx].count < 0.2) {
+                pouredLayers.pop();
+                syncLayerEls();
+                updateLiquidDisplay();
+            }
+            currentLayerIdx = -1;
+            stopPourSound();
+            pouringStream.classList.remove('active');
+            pouringStream.style.width = '';
+        }
+
+        // 保证每层都有对应的 DOM 元素（顺序 = 倒入顺序；最新层 append 到最后 → 顶部）
+        function syncLayerEls() {
+            const container = document.getElementById('liquidLayersContainer');
+            while (layerEls.length < pouredLayers.length) {
+                const el = document.createElement('div');
+                el.className = 'liquid-layer';
+                container.appendChild(el);
+                layerEls.push(el);
+            }
+            while (layerEls.length > pouredLayers.length) {
+                const el = layerEls.pop();
+                if (el && el.parentNode) el.parentNode.removeChild(el);
+            }
+        }
+
+        function updateLiquidDisplay() {
+            const container = document.getElementById('liquidLayersContainer');
+            if (pouredLayers.length === 0) {
+                container.innerHTML = '';
+                layerEls = [];
+                return;
+            }
+            syncLayerEls();
+            // 关键：层高用「绝对占杯量」而不是彼此归一化的比例。
+            // 旧写法 count/total*100 会让各层之和恒等于 100%，
+            // 于是第一滴酒下去液面就顶到杯口 —— 那才是"上升太快"的真凶。
+            for (let i = 0; i < pouredLayers.length; i++) {
+                layerEls[i].style.background = pouredLayers[i].color;
+                layerEls[i].style.height = pouredLayers[i].count + '%';
+            }
+        }
+
+        // 真·长按：按住 180ms 之后才开始注入，避免误触与双击冲突
+        let pressTimer = null;
+        glassContainer.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            if (pressTimer) clearTimeout(pressTimer);
+            pressTimer = setTimeout(() => { pressTimer = null; startPouringAction(); }, 180);
+        });
+        window.addEventListener('pointerup', () => {
+            if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+            stopPouringAction();
+        });
+
+        // 双击玻璃杯 = 倒空重调
+        function emptyGlass() {
+            stopPourSound();
+            stopPouringAction();
+            pouredLayers = [];
+            layerEls = [];
+            document.getElementById('liquidLayersContainer').innerHTML = '';
+            flashHint('已倒空，重新调一杯吧');
+        }
+        glassContainer.addEventListener('dblclick', (e) => { e.preventDefault(); playKeySound(); emptyGlass(); });
+        
+        document.getElementById('finishBtn').addEventListener('click', async () => {
+            playCheersSound(); // 「完成特调」→ 成酒时刻，同样是干杯声
+            stopPourSound();
+            let total = 0;
+            for (let i = 0; i < pouredLayers.length; i++) total += pouredLayers[i].count;
+            if (total === 0) {
+                showToast("请先长按玻璃杯注入至少一种调酒材料！");
+                return;
+            }
+            showLoader("正在调配酒品并生成回想解构...");
+            showPage(4);
+
+            let recipeSummary = pouredLayers.map(l => `${l.name}(${Math.round(total > 0 ? (l.count / total) * 100 : 0)}%)`).join(', ');
+            let topIcon = '🍸';
+            let topColor = 'linear-gradient(180deg, #d1b499, #a3704c)';
+            let maxC = 0;
+            for (let i = 0; i < pouredLayers.length; i++) {
+                if (pouredLayers[i].count > maxC) {
+                    maxC = pouredLayers[i].count;
+                    topIcon = pouredLayers[i].icon;
+                    topColor = pouredLayers[i].color;
+                }
+            }
+            
+            const actives = (currentActiveGuests && currentActiveGuests.length) ? currentActiveGuests : getActiveGuests();
+            if (!actives.length) { hideLoader(); return; }
+            const mainGuest = actives[0];
+            try {
+                if (actives.length === 1) {
+                    const pkg = await window.AiPhoneGame.getRoleFullPackage(mainGuest.id);
+                    const prompt = `玩家为${mainGuest.title}调制了一杯鸡尾酒，配方为：${recipeSummary}。请完全站在角色${mainGuest.title}的第一人称视角，输出一段约500字的深度回想故事、风味解构和路人评价。必须返回严格的JSON格式：
+{
+  "title": "酒品名称",
+  "subtitle": "英文副标题",
+  "recipeText": "${recipeSummary}",
+  "stats": { "abv": 35, "sweetness": 40, "acidity": 20, "bitterness": 60, "spice": 15 },
+  "techniqueText": "调制技法描述",
+  "flavorText": "风味轮廓描述",
+  "quoteText": "角色第一人称深度回想与感悟（约500字）",
+  "reviews": [
+    { "text": "路人评价1", "likes": 128, "replies": 5 },
+    { "text": "路人评价2", "likes": 96, "replies": 3 }
+  ],
+  "price": "¥198",
+  "priceBadge": "神作"
+}
+只输出JSON。`;
+                    const res = await window.AiPhoneGame.callLLM({ characterId: mainGuest.id, messages: [...pkg.messages, {role: "user", content: prompt}] });
+                    let data = extractJSON(res.content);
+                    if (!data) throw new Error();
+                    fillResultPage(data, topIcon, `linear-gradient(180deg, ${topColor}, #1a1917)`, 'manual');
+                } else {
+                    // 多人共调：三位宾客同处一个故事里（一次性群像叙事，而非各写各的感想）
+                    const namesLine = actives.map(g => g.title).join('、');
+                    const { shared } = await buildGroupArchive(actives,
+                        (gs) => {
+                            const names = gs.map(g => g.title).join('、');
+                            return `玩家为${names}（你们${gs.length}位）共同调制了一杯鸡尾酒，配方为：${recipeSummary}。请完全以第三人称/群像视角，写一段约500字的小说式故事：你们${gs.length}位围坐在同一张吧台前，共饮这一杯为彼此而调的酒，每个人依自己的性格自然地说话、互动、流露心事，故事要把${names}都写进去，形成一个完整、有画面感的共同回忆。必须返回严格JSON格式：
+{
+  "title": "酒名（共调主题）",
+  "subtitle": "英文副标",
+  "recipeText": "${recipeSummary}",
+  "stats": { "abv": 35, "sweetness": 40, "acidity": 20, "bitterness": 60, "spice": 15 },
+  "techniqueText": "调制技法描述",
+  "flavorText": "风味轮廓描述",
+  "quoteText": "约500字的群像故事，把${names}都写进去",
+  "reviews": [ { "text": "路人评价", "likes": 100, "replies": 3 } ],
+  "price": "¥198",
+  "priceBadge": "神作"
+}
+只输出JSON。`;
+                        }
+                    );
+                    const merged = shared || {
+                        title: namesLine + " · 共调之夜",
+                        subtitle: "Souls Shared Tonight",
+                        recipeText: recipeSummary,
+                        stats: { abv: 30, sweetness: 50, acidity: 30, bitterness: 40, spice: 10 },
+                        techniqueText: "众人共饮，分层注视",
+                        flavorText: "同一杯酒，三种心事",
+                        price: "¥218",
+                        priceBadge: "合调"
+                    };
+                    fillResultPage(merged, topIcon, `linear-gradient(180deg, ${topColor}, #1a1917)`, 'manual', null);
+                }
+            } catch(e) {
+                const namesLine = actives.map(g => g.title).join('、');
+                let fallbackData = {
+                    title: actives.length === 1 ? "夜色微醺与回响" : (namesLine + " · 共调之夜"),
+                    subtitle: actives.length === 1 ? "Midnight Echo & Soul Cocktail" : "Souls Shared Tonight",
+                    recipeText: recipeSummary,
+                    stats: { abv: 28, sweetness: 50, acidity: 30, bitterness: 40, spice: 10 },
+                    techniqueText: "冰镇摇匀与冰块慢融技法",
+                    flavorText: "入口微甜，余韵带有深邃的木质与果香",
+                    quoteText: actives.length === 1
+                        ? `${mainGuest.title}端起酒杯，轻轻抿了一口，目光落向窗外流动的夜色：“这杯酒……让我想起了一些很久以前的雨夜。谢谢你，${playerInfo.name}，你似乎总能懂我此刻未曾说出口的心情。”`
+                        : `${namesLine}围坐在同一张吧台前，共饮这一杯为彼此而调的酒。暖光里，三人的笑语与沉默交织成同一个夜晚，每个人都在这杯酒里照见了自己的心事。谢谢你，${playerInfo.name}。`,
+                    reviews: actives.length === 1
+                        ? [
+                            { text: "调酒师的手艺绝了，层次感极其细腻！", likes: 142, replies: 6 },
+                            { text: "坐在吧台角落听着爵士，这一杯简直是灵魂救赎。", likes: 88, replies: 2 }
+                          ]
+                        : [{ text: "一杯敬自己，一杯敬同席的人。", likes: 120, replies: 5 }],
+                    price: "¥188",
+                    priceBadge: "夯"
+                };
+                fillResultPage(fallbackData, topIcon, `linear-gradient(180deg, ${topColor}, #1a1917)`, 'manual', null);
+            }
+            hideLoader();
+        });
+        
+        document.getElementById('generateMoodDrinkBtn').addEventListener('click', async () => {
+            playCheersSound(); // 「让TA为你调制专属情绪特调」→ 干杯碰杯声
+            const moodText = document.getElementById('moodInput').value.trim();
+            if (!moodText) {
+                showToast("请先输入你此刻的近期情绪或心境！");
+                return;
+            }
+            const actives = (currentActiveGuests && currentActiveGuests.length) ? currentActiveGuests : getActiveGuests();
+            if (!actives.length) { hideLoader(); return; }
+            const mainGuest = actives[0];
+            const namesLine = actives.map(g => g.title).join('、');
+            showLoader(`正在让调酒师 ${namesLine} 为你定制特调...`);
+            showPage(4);
+            stopMoodAmbientAudio();
+            
+            try {
+                if (actives.length === 1) {
+                    const pkg = await window.AiPhoneGame.getRoleFullPackage(mainGuest.id);
+                    const prompt = `玩家(${playerInfo.name})的心境/情绪是：“${moodText}”。作为调酒师${mainGuest.title}，请为玩家量身调制一杯专属情绪鸡尾酒。必须返回严格JSON格式：
+{
+  "title": "专属酒名",
+  "subtitle": "英文副标题",
+  "recipeText": "调配原料说明",
+  "stats": { "abv": 20, "sweetness": 70, "acidity": 30, "bitterness": 20, "spice": 10 },
+  "techniqueText": "调酒师专属调制手法",
+  "flavorText": "风味特征",
+  "quoteText": "${mainGuest.title}端过酒杯递给${playerInfo.name}时的第一人称温柔倾诉与心理共鸣（约500字）",
+  "reviews": [
+    { "text": "被治愈到了，调酒师太懂我了", "likes": 215, "replies": 12 }
+  ],
+  "price": "¥228",
+  "priceBadge": "神作"
+}
+只输出JSON。`;
+                    const res = await window.AiPhoneGame.callLLM({ characterId: mainGuest.id, messages: [...pkg.messages, {role: "user", content: prompt}] });
+                    let data = extractJSON(res.content);
+                    if (!data) throw new Error();
+                    fillResultPage(data, '🍸', 'linear-gradient(180deg, #d1b499, #654321)', 'mood');
+                } else {
+                    const { shared } = await buildGroupArchive(actives,
+                        (gs) => {
+                            const names = gs.map(g => g.title).join('、');
+                            return `玩家(${playerInfo.name})的心境/情绪是：“${moodText}”。作为调酒师，请为玩家量身调制一杯专属情绪鸡尾酒，并写一段约500字的群像故事：你们${gs.length}位围坐在一起，${names}各自端着这杯酒，对${playerInfo.name}说出温柔的倾诉与心理共鸣，故事要把${names}都写进去，形成一个完整、治愈的共同回忆。必须返回严格JSON格式：
+{
+  "title": "专属酒名",
+  "subtitle": "英文副标题",
+  "recipeText": "调配原料说明",
+  "stats": { "abv": 20, "sweetness": 70, "acidity": 30, "bitterness": 20, "spice": 10 },
+  "techniqueText": "调酒师专属调制手法",
+  "flavorText": "风味特征",
+  "quoteText": "约500字的群像故事，把${names}都写进去，对${playerInfo.name}温柔倾诉",
+  "reviews": [ { "text": "被治愈到了", "likes": 200, "replies": 10 } ],
+  "price": "¥228",
+  "priceBadge": "神作"
+}
+只输出JSON。`;
+                        }
+                    );
+                    const merged = shared || {
+                        title: namesLine + " · 共饮微光",
+                        subtitle: "Warmth for You",
+                        recipeText: "白朗姆酒、青柠汁、接骨木花糖浆、苏打水",
+                        stats: { abv: 18, sweetness: 75, acidity: 40, bitterness: 10, spice: 5 },
+                        techniqueText: "冰镇摇晃与轻气泡注入",
+                        flavorText: "清甜的花果香包裹着一丝微凉的薄荷清香",
+                        price: "¥228",
+                        priceBadge: "神作"
+                    };
+                    fillResultPage(merged, '🍸', 'linear-gradient(180deg, #d1b499, #654321)', 'mood', null);
+                }
+            } catch(e) {
+                let fallbackData = {
+                    title: actives.length === 1 ? "晨光与微风" : (namesLine + " · 共饮微光"),
+                    subtitle: actives.length === 1 ? "Morning Breeze & Warmth" : "Warmth for You",
+                    recipeText: "白朗姆酒、青柠汁、接骨木花糖浆、苏打水",
+                    stats: { abv: 18, sweetness: 75, acidity: 40, bitterness: 10, spice: 5 },
+                    techniqueText: "冰镇摇晃与轻气泡注入",
+                    flavorText: "清甜的花果香包裹着一丝微凉的薄荷清香",
+                    quoteText: actives.length === 1
+                        ? `${mainGuest.title}把调好的酒推到${playerInfo.name}面前，眼中带着温柔的笑意：“看你最近有些累，特意调了这杯带点甜味的。别把自己绷得太紧，明天太阳升起时，一切都会好起来的。”`
+                        : `${namesLine}把调好的酒推到${playerInfo.name}面前，眼中带着温柔的笑意：“看你最近有些累，特意调了这杯带点甜味的。别把自己绷得太紧，明天太阳升起时，一切都会好起来的。”`,
+                    reviews: [
+                        { text: "这杯特调绝了，喝完心里暖洋洋的。", likes: 164, replies: 8 }
+                    ],
+                    price: "¥218",
+                    priceBadge: "神作"
+                };
+                fillResultPage(fallbackData, '🍸', 'linear-gradient(180deg, #d1b499, #654321)', 'mood', null);
+            }
+            hideLoader();
+        });
+        
+        document.getElementById('restartBtn').addEventListener('click', () => { playMatchSound(); showPage(1); });
+    }
+    
+    // 多人共调：三位宾客同处一个故事里。一次性抓取所有人轻量包合并上下文，
+    // 再用第一位宾客身份发起一次生成，由模型写出「三人都在其中」的群像叙事。
+    async function buildGroupArchive(actives, sharedPromptFn) {
+        const allMsgs = [];
+        for (let i = 0; i < actives.length; i++) {
+            try {
+                const pkg = await window.AiPhoneGame.getRoleLightPackage(actives[i].id);
+                if (pkg && pkg.messages) allMsgs.push(...pkg.messages);
+            } catch (e) {}
+        }
+        const res = await window.AiPhoneGame.callLLM({ characterId: actives[0].id, messages: [...allMsgs, { role: "user", content: sharedPromptFn(actives) }] });
+        let data = extractJSON(res.content);
+        return { shared: data || null };
+    }
+
+    function fillResultPage(data, emojiStr, liquidBg, modeType, guestQuotesArr) {
+        const actives = (currentActiveGuests && currentActiveGuests.length) ? currentActiveGuests : getActiveGuests();
+        const mainGuest = actives[0] || { id: '', title: '调酒师', htmlIcon: '🍸' };
+        // 模型偶尔会缺字段，先补全，避免整页渲染中断
+        data = data || {};
+        data.title = data.title || '无名特调';
+        data.subtitle = data.subtitle || 'Untitled Soul Cocktail';
+        data.recipeText = data.recipeText || '配方未记录';
+        data.techniqueText = data.techniqueText || '——';
+        data.flavorText = data.flavorText || '——';
+        data.quoteText = data.quoteText || '……（这一杯的故事还没被说出口。）';
+
+        document.getElementById('resTitle').innerText = data.title;
+        document.getElementById('resSubtitle').innerText = data.subtitle;
+        
+        let tagsContainer = document.getElementById('resTags');
+        tagsContainer.innerHTML = String(data.recipeText).split(/[,，]/).map(r => `<div class="recipe-tag">${r.trim()}</div>`).join('');
+        
+        document.getElementById('resStatsGroup').innerHTML = renderStatsHtml(data.stats);
+        document.getElementById('resTechnique').innerText = data.techniqueText;
+        document.getElementById('resFlavor').innerText = data.flavorText;
+        document.getElementById('resQuote').innerText = data.quoteText;
+        document.getElementById('resAvatarIcon').innerHTML = mainGuest.htmlIcon;
+        document.getElementById('resReviews').innerHTML = renderReviewsHtml(data.reviews);
+        // 多人共调：在标题下方展示「共调宾客」头像 chips；故事统一写在主回想框里（不再分三段）
+        const isGroup = actives.length > 1;
+        renderGuestChips(document.getElementById('resGuestChips'), isGroup ? actives.map(g => ({ name: g.title, icon: g.htmlIcon })) : null, false);
+        renderGuestQuotes(document.getElementById('resGuestQuotes'), null);
+        document.getElementById('resPrice').innerText = data.price || "¥188";
+        document.getElementById('resPriceBadge').innerText = data.priceBadge || "夯";
+        
+        document.getElementById('resBannerEmoji').innerText = emojiStr;
+        document.getElementById('resBannerLiquid').style.background = liquidBg;
+        
+        // 归档保存
+        let archiveItem = {
+            id: 'arch_' + Date.now(),
+            guestIds: actives.map(a => a.id),
+            guestNames: actives.map(a => a.title),
+            guestIcons: actives.map(a => a.htmlIcon),
+            guestId: mainGuest.id,
+            mode: modeType,
+            title: data.title,
+            subtitle: data.subtitle,
+            recipeText: data.recipeText,
+            stats: data.stats,
+            techniqueText: data.techniqueText,
+            flavorText: data.flavorText,
+            quoteText: data.quoteText,
+            reviews: data.reviews,
+            price: data.price || "¥188",
+            priceBadge: data.priceBadge || "夯",
+            iconStr: emojiStr,
+            liquidColor: liquidBg,
+            desc: data.flavorText
+        };
+        savedArchives.unshift(archiveItem);
+        
+        // 调用宿主保存进度
+        if (window.AiPhoneGame && typeof window.AiPhoneGame.saveGame === 'function') {
+            window.AiPhoneGame.saveGame({ savedArchives: savedArchives }).catch(() => {});
+        }
+        
+        // 游戏结束事件写回记忆（必须使用真实名字）
+        if (window.AiPhoneGame && typeof window.AiPhoneGame.recordGameEvent === 'function') {
+            window.AiPhoneGame.recordGameEvent({
+                characterIds: actives.map(a => a.id),
+                summary: `${playerInfo.name}和${actives.map(a => a.title).join('、')}在《Kissa / 灵魂调酒模拟器》中共同完成了《${data.title}》的专属特调。${data.quoteText.substring(0, 80)}`
+            }).catch(() => {});
+        }
+    }
+    
+    document.getElementById('deleteArchiveBtn').addEventListener('click', async () => {
+        playKeySound();
+        // 按下即删，不做二次确认。
+        // 优先用进入详情页时记录下的档案 id（比用轮盘浮点位置反推可靠）
+        let target = null;
+        if (viewingArchiveId) {
+            target = savedArchives.find(a => a.id === viewingArchiveId) || null;
+        }
+        if (!target) {
+            const activeArchives = getCurrentGuestArchives();
+            if (activeArchives.length) {
+                const idx = ((Math.round(cardPos) % activeArchives.length) + activeArchives.length) % activeArchives.length;
+                target = activeArchives[idx];
+            }
+        }
+        if (!target) { showToast('没有找到要删除的档案'); return; }
+
+        const before = savedArchives.length;
+        savedArchives = savedArchives.filter(a => a.id !== target.id);
+        if (savedArchives.length === before) { showToast('删除失败：档案不存在'); return; }
+
+        viewingArchiveId = null;
+        if (window.AiPhoneGame && typeof window.AiPhoneGame.saveGame === 'function') {
+            try { await window.AiPhoneGame.saveGame({ savedArchives: savedArchives }); } catch (e) {}
+        }
+        targetCardPos = 0;
+        cardPos = 0;
+        showPage(1);
+        showToast('已删除该档案');
+    });
+    
+    async function init() {
+        showLoader("正在连接小手机宿主与加载角色...");
+        try {
+            if (window.AiPhoneGame) {
+                if (typeof window.AiPhoneGame.setTitleBar === 'function') {
+                    await window.AiPhoneGame.setTitleBar({
+                        material: "glass",
+                        background: "rgba(20,20,20,0.8)",
+                        buttonColor: "#f0eee6",
+                        buttonBackground: "rgba(255,255,255,0.08)",
+                        buttonBorderColor: "rgba(255,255,255,0.15)",
+                        buttonRadius: "999px",
+                        buttonShadow: "0 4px 15px rgba(0,0,0,0.3)"
+                    });
+                }
+                
+                const profile = await window.AiPhoneGame.getPlayerProfile();
+                if (profile && profile.name) {
+                    playerInfo.name = profile.name;
+                }
+                if (profile && profile.avatar) {
+                    playerInfo.avatar = profile.avatar;
+                    playerInfo.htmlIcon = `<img src="${profile.avatar}" alt="user" />`;
+                    document.getElementById('userMiniAvatar').innerHTML = `<img src="${profile.avatar}" alt="user" />`;
+                }
+                
+                // 1. 增加检测注入的等待函数
+function waitForAiPhoneGame() {
+    return new Promise((resolve) => {
+        if (window.AiPhoneGame) return resolve(window.AiPhoneGame);
+        const checkInterval = setInterval(() => {
+            if (window.AiPhoneGame) {
+                clearInterval(checkInterval);
+                resolve(window.AiPhoneGame);
+            }
+        }, 50);
+    });
+}
+
+// 2. 在原有逻辑前添加 await 确保 AiPhoneGame 已准备好
+                await waitForAiPhoneGame();
+
+                const rawGuests = await window.AiPhoneGame.listAvailableCharacters();
+                if (rawGuests && rawGuests.length > 0) {
+                    guests = rawGuests.map(g => ({
+                        id: g.id,
+                        title: g.name,
+                        subtitle: g.subtitle || 'Kissa 尊贵宾客',
+                        htmlIcon: g.avatar ? `<img src="${g.avatar}" alt="${g.name}" />` : g.name.substring(0, 1)
+                    }));
+                }
+                
+                const loadedSave = await window.AiPhoneGame.loadGame();
+                if (loadedSave && loadedSave.savedArchives) {
+                    savedArchives = loadedSave.savedArchives;
+                }
+            }
+        } catch(e) {}
+        
+        if (!guests.length) {
+            guests = [
+                { id: 'guest_1', title: '沈砚清', subtitle: '常客 / 独立设计师', htmlIcon: '沈' },
+                { id: 'guest_2', title: '艾莉丝', subtitle: '流浪的异乡提琴手', htmlIcon: '艾' },
+                { id: 'guest_3', title: '诺亚', subtitle: '午夜钟表修理匠', htmlIcon: '诺' }
+            ];
+        }
+        
+        bindEvents();
+        hideLoader();
+        showPage(1);
+        requestAnimationFrame(renderWheelsSmoothly);
+    }
+    
+    // 3. 将原有的直接监听启动，修改为包裹轮询监听
+    window.addEventListener('DOMContentLoaded', () => {
+        waitForAiPhoneGame().then(() => {
+            init();
+        });
+    });
+
+</script>
+</body>
+</html>

@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Kissa 灵魂酒吧</title>
+<style>
+  :root{
+    --bg0:#0b0a14; --bg1:#15121f; --glass:rgba(255,255,255,.06);
+    --glass-bd:rgba(255,255,255,.12); --txt:#f3eefb; --sub:#a79fc0;
+    --gold:#e7c98b; --rose:#f0a6c0; --cyan:#9fe3e0; --violet:#b69cf0;
+    --safe-top:env(safe-area-inset-top,0px); --safe-bot:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{width:100%;height:100%;margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    color:var(--txt);overflow:hidden;
+    background:
+      radial-gradient(120% 80% at 20% 0%, #2a1d3a 0%, transparent 60%),
+      radial-gradient(120% 90% at 90% 100%, #16243a 0%, transparent 55%),
+      linear-gradient(160deg,var(--bg1),var(--bg0));
+  }
+  #app{display:flex;flex-direction:column;height:100%;padding:calc(var(--safe-top) + 10px) 0 var(--safe-bot)}
+  /* 顶栏 */
+  .topbar{
+    padding:6px 16px 10px;display:flex;flex-direction:column;gap:8px;
+    backdrop-filter:blur(12px);
+  }
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand h1{font-size:22px;margin:0;letter-spacing:3px;font-weight:700;
+    background:linear-gradient(90deg,var(--gold),var(--rose));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .brand .sub{font-size:11px;color:var(--sub);letter-spacing:1px}
+  /* 状态条：时间 / 醉酒 / 账单 */
+  .status{display:flex;gap:8px;font-size:11px;color:var(--sub);flex-wrap:wrap}
+  .status .stat{background:var(--glass);border:1px solid var(--glass-bd);padding:3px 9px;border-radius:10px;white-space:nowrap}
+  .sober{height:4px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;margin:1px 0 0}
+  #soberBar{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--gold),#ff7a7a);transition:.45s}
+  /* 今日特调提示栏 */
+  .specials{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+  .specials::-webkit-scrollbar{display:none}
+  .special{
+    flex:0 0 auto;padding:7px 12px;border-radius:14px;background:var(--glass);
+    border:1px solid var(--glass-bd);font-size:12.5px;cursor:pointer;white-space:nowrap;
+    transition:.15s;
+  }
+  .special:active{transform:scale(.96)}
+  .special b{color:var(--gold)}
+  .special .tag{color:var(--sub);font-size:10.5px;margin-left:6px}
+  .specials-hint{font-size:10.5px;color:var(--sub);margin:-2px 0 0 2px}
+  /* 在场角色 */
+  .present{display:flex;align-items:center;gap:8px;padding:0 16px;margin:8px 0}
+  .present .lbl{font-size:11px;color:var(--sub);margin-right:2px}
+  .chips{display:flex;gap:8px;overflow-x:auto}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:4px 10px 4px 4px;
+    border-radius:20px;background:var(--glass);border:1px solid var(--glass-bd);font-size:12px}
+  .chip .av{width:22px;height:22px;border-radius:50%;background:#3a3350;display:flex;
+    align-items:center;justify-content:center;font-size:11px;color:var(--gold)}
+  .chip.leave{cursor:pointer;opacity:.85}
+  .chip.leave:active{transform:scale(.95)}
+  .chip .x{color:#ff9a9a;font-size:13px;margin-left:2px}
+  /* 房间切换 */
+  .tabs{display:flex;gap:6px;padding:0 16px;margin-bottom:8px}
+  .tab{flex:1;text-align:center;padding:9px 0;border-radius:12px;font-size:12.5px;
+    background:var(--glass);border:1px solid transparent;color:var(--sub);cursor:pointer;white-space:nowrap}
+  .tab.active{color:var(--txt);border-color:var(--glass-bd);background:rgba(255,255,255,.1);
+    box-shadow:0 0 18px rgba(231,201,139,.12) inset}
+  /* 房间容器 */
+  .rooms{flex:1;overflow:hidden;position:relative}
+  .room{position:absolute;inset:0;display:none;flex-direction:column;padding:0 16px}
+  .room.active{display:flex}
+  .room.active.lounge{background:radial-gradient(120% 55% at 50% 0%, rgba(182,156,240,.10), transparent 70%)}
+  .room.active.bar{background:radial-gradient(120% 55% at 50% 0%, rgba(231,201,139,.10), transparent 70%)}
+  .room.active.juke{background:radial-gradient(120% 55% at 50% 0%, rgba(159,227,224,.09), transparent 70%)}
+  .room.active.moments{background:radial-gradient(120% 55% at 50% 0%, rgba(240,166,192,.09), transparent 70%)}
+  .zonehead{padding:2px 2px 9px;font-size:12px;color:var(--sub);line-height:1.55}
+  .zonehead b{color:var(--txt);font-weight:600}
+  /* 卡座聊天 */
+  .feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:8px 0}
+  .feed::-webkit-scrollbar{width:0}
+  .msg{max-width:82%;display:flex;flex-direction:column;gap:3px}
+  .msg.me{align-self:flex-end;align-items:flex-end}
+  .msg .who{font-size:10.5px;color:var(--sub);margin:0 4px}
+  .msg .bubble{padding:10px 13px;border-radius:16px;font-size:14px;line-height:1.55;
+    background:rgba(255,255,255,.08);border:1px solid var(--glass-bd)}
+  .msg.me .bubble{background:linear-gradient(135deg,#3a2b52,#2c2140);border-color:rgba(182,156,240,.35)}
+  .msg .bubble.priv{background:rgba(240,166,192,.14);border-color:rgba(240,166,192,.4);font-style:italic}
+  .sys{align-self:center;font-size:11px;color:var(--sub);background:var(--glass);
+    padding:5px 12px;border-radius:12px;text-align:center;max-width:90%}
+  .typing{font-size:12px;color:var(--sub);padding:4px 6px}
+  .typing i{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--sub);
+    margin:0 1px;animation:bl 1s infinite}
+  .typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
+  @keyframes bl{0%,60%,100%{opacity:.3}30%{opacity:1}}
+  /* 输入条 */
+  .composer{display:flex;gap:8px;padding:10px 0 4px;align-items:flex-end}
+  .composer textarea{flex:1;resize:none;max-height:96px;min-height:42px;padding:11px 14px;
+    border-radius:14px;background:var(--glass);border:1px solid var(--glass-bd);color:var(--txt);
+    font:14px/1.5 inherit;outline:none}
+  .send{flex:0 0 auto;width:42px;height:42px;border-radius:14px;border:none;cursor:pointer;
+    background:linear-gradient(135deg,var(--gold),var(--rose));color:#2a1d1d;font-size:18px;font-weight:700}
+  .send:disabled{opacity:.5}
+  .icon-btn{flex:0 0 auto;width:42px;height:42px;border-radius:14px;border:1px solid var(--glass-bd);
+    background:var(--glass);color:var(--txt);font-size:18px;cursor:pointer}
+  .icon-btn:active{transform:scale(.94)}
+  /* 吧台 */
+  .bartop{overflow-y:auto;flex:1;padding:8px 0;display:flex;flex-direction:column;gap:14px}
+  .card{background:var(--glass);border:1px solid var(--glass-bd);border-radius:16px;padding:14px}
+  .card h3{margin:0 0 8px;font-size:14px;color:var(--gold);letter-spacing:1px}
+  .drink{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;
+    border-radius:12px;background:rgba(255,255,255,.04);margin-bottom:8px;cursor:pointer}
+  .drink:active{background:rgba(255,255,255,.09)}
+  .drink .nm{font-size:13.5px}.drink .pr{color:var(--gold);font-size:11px;margin-left:6px}
+  .drink .ds{font-size:11px;color:var(--sub);margin-top:2px}
+  .drink .go{color:var(--gold);font-size:15px}
+  .btn{display:block;width:100%;padding:12px;border-radius:12px;border:1px solid var(--glass-bd);
+    background:rgba(255,255,255,.05);color:var(--txt);font-size:13.5px;cursor:pointer;margin-top:8px}
+  .btn:active{background:rgba(255,255,255,.1)}
+  .btn.primary{background:linear-gradient(135deg,var(--gold),var(--rose));color:#2a1d1d;border:none;font-weight:600}
+  .mood-input{width:100%;margin-top:8px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);
+    border:1px solid var(--glass-bd);color:var(--txt);font:13.5px inherit;outline:none}
+  .billrow{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed var(--glass-bd)}
+  .billrow.total{border:none;font-weight:700;color:var(--gold);margin-top:4px}
+  /* 点唱机 */
+  .juke{flex:1;overflow-y:auto;padding:8px 0;display:flex;flex-direction:column;gap:10px}
+  .song{display:flex;justify-content:space-between;align-items:center;padding:13px 15px;
+    border-radius:14px;background:var(--glass);border:1px solid var(--glass-bd);cursor:pointer}
+  .song:active{background:rgba(255,255,255,.1)}
+  .song .meta .nm{font-size:14px}.song .meta .ds{font-size:11px;color:var(--sub);margin-top:2px}
+  .song .eq{display:flex;gap:2px;align-items:flex-end;height:18px}
+  .song .eq i{width:3px;background:var(--gold);border-radius:2px;animation:eq 1s infinite}
+  .song .eq i:nth-child(2){animation-delay:.2s}.song .eq i:nth-child(3){animation-delay:.4s}
+  .song .eq i:nth-child(4){animation-delay:.6s}
+  .song.paused .eq i{animation:none;height:4px;background:var(--sub)}
+  @keyframes eq{0%,100%{height:5px}50%{height:18px}}
+  .juke-note{font-size:11px;color:var(--sub);line-height:1.6;padding:6px 4px}
+  /* 相册 / 朋友圈 */
+  .polaroid{background:#fbf7ef;color:#2a2330;border-radius:10px;padding:10px 10px 14px;margin:6px 4px;
+    box-shadow:0 6px 20px rgba(0,0,0,.45);transform:rotate(-1.2deg)}
+  .polaroid:nth-child(even){transform:rotate(1.2deg)}
+  .polaroid .ph{font-size:30px;text-align:center;padding:16px 0;background:linear-gradient(135deg,#2a2140,#3a2b52);
+    border-radius:6px;color:#e7c98b}
+  .polaroid .cap{font-weight:600;margin-top:8px;font-size:14px}
+  .polaroid .scene{font-size:11.5px;color:#6a6072;line-height:1.5;margin-top:3px}
+  .polaroid .mt{font-size:10px;color:#a59cb0;margin-top:6px;text-align:right}
+  /* 底部离店 */
+  .foot{padding:8px 16px calc(var(--safe-bot) + 10px)}
+  .leave-btn{width:100%;padding:12px;border-radius:14px;border:1px solid rgba(240,166,192,.4);
+    background:rgba(240,166,192,.12);color:var(--rose);font-size:13.5px;cursor:pointer;letter-spacing:1px}
+  .leave-btn:active{transform:scale(.98)}
+  /* 遮罩 / 选择角色 */
+  .mask{position:absolute;inset:0;background:rgba(5,4,12,.86);backdrop-filter:blur(8px);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:30;padding:24px}
+  .mask h2{font-weight:600;letter-spacing:2px;margin:0}
+  .mask p{color:var(--sub);font-size:13px;margin:0;text-align:center}
+  .role-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:340px;max-height:50vh;overflow-y:auto}
+  .role-opt{padding:12px;border-radius:14px;background:var(--glass);border:1px solid var(--glass-bd);
+    text-align:center;font-size:13px;cursor:pointer}
+  .role-opt:active{background:rgba(255,255,255,.1)}
+  .hidden{display:none!important}
+  /* 增删人物 */
+  .chip.add{cursor:pointer;opacity:.7;border-style:dashed}
+  .chip.add .av{background:rgba(231,201,139,.18);color:var(--gold)}
+  .chip.npc .av{background:rgba(159,227,224,.18);color:var(--cyan)}
+  .npc-badge{font-size:9px;color:var(--cyan);margin-left:5px;border:1px solid rgba(159,227,224,.4);border-radius:6px;padding:0 4px}
+  /* 随机事件按钮 */
+  .event-bar{display:flex;justify-content:center;padding:6px 0 2px}
+  .event-btn{padding:7px 16px;border-radius:14px;border:1px solid rgba(182,156,240,.35);
+    background:rgba(182,156,240,.1);color:var(--violet);font-size:12.5px;cursor:pointer;letter-spacing:1px}
+  .event-btn:active{transform:scale(.96)}
+  /* 偶遇 / 事件弹层 */
+  .encounter{position:absolute;inset:auto 14px 16px 14px;z-index:28;background:rgba(18,14,30,.97);
+    border:1px solid var(--glass-bd);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;
+    box-shadow:0 12px 44px rgba(0,0,0,.55)}
+  .encounter h3{margin:0;font-size:14.5px;color:var(--gold);letter-spacing:1px}
+  .encounter p{margin:0;font-size:12.5px;color:var(--sub);line-height:1.65}
+  .encounter .row{display:flex;gap:8px}
+  .encounter .row .btn{flex:1;margin-top:0;text-align:center}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <div class="brand"><h1>KISSA</h1><span class="sub">灵魂酒吧 · 一家有记忆的店</span></div>
+    <div class="status">
+      <span id="clock" class="stat">🕘 21:00</span>
+      <span id="drunk" class="stat">🍷 清醒</span>
+      <span id="bill" class="stat">💰 ¥0</span>
+    </div>
+    <div class="sober"><span id="soberBar"></span></div>
+    <div id="specials" class="specials"></div>
+    <div id="specialsHint" class="specials-hint">今日特调 · 轻点可让随行角色给建议；吧台可点单</div>
+  </div>
+
+  <div class="present">
+    <span class="lbl">在场</span>
+    <div id="presentChips" class="chips"></div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-room="lounge">🛋️ 卡座</div>
+    <div class="tab" data-room="bar">🍸 吧台</div>
+    <div class="tab" data-room="juke">🎵 点唱机</div>
+    <div class="tab" data-room="moments">📸 相册</div>
+  </div>
+
+  <div class="rooms">
+    <!-- 卡座 -->
+    <div class="room active lounge" id="room-lounge">
+      <div class="zonehead"><b>🛋️ 卡座区</b> · 沙发陷下去，灯只亮一半，最适合说废话。</div>
+      <div class="feed" id="feed"></div>
+      <div class="event-bar"><button class="event-btn" id="eventBtn">🎲 触发随机事件</button></div>
+      <div class="composer">
+        <button class="icon-btn" id="photoBtnL">📸</button>
+        <textarea id="userInput" placeholder="在卡座说点什么…" rows="1"></textarea>
+        <button class="send" id="sendBtn">↑</button>
+      </div>
+    </div>
+    <!-- 吧台 -->
+    <div class="room bar" id="room-bar">
+      <div class="zonehead"><b>🍸 吧台</b> · 酒保擦着杯子，琥珀色灯光把脸照得很暖。</div>
+      <div class="bartop" id="bartop"></div>
+    </div>
+    <!-- 点唱机 -->
+    <div class="room juke" id="room-juke">
+      <div class="zonehead"><b>🎵 点唱机</b> · 老歌转着，没人说话也热闹。</div>
+      <div class="juke" id="juke"></div>
+      <div class="juke-note">点唱机播放酒吧环境音乐（ambience 通道，循环）。首次使用请把音频文件放入 APP 的 <b>assets/bgm/</b> 目录。</div>
+    </div>
+    <!-- 相册 / 朋友圈 -->
+    <div class="room moments" id="room-moments">
+      <div class="zonehead"><b>📸 露台相册</b> · 夜风里拍一张今晚，留在这里，也发去朋友圈。</div>
+      <div class="feed" id="momentsFeed" style="padding-top:4px"></div>
+      <div class="composer">
+        <button class="icon-btn" id="photoBtn">📸</button>
+        <textarea id="momentInput" placeholder="写给今晚的一句话…" rows="1"></textarea>
+        <button class="send" id="momentSend">↑</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <button class="leave-btn" id="leaveBtn">🌙 离开酒吧（结账 · 保存今晚的记忆）</button>
+  </div>
+
+  <!-- 选人遮罩 -->
+  <div class="mask" id="mask">
+    <h2>今晚和谁去 Kissa？</h2>
+    <p id="maskDesc">选择要一起去的角色。之后还能在酒吧里偶遇更多人。</p>
+    <div class="role-grid" id="roleGrid"></div>
+  </div>
+
+  <!-- 加人 / 偶遇遮罩 -->
+  <div class="mask hidden" id="inviteMask">
+    <h2>再加点人？</h2>
+    <p>邀请手机里的角色，或偶遇一个酒吧陌生人。</p>
+    <div class="role-grid" id="inviteGrid"></div>
+    <div class="btn primary" id="inviteRandom">✨ 偶遇一个陌生人</div>
+    <div class="btn hidden" id="inviteRegular">🍷 叫今晚的常客来</div>
+    <div class="btn" id="inviteClose">先这样</div>
+  </div>
+</div>
+
+<script>
+const A = window.AiPhone || window.AiPhoneApp;
+const $ = (s) => document.querySelector(s);
+const PRICE = { "夜色微醺":48, "烈焰红唇":58, "深夜拼盘":38 }; // 特调默认价（AI 未返回时用）
+const state = {
+  userName: "你",
+  present: [],            // {id,name,avatar,isReal,status}
+  todaysSpecials: [],     // {name,desc,price}
+  currentRoom: "lounge",
+  visitId: "v_" + Date.now(),
+  bgm: null,              // {file, el}
+  busy: false,
+  npcs: [],               // 从 db 加载的酒吧常客/客人档案
+  privateNotes: [],       // 酒吧内私信摘要，用于转回卡座时衔接话题
+  encounterRolled: false,
+  // ---- P5 ----
+  minutes: 21*60,         // 酒吧开门时间 21:00（minutes from midnight）
+  drunk: 0,               // 醉酒度 0-100
+  bill: [],               // {name, price, who}
+  moments: [],            // {caption, scene, time}
+  lateNoted: false,
+};
+const BGM_LIST = [
+  { file: "assets/bgm/jazz.mp3",  name: "深夜爵士",   desc: "慵懒萨克斯，微醺刚好" },
+  { file: "assets/bgm/rain.mp3",  name: "雨林白噪",   desc: "雨打窗沿，适合发呆" },
+  { file: "assets/bgm/disco.mp3", name: "复古 Disco", desc: "灯球转起来，气氛拉满" },
+  { file: "assets/bgm/lofi.mp3",  name: "Lo-Fi 慢拍",  desc: "温柔鼓点，聊天背景" },
+];
+
+/* ---------- 工具 ---------- */
+function sysLine(text){ const f=$("#feed"); const d=document.createElement("div"); d.className="sys"; d.textContent=text; f.appendChild(d); f.scrollTop=f.scrollHeight; }
+function pushBubble(role, name, text, priv){
+  const f=$("#feed"); const m=document.createElement("div");
+  m.className="msg"+(role==="me"?" me":"");
+  if(name){ const w=document.createElement("div"); w.className="who"; w.textContent=name; m.appendChild(w); }
+  const b=document.createElement("div"); b.className="bubble"+(priv?" priv":""); b.textContent=text; m.appendChild(b);
+  f.appendChild(m); f.scrollTop=f.scrollHeight;
+}
+function roleLine(id){ const r=state.present.find(p=>p.id===id); return r?r.name:id; }
+
+async function toast(t){ try{ await A.ui.toast(t); }catch(e){ /* ignore */ } }
+function setBusy(b){
+  state.busy=b; $("#sendBtn").disabled=b;
+  if(b){ if(!$("#typing")){ const f=$("#feed"); const t=document.createElement("div"); t.className="typing"; t.id="typing"; t.innerHTML="对方在说话<i></i><i></i><i></i>"; f.appendChild(t); f.scrollTop=f.scrollHeight; } }
+  else { const t=$("#typing"); if(t) t.remove(); }
+}
+
+/* ---------- P5：时间 / 醉酒 / 账单 状态 ---------- */
+function fmtTime(min){
+  min = ((min % 1440) + 1440) % 1440;
+  const h=Math.floor(min/60), m=min%60;
+  return String(h).padStart(2,"0") + ":" + String(m).padStart(2,"0");
+}
+function advanceTime(add){
+  state.minutes += add;
+  renderStatusBar();
+  if(!state.lateNoted && state.minutes >= 23*60){
+    state.lateNoted = true;
+    sysLine("🌃 夜深了，酒吧里的人渐渐散去，但你们这桌还醒着。");
+    toast("🌃 快打烊了，记得结账");
+  }
+}
+function drunkLevel(){ const d=state.drunk; if(d<20) return 0; if(d<50) return 1; if(d<80) return 2; return 3; }
+function drunkSuffix(){
+  const lv=drunkLevel();
+  if(lv===0) return "";
+  if(lv===1) return "\n[氛围] 在场众人已微醺，语气更松弛、偶尔笑场、话比平时多。";
+  if(lv===2) return "\n[氛围] 众人已有明显醉意，更坦诚、更感性或撒娇，可能说错词、逻辑略飘，但更真实。";
+  return "\n[氛围] 已经很醉了：情绪放大、逻辑飘忽，可能突然感性或犯傻；若有人还想再灌酒，可半真半假地拦一下。";
+}
+function addDrunk(n){ state.drunk=Math.min(100, state.drunk+n); renderStatusBar(); }
+function billTotal(){ return state.bill.reduce((s,b)=>s+b.price, 0); }
+function renderStatusBar(){
+  if(!$("#clock")) return;
+  $("#clock").textContent = "🕘 " + fmtTime(state.minutes);
+  const labels=["清醒","微醺","上头","烂醉"];
+  $("#drunk").textContent = "🍷 " + labels[drunkLevel()];
+  $("#soberBar").style.width = state.drunk + "%";
+  $("#bill").textContent = "💰 ¥" + billTotal();
+}
+// 点单：加账单 + 醉酒 + 流逝时间 + 反应
+function orderDrink(name, price){
+  if(state.busy) return;
+  price = (price!=null && !isNaN(price)) ? price : (PRICE[name] || 45);
+  const who = state.userName;
+  state.bill.push({ name, price, who });
+  addDrunk(18); advanceTime(10);
+  sysLine(`🍸 你点了「${name}」(¥${price})，端上来冒着细密的气泡。`);
+  loungeGenerate(`${state.userName}点了一杯「${name}」，举杯示意大家。请自然地接话、碰杯或起哄。`, false);
+}
+
+/* ---------- 初始化 ---------- */
+async function init(){
+  try{
+    const ctx = await A.app.getLaunchContext().catch(()=>null);
+    const chars = await A.characters.list();
+    // 加载酒吧客人档案（跨次访问持久）
+    try{ state.npcs = await loadNpcsFromDb(); }catch(e){ state.npcs = []; }
+    // 用户昵称
+    try{ const prof = await A.user.getProfile({}); state.userName = prof?.name || "你"; }catch(e){}
+    renderStatusBar();
+    // 选人：从邀TA去酒吧入口带 characterId，否则让用户选
+    let presetId = ctx?.characterId || (ctx?.launchContext?.characterId);
+    if(!presetId && ctx && ctx.characterId) presetId = ctx.characterId;
+    if(presetId && chars.find(c=>c.id===presetId)){
+      state.present.push(mkPresent(chars.find(c=>c.id===presetId), true));
+      $("#mask").classList.add("hidden");
+      await enterBar();
+    } else {
+      renderRoleGrid(chars);
+    }
+  }catch(e){ sysLine("初始化失败：" + e.message); }
+}
+
+function mkPresent(c, isReal){ return { id:c.id, name:c.name, avatar:c.avatar, isReal, status: isReal?"real":undefined }; }
+
+function renderRoleGrid(chars){
+  const g=$("#roleGrid"); g.innerHTML="";
+  chars.forEach(c=>{
+    const d=document.createElement("div"); d.className="role-opt"; d.textContent=c.name;
+    d.onclick=async()=>{
+      state.present.push(mkPresent(c,true));
+      $("#mask").classList.add("hidden");
+      await enterBar();
+    };
+    g.appendChild(d);
+  });
+}
+
+/* ---------- 进场 ---------- */
+async function enterBar(){
+  renderPresent(); renderBartop(); renderJuke(); renderMoments();
+  sysLine(`你走进了 Kissa。${state.present.map(p=>p.name).join("、")}已经在卡座上了。`);
+  // 今日特调提示栏
+  await genTodaysSpecials();
+  // 进场偶遇：常客可能本来就在，或撞上一个陌生人
+  await maybeEncounterOnEntry();
+  // 随行角色打招呼
+  if(state.present.length){
+    await loungeGenerate(`${state.userName}刚走进 Kissa 酒吧，在卡座坐下。请自然地打招呼或接话。`, true);
+  }
+}
+
+async function genTodaysSpecials(){
+  try{
+    const instr = `你是 Kissa 酒吧的酒保。请为今晚推荐 3 款特调/小吃套餐，风格涵盖一款烈、一款柔、一款小吃。只返回 JSON 数组，每项 {name, desc, price}（desc 一句氛围描述不超过 18 字；price 为该单品人民币价格整数，30~70 之间）。不要任何解释。`;
+    const ids = state.present.filter(p=>p.isReal).map(p=>p.id);
+    if(ids.length){
+      const r = await A.ai.generate({ characterIds: ids, appTags:["bar","lounge"], instruction: instr });
+      const m = (r.text||"").match(/\[[\s\S]*\]/);
+      if(m){ try{ state.todaysSpecials = JSON.parse(m[0]).slice(0,3).map(s=>({ name:s.name, desc:s.desc, price:(s.price!=null?Number(s.price):(PRICE[s.name]||45)) })); }catch(e){} } }
+  }catch(e){}
+  if(!state.todaysSpecials.length){
+    state.todaysSpecials = [
+      {name:"夜色微醺", desc:"金酒+接骨木，清冽微甜", price:48},
+      {name:"烈焰红唇", desc:"龙舌兰+辣椒，一口上头", price:58},
+      {name:"深夜拼盘", desc:"炸物+腌渍，配酒刚好", price:38},
+    ];
+  }
+  renderSpecials(); renderBartop();
+}
+
+function renderSpecials(){
+  const box=$("#specials"); box.innerHTML="";
+  state.todaysSpecials.forEach(s=>{
+    const d=document.createElement("div"); d.className="special";
+    d.innerHTML=`<b>${s.name}</b><span class="tag">${s.desc}</span>`;
+    d.onclick=()=>suggestDrink(s.name);
+    box.appendChild(d);
+  });
+}
+
+/* ---------- 在场名单 ---------- */
+function renderPresent(){
+  const box=$("#presentChips"); box.innerHTML="";
+  state.present.forEach(p=>{
+    const c=document.createElement("div");
+    c.className="chip leave"+(p.isReal?"":" npc");
+    const badge = p.isReal?"":`<span class="npc-badge">${p.status==="regular"?"常客":(p.status==="independent"?"老友":"客人")}</span>`;
+    c.innerHTML=`<span class="av">${(p.name||"?").slice(0,1)}</span><span>${p.name}</span>${badge}<span class="x">×</span>`;
+    c.onclick=()=>leaveCharacter(p);
+    box.appendChild(c);
+  });
+  // 加人 / 偶遇
+  const add=document.createElement("div"); add.className="chip add";
+  add.innerHTML=`<span class="av">+</span><span>加人</span>`;
+  add.onclick=openInvite; box.appendChild(add);
+}
+async function leaveCharacter(p, silent){
+  // 先让对方道别（此时仍在场，能正常生成台词）
+  if(!silent){
+    await genEntrance(`${p.name} 起身离开了 Kissa，向大家道别（可私下给 ${state.userName} 发句私信）。`, [p.id]);
+  }
+  state.present = state.present.filter(x=>x.id!==p.id);
+  // NPC 离场：累计到访次数 + 推进升级路径 + 写记忆
+  if(!p.isReal){
+    await finalizeNpc(p);
+  }
+  sysLine(`${p.name} 起身离开了酒吧。`);
+  renderPresent();
+}
+
+/* ---------- NPC 升级路径（精确化） ---------- */
+async function finalizeNpc(npc){
+  ensureNpcVisit(npc);
+  npc.appearanceCount = (npc.appearanceCount||0) + 1;
+  if(npc.participatedThisVisit){ npc.eventStreak = (npc.eventStreak||0) + 1; }
+  else { npc.eventStreak = 0; }
+  npc.participatedThisVisit = false;
+  // 连续 3 次访问都参与了随机事件 → 升为常客
+  if(npc.eventStreak >= 3 && npc.status !== "regular" && npc.status !== "independent"){
+    npc.status = "regular";
+    npc.memory = (npc.memory||"") + "\n（已升为酒吧常客，下次可能本来就在店里）";
+  }
+  await saveNpc(npc);
+}
+
+/* ---------- 卡座闲聊 ---------- */
+async function loungeGenerate(userLine, opening, bypassBusy){
+  if(state.busy && !bypassBusy) return;
+  const ownBusy = !state.busy;
+  setBusy(true);
+  try{
+    const realIds = state.present.filter(p=>p.isReal).map(p=>p.id);
+    const npcList = state.present.filter(p=>!p.isReal);
+    const roster = state.present.map(p=>`- ${p.name} (id:${p.id})`).join("\n");
+    let extra = "";
+    if(state.privateNotes.length) extra += `\n[私信上下文] 此前你私下给${state.userName}发过私信：${state.privateNotes.join("；")}。回到卡座可自然地接上这个话题或调侃。`;
+    const npcNote = npcList.length ? `\n\n[注意] 以下成员是酒吧客人（非手机角色），不由你代其发言，你只需以在场真实角色身份回应，并可以对他们做出反应：${npcList.map(p=>p.name+"("+p.id+")").join("、")}。` : "";
+    const instr = `在场成员：\n${roster}\n用户：${state.userName} (id:user)\n\n请以在场真实角色身份，严格用 [台词@真实角色id] / [沉默@id] / [私信@真实角色id]内容 输出。${npcNote}${extra}${drunkSuffix()}\n\n${userLine}`;
+    if(realIds.length){
+      const r = await A.ai.generate({ characterIds: realIds, appTags:["bar","lounge"], instruction: instr });
+      parseBarOutput(r.text||"");
+    }
+    await npcGenerate(userLine);
+    advanceTime(4); // 聊一会儿，时间流逝
+    // 夜场中随机冒出突发事件（系统主动提示，问是否观看）
+    if(!opening && !state.encounterRolled && Math.random()<0.18){
+      state.encounterRolled=true;
+      setTimeout(()=>rollRandomEvent(), 1200);
+    }
+  }catch(e){ sysLine("生成出错：" + e.message); }
+  finally{ if(ownBusy) setBusy(false); }
+}
+
+function parseBarOutput(text){
+  // 私信优先解析（支持多行内容，捕获到下一个 [ 为止）
+  const privRe=/\[私信@([^\]]+)\]([^\[]*)/g; let pm;
+  while((pm=privRe.exec(text))){
+    const id=pm[1], content=pm[2].trim();
+    if(content) handlePrivate(id, content);
+  }
+  // 台词
+  const lineRe=/\[台词@([^\]]+)\]([^\[]*)/g; let m;
+  while((m=lineRe.exec(text))){
+    const id=m[1], content=m[2].trim();
+    if(!content) continue;
+    if(id==="user"){ pushBubble("me", state.userName, content); }
+    else { pushBubble("other", roleLine(id), content); }
+  }
+  // 沉默
+  const silRe=/\[沉默@([^\]]+)\]/g; let s;
+  while((s=silRe.exec(text))){ /* 不渲染 */ }
+}
+
+async function handlePrivate(charId, content){
+  const p = state.present.find(x=>x.id===charId);
+  const name = p?p.name:roleLine(charId);
+  sysLine(`📩 ${name} 给你发了条私信`);
+  pushBubble("other", name+" · 私信", content, true);
+  // 记一笔，用于转回卡座时衔接
+  state.privateNotes.push(`${name}私下跟你说：${content}`);
+  if(p && p.isReal){
+    try{
+      await A.chat.writeHistory({ characterId: charId, role:"user",
+        content:`[酒吧私信：${name}私下跟${state.userName}说：${content}]` });
+      await A.chat.requestReply({ characterId: charId });
+      await A.notifications.create({ title:`${name}的私信`, body: content.slice(0,40), badgeDelta:1 }).catch(()=>{});
+    }catch(e){}
+  } else if(p){
+    // NPC：写入其记忆，下次偶遇仍记得（私信不计入"随机事件参与"连胜）
+    p.memory = (p.memory||"") + `\n私信用户：${content}`;
+    await saveNpc(p);
+  }
+}
+
+/* ---------- 用户发言 ---------- */
+function sendUser(){
+  const ta=$("#userInput"); const v=ta.value.trim(); if(!v||state.busy) return;
+  ta.value=""; ta.style.height="auto";
+  pushBubble("me", state.userName, v);
+  loungeGenerate(`${state.userName}说：「${v}」请自然地接话或互动。`);
+}
+$("#sendBtn").onclick=sendUser;
+$("#userInput").addEventListener("input",e=>{ e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,96)+"px"; });
+$("#userInput").addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendUser(); } });
+
+/* ---------- 吧台 ---------- */
+function renderBartop(){
+  const box=$("#bartop");
+  box.innerHTML = `
+    <div class="card">
+      <h3>🍸 今日特调</h3>
+      <div id="drinkList"></div>
+      <div class="btn" id="selfBartend">我自己调一杯（¥30）</div>
+      <div class="btn" id="moodBartend">让 TA 给我调（说出心情 · ¥52）</div>
+    </div>
+    <div class="card" id="bartendPanel" style="display:none">
+      <h3 id="bartendTitle">调酒</h3>
+      <div id="bartendBody" style="font-size:13.5px;line-height:1.7;color:var(--txt)"></div>
+      <div class="btn primary" id="backToLounge">↩ 回到卡座继续聊</div>
+    </div>`;
+  const dl=$("#drinkList");
+  state.todaysSpecials.forEach(s=>{
+    const price = (s.price!=null)? s.price : (PRICE[s.name]||45);
+    const d=document.createElement("div"); d.className="drink";
+    d.innerHTML=`<div><div class="nm">${s.name}<span class="pr">¥${price}</span></div><div class="ds">${s.desc}</div></div><div class="go">点单 ›</div>`;
+    d.onclick=()=>orderDrink(s.name, price); dl.appendChild(d);
+  });
+  $("#selfBartend").onclick=()=>selfBartend();
+  $("#moodBartend").onclick=()=>moodBartend();
+}
+
+async function suggestDrink(drinkName){
+  if(state.busy||!state.present.length) return;
+  const realChars = state.present.filter(p=>p.isReal);
+  if(!realChars.length) return;
+  switchRoom("lounge");
+  sysLine(`你指着酒单上的「${drinkName}」。`);
+  setBusy(true);
+  try{
+    const ids=realChars.map(p=>p.id);
+    const roster=realChars.map(p=>`- ${p.name} (id:${p.id})`).join("\n");
+    const r=await A.ai.generate({ characterIds:ids, appTags:["bar","suggest"],
+      instruction:`在场角色（用 [台词@id] 输出）：\n${roster}\n用户正看着「${drinkName}」。给一句真实建议。${drunkSuffix()}` });
+    parseBarOutput(r.text||"");
+  }catch(e){ sysLine("建议出错："+e.message); }
+  finally{ setBusy(false); }
+}
+
+async function selfBartend(){
+  if(state.busy||!state.present.length) return;
+  const realChars = state.present.filter(p=>p.isReal);
+  if(!realChars.length) return;
+  $("#bartendTitle").textContent="你自己调了一杯";
+  $("#bartendBody").textContent="（描述你调的配方，角色们会凑过来尝一口、给评价）";
+  $("#bartendPanel").style.display="block";
+  setBusy(true);
+  try{
+    const ids=realChars.map(p=>p.id);
+    const roster=realChars.map(p=>`- ${p.name} (id:${p.id})`).join("\n");
+    const r=await A.ai.generate({ characterIds:ids, appTags:["bar","bartend"],
+      instruction:`在场角色（用 [台词@id] 输出）：\n${roster}\n${state.userName}刚调了一杯酒，举起来请大家尝。给评价/起哄/撒娇。${drunkSuffix()}` });
+    $("#bartendBody").textContent=r.text||"（没有回应）";
+  }catch(e){ $("#bartendBody").textContent="出错："+e.message; }
+  finally{ setBusy(false); }
+  // 自己调也计费 + 醉酒
+  state.bill.push({ name:"自调特饮", price:30, who:state.userName }); addDrunk(15); advanceTime(8);
+  $("#backToLounge").onclick=()=>{ $("#bartendPanel").style.display="none"; switchRoom("lounge"); };
+}
+
+async function moodBartend(){
+  const mood=prompt("说出你现在的心情（比如：有点累 / 开心但孤独 / 想被宠着）：");
+  if(!mood) return;
+  if(state.busy||!state.present.length) return;
+  const bartender = state.present.find(p=>p.isReal);
+  if(!bartender) return;
+  $("#bartendTitle").textContent=`${bartender.name} 为你调酒`;
+  $("#bartendPanel").style.display="block";
+  setBusy(true);
+  try{
+    const r=await A.ai.generate({ characterId:bartender.id, appTags:["bar","bartend_mood"],
+      instruction:`用户心情：${mood}。以 ${bartender.name} 身份调一杯专属特调并描述。${drunkSuffix()}` });
+    $("#bartendBody").textContent=r.text||"（没有回应）";
+  }catch(e){ $("#bartendBody").textContent="出错："+e.message; }
+  finally{ setBusy(false); }
+  // 角色调的酒计费 + 醉酒
+  state.bill.push({ name:`${bartender.name}特调`, price:52, who:bartender.name }); addDrunk(20); advanceTime(8);
+  $("#backToLounge").onclick=()=>{ $("#bartendPanel").style.display="none"; switchRoom("lounge"); };
+}
+
+/* ---------- 点唱机 ---------- */
+function renderJuke(){
+  const box=$("#juke"); box.innerHTML="";
+  BGM_LIST.forEach(s=>{
+    const d=document.createElement("div"); d.className="song"+(state.bgm&&state.bgm.file===s.file?"":" paused");
+    d.innerHTML=`<div class="meta"><div class="nm">${s.name}</div><div class="ds">${s.desc}</div></div>
+      <div class="eq"><i></i><i></i><i></i><i></i></div>`;
+    d.onclick=()=>playBgm(s, d); box.appendChild(d);
+  });
+}
+async function playBgm(song, el){
+  document.querySelectorAll(".song").forEach(x=>x.classList.add("paused"));
+  el.classList.remove("paused");
+  try{
+    let url;
+    try{ url = await A.app.getAssetUrl(song.file); }catch(e){ url = song.file; }
+    if(state.bgm && state.bgm.file===song.file){
+      await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{});
+      state.bgm=null; el.classList.add("paused"); return;
+    }
+    if(state.bgm){ await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{}); }
+    await A.voice.play({ channel:"ambience", dataUrl:url, loop:true, volume:0.32 });
+    state.bgm=song;
+    toast("🎵 正在播放：" + song.name);
+  }catch(e){ toast("BGM 播放失败，请确认 assets/bgm/ 下有音频"); el.classList.add("paused"); }
+}
+
+/* ---------- 入场/离场台词 ---------- */
+async function genEntrance(line, ids){
+  if(state.busy||!ids.length) return;
+  setBusy(true);
+  try{
+    const realIds = ids.filter(id=>{ const p=state.present.find(x=>x.id===id); return p&&p.isReal; });
+    const npcIds = ids.filter(id=>{ const p=state.present.find(x=>x.id===id); return p&&!p.isReal; });
+    const roster=ids.map(id=>`- ${roleLine(id)} (id:${id})`).join("\n");
+    const npcNote = npcIds.length ? `\n[注意] ${npcIds.map(id=>roleLine(id)).join("、")} 是酒吧客人（非角色），你只以真实角色身份回应。` : "";
+    if(realIds.length){
+      const r=await A.ai.generate({ characterIds:realIds, appTags:["bar","entrance"],
+        instruction:`在场角色（用 [台词@id] 输出）：\n${roster}\n${line}${npcNote}${drunkSuffix()}` });
+      parseBarOutput(r.text||"");
+    }
+    await npcGenerate(line);
+  }catch(e){}
+  finally{ setBusy(false); }
+}
+
+/* ---------- P5：拍照发朋友圈 ---------- */
+async function takePhoto(){
+  if(state.busy) return;
+  const members = state.present.map(p=>p.name).join("、") || "你一个人";
+  const had = state.todaysSpecials.map(s=>s.name).join("、") || "还没点酒";
+  const lv = drunkLevel(); const drunkTag = ["清醒","微醺","上头","烂醉"][lv];
+  const instr = `你是 Kissa 酒吧的驻场摄影师。根据今晚：在场：${members}；喝过的特调：${had}；用户状态：${drunkTag}；当前消费：¥${billTotal()}；时间：${fmtTime(state.minutes)}。写一张「拍立得」照片：先一句画面描述（scene，40字内，有氛围感），再一句配文（caption，像发朋友圈的文艺短句，20字内）。只返回 JSON {scene, caption}，不要任何解释。`;
+  setBusy(true);
+  try{
+    const r = await A.ai.generate({ appTags:["bar","photo"], instruction:instr });
+    const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) throw new Error("生成失败");
+    const d=JSON.parse(m[0]);
+    const moment = { scene:d.scene||"今晚的 Kissa，灯光很软", caption:d.caption||"微醺夜未央", time:fmtTime(state.minutes) };
+    state.moments.push(moment); renderMoments(); switchRoom("moments");
+    // 最佳努力发到真实朋友圈（不同宿主 API 名可能不同，失败也不影响）
+    let posted=false;
+    try{
+      const text = `${moment.caption}\n📍 Kissa 灵魂酒吧\n${moment.scene}`;
+      if(A.social && A.social.postMoment){ await A.social.postMoment({ text }); posted=true; }
+      else if(A.moments && A.moments.create){ await A.moments.create({ text:`${moment.caption} · Kissa`, scene:moment.scene }); posted=true; }
+      else if(A.feed && A.feed.post){ await A.feed.post({ text }); posted=true; }
+    }catch(e){}
+    toast(posted ? "📸 已发朋友圈" : "📸 已存进今晚的相册");
+  }catch(e){ sysLine("拍照出错："+e.message); }
+  finally{ setBusy(false); }
+}
+function sendMoment(){
+  const ta=$("#momentInput"); const v=ta.value.trim(); if(!v) return;
+  ta.value="";
+  state.moments.push({ caption:v, scene:"", time:fmtTime(state.minutes) });
+  renderMoments();
+  try{
+    const text = `${v}\n📍 Kissa 灵魂酒吧`;
+    if(A.social && A.social.postMoment) A.social.postMoment({ text });
+    else if(A.moments && A.moments.create) A.moments.create({ text:`${v} · Kissa` });
+    else if(A.feed && A.feed.post) A.feed.post({ text });
+  }catch(e){}
+  toast("📸 已存进今晚的相册");
+}
+function renderMoments(){
+  const f=$("#momentsFeed"); if(!f) return; f.innerHTML="";
+  if(!state.moments.length){
+    const e=document.createElement("div"); e.className="sys";
+    e.textContent="今晚还没拍照。点 📸 让驻场摄影师拍一张，或写句话留念。";
+    f.appendChild(e);
+  }
+  state.moments.forEach(m=>{
+    const c=document.createElement("div"); c.className="polaroid";
+    c.innerHTML=`<div class="ph">📷</div><div class="cap">${m.caption}</div>${m.scene?`<div class="scene">${m.scene}</div>`:""}<div class="mt">${m.time} · Kissa</div>`;
+    f.appendChild(c);
+  });
+  f.scrollTop=f.scrollHeight;
+}
+$("#photoBtn").onclick=takePhoto;
+$("#photoBtnL").onclick=takePhoto;
+$("#momentSend").onclick=sendMoment;
+$("#momentInput").addEventListener("input",e=>{ e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,96)+"px"; });
+$("#momentInput").addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); sendMoment(); } });
+
+/* ---------- 离店：账单 + 记忆回写 ---------- */
+async function leaveBar(){
+  if(state.busy) return;
+  if(!state.present.length){ await A.app.close().catch(()=>{}); return; }
+  setBusy(true);
+  sysLine("🌙 打烊了，正在结账、把今晚写进记忆…");
+  const total = billTotal();
+  switchRoom("lounge");
+  renderBillCard();
+  const billLine = state.bill.length ? `今晚消费 ${state.bill.map(b=>b.name+"¥"+b.price).join("、")}，合计 ¥${total}。` : "今晚没点单，纯聊天。";
+  const summary = `${state.userName}和${state.present.map(p=>p.name).join("、")}在 Kissa 灵魂酒吧一起喝酒聊天${state.todaysSpecials.length?("，今晚特调有「"+state.todaysSpecials.map(s=>s.name).join("、")+"」"):""}。${billLine}用户醉酒程度：${["清醒","微醺","上头","烂醉"][drunkLevel()]}。这是一次线下共处的真实经历。`;
+  try{
+    for(const p of state.present){
+      if(p.isReal){
+        await A.memory.addTimeline({ characterId:p.id, appLabel:"Kissa 灵魂酒吧", detail:"bar_visit", summary });
+      } else {
+        // NPC：最终结算升级路径 + 写记忆
+        const prevStatus = p.status;
+        await finalizeNpc(p);
+        p.memory = (p.memory||"") + `\n${summary}`;
+        await saveNpc(p);
+        // 频繁出现的常客：询问是否升级为正式角色
+        if(p.status==="regular" && (p.appearanceCount||0)>=5){
+          const ok = await uiConfirm(`「${p.name}」最近常来 Kissa（已来 ${p.appearanceCount} 次），要把 TA 变成手机里的正式角色吗？`);
+          if(ok){
+            try{
+              await A.characters.create({ name:p.name, persona:p.persona || (p.name+" 是 Kissa 灵魂酒吧的常客，常来喝酒聊天。"), avatar:"🍷" });
+              toast(`已添加 ${p.name} 为正式角色`);
+              p.status="independent"; await saveNpc(p);
+            }catch(e){}
+          }
+        }
+      }
+    }
+    toast("记忆已保存 ✦ 今晚账单 ¥" + total);
+  }catch(e){ sysLine("记忆保存出错："+e.message); }
+  finally{
+    setBusy(false);
+    await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{});
+    setTimeout(()=>{ A.app.close().catch(()=>{}); }, 900);
+  }
+}
+function renderBillCard(){
+  const f=$("#feed");
+  const card=document.createElement("div"); card.className="card";
+  let html=`<h3>🌙 今晚账单</h3>`;
+  if(state.bill.length){
+    state.bill.forEach(b=>{ html+=`<div class="billrow"><span>${b.name}</span><span>¥${b.price}</span></div>`; });
+  } else {
+    html+=`<div class="ds">今晚没点单，纯聊天。</div>`;
+  }
+  html+=`<div class="billrow total"><span>合计</span><span>¥${billTotal()}</span></div>`;
+  card.innerHTML=html; f.appendChild(card); f.scrollTop=f.scrollHeight;
+}
+$("#leaveBtn").onclick=leaveBar;
+
+/* ---------- 房间切换 ---------- */
+function switchRoom(r){
+  state.currentRoom=r;
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.room===r));
+  document.querySelectorAll(".room").forEach(x=>x.classList.toggle("active", x.id==="room-"+r));
+}
+document.querySelectorAll(".tab").forEach(t=> t.onclick=()=>switchRoom(t.dataset.room));
+
+/* ---------- P3：动态角色 / 偶遇 / NPC 档案 ---------- */
+// 持久层：优先用宿主 A.db，降级到 localStorage
+const DB = {
+  async set(col,id,data){
+    try{ if(A.db&&A.db.set) return await A.db.set(col,id,data); }catch(e){}
+    try{ if(A.db&&A.db[col]&&A.db[col].set) return await A.db[col].set(id,data); }catch(e){}
+    try{ localStorage.setItem(col+":"+id, JSON.stringify(data)); }catch(e){}
+  },
+  async get(col,id){
+    try{ if(A.db&&A.db.get){ const v=await A.db.get(col,id); if(v) return v; } }catch(e){}
+    try{ if(A.db&&A.db[col]&&A.db[col].get){ const v=await A.db[col].get(id); if(v) return v; } }catch(e){}
+    try{ const r=localStorage.getItem(col+":"+id); return r?JSON.parse(r):null; }catch(e){ return null; }
+  },
+  async all(col){
+    try{ if(A.db&&A.db.query){ const a=await A.db.query(col,{}); if(Array.isArray(a)) return a; } }catch(e){}
+    try{ if(A.db&&A.db[col]&&A.db[col].query){ const a=await A.db[col].query({}); if(Array.isArray(a)) return a; } }catch(e){}
+    const out=[]; try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith(col+":")){ try{ out.push(JSON.parse(localStorage.getItem(k))); }catch(e){} } } }catch(e){}
+    return out;
+  }
+};
+async function loadNpcsFromDb(){ return await DB.all("npc_profiles"); }
+async function saveNpc(npc){ await DB.set("npc_profiles", npc.id, npc); }
+
+async function uiConfirm(msg){
+  try{ if(A.ui&&A.ui.confirm) return await A.ui.confirm(msg); }catch(e){}
+  try{ return confirm(msg); }catch(e){ return false; }
+}
+function ensureNpcVisit(npc){
+  npc.appearedVisits = npc.appearedVisits||[];
+  if(!npc.appearedVisits.includes(state.visitId)) npc.appearedVisits.push(state.visitId);
+}
+
+// NPC 客人单独生成台词
+async function npcGenerate(userLine){
+  const npcs = state.present.filter(p=>!p.isReal);
+  if(!npcs.length) return;
+  const roster = npcs.map(p=>`- ${p.name} (id:${p.id})，人设：${p.persona||""}，当前心情：${p.mood||""}${p.memory?`，与用户的过往：${p.memory}`:""}`).join("\n");
+  const instr=`你是 Kissa 酒吧里的几位客人，请各自自然接话、可对用户或其他人反应。\n${roster}\n用户：${state.userName}\n\n${userLine}\n请严格用 [台词@id] / [沉默@id] / [私信@id]内容 输出每位（没话就说[沉默@id]）。${drunkSuffix()}`;
+  try{ const r=await A.ai.generate({ appTags:["bar","npc"], instruction: instr }); parseBarOutput(r.text||""); }catch(e){}
+}
+
+// 进场偶遇
+async function maybeEncounterOnEntry(){
+  const regulars = state.npcs.filter(n=>n.status==="regular" || n.status==="independent");
+  if(Math.random()<0.45) return; // 本次没人偶遇
+  if(regulars.length && Math.random()<0.5){
+    const npc = regulars[Math.floor(Math.random()*regulars.length)];
+    ensureNpcVisit(npc);
+    state.npcs = state.npcs.map(n=>n.id===npc.id?npc:n);
+    state.present.push(npc); renderPresent();
+    sysLine(`🍷 老熟人：${npc.name} 本来就在酒吧里，抬眼跟你打了个招呼。`);
+    if(npc.memory) pushBubble("other", npc.name, `（记得你）${npc.greet||"又来啦？"}`, false);
+  } else {
+    await rollRandomNpc(`${state.userName}一进门，就注意到吧台边坐着个陌生人。`);
+  }
+}
+
+// 随机生成一个临时客人
+async function rollRandomNpc(entranceLine){
+  setBusy(true);
+  try{
+    const instr=`你是 Kissa 酒吧的神秘客人生成器。请生成一个临时客人（非手机已有角色），用于今晚偶遇。只返回 JSON：{name, persona(两句话人设), mood(当前心情一句), greet(一句入场台词)}。不要解释。`;
+    const r=await A.ai.generate({ appTags:["bar","npc_gen"], instruction:instr });
+    const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) return;
+    let d; try{ d=JSON.parse(m[0]); }catch(e){ return; }
+    const npc={ id:"npc_"+Date.now()+"_"+Math.floor(Math.random()*999), name:d.name, persona:d.persona, mood:d.mood||"", greet:d.greet||"", isReal:false, appearedVisits:[state.visitId], participatedEvents:0, participatedThisVisit:false, eventStreak:0, appearanceCount:0, status:"one-time", memory:"" };
+    state.npcs.push(npc); await saveNpc(npc);
+    state.present.push(npc); renderPresent();
+    sysLine(`✨ 偶遇：${npc.name} 也在酒吧里。`);
+    if(npc.greet) pushBubble("other", npc.name, npc.greet);
+    if(Math.random()<0.25){ setTimeout(()=>leaveCharacter(npc, true), 2600); }
+  }catch(e){}
+  finally{ setBusy(false); }
+}
+
+// 加人 / 偶遇面板
+function openInvite(){
+  const g=$("#inviteGrid"); g.innerHTML="";
+  const here=new Set(state.present.map(p=>p.id));
+  const chars = window.__allChars||[];
+  chars.forEach(c=>{
+    if(here.has(c.id)) return;
+    const d=document.createElement("div"); d.className="role-opt"; d.textContent=c.name;
+    d.onclick=async()=>{ $("#inviteMask").classList.add("hidden"); await inviteReal(c); };
+    g.appendChild(d);
+  });
+  const reg=$("#inviteRegular");
+  const regulars=state.npcs.filter(n=>(n.status==="regular"||n.status==="independent") && !here.has(n.id));
+  if(regulars.length){ reg.classList.remove("hidden"); reg.onclick=()=>{ $("#inviteMask").classList.add("hidden"); const n=regulars[0]; ensureNpcVisit(n); state.present.push(n); renderPresent(); sysLine(`🍷 ${n.name} 被你叫来了。`); loungeGenerate(`${n.name} 刚被叫到卡座，加入聊天。`, false); }; }
+  else reg.classList.add("hidden");
+  $("#inviteMask").classList.remove("hidden");
+}
+$("#inviteClose").onclick=()=>$("#inviteMask").classList.add("hidden");
+$("#inviteRandom").onclick=async()=>{ $("#inviteMask").classList.add("hidden"); await rollRandomNpc("你环顾四周，发现吧台边还有个空位…"); await loungeGenerate("吧台边又多了一个陌生人，大家随意搭话。", false); };
+async function inviteReal(c){
+  state.present.push(mkPresent(c,true)); renderPresent();
+  sysLine(`${c.name} 被你邀到了卡座。`);
+  await loungeGenerate(`${c.name} 刚被邀到卡座坐下，自然地接话或打招呼。`, false);
+}
+// 缓存全部角色，供加人面板使用
+(async()=>{ try{ window.__allChars = await A.characters.list(); }catch(e){ window.__allChars=[]; } })();
+
+// 随机事件（P4：AI 生成丰富剧情 + 现有角色可偶遇参与 + 事件进记忆）
+async function rollRandomEvent(){
+  if(state.busy) return;
+  setBusy(true);
+  try{
+    const ctx = state.present.map(p=>`${p.name}(${p.isReal?"角色":"客人"})`).join("、");
+    const seed = [];
+    if(state.todaysSpecials.length) seed.push("今晚特调："+state.todaysSpecials.map(s=>s.name).join("、"));
+    if(state.privateNotes.length) seed.push("此前私信："+state.privateNotes.slice(-3).join("；"));
+    if(state.drunk>0) seed.push("当前醉酒程度："+["清醒","微醺","上头","烂醉"][drunkLevel()]);
+    const seedTxt = seed.length ? ("参考线索（仅参考，不必照搬）："+seed.join("；")+"。"):"";
+    const instr=`你是 Kissa 酒吧的即兴编剧。基于在场成员（${ctx}）和今晚氛围，生成一条突发、有画面感的酒吧小事件（例如：新来的服务员打翻酒泼到某位客人身上 / 隔壁桌突然划拳 / 停电烛光里有人告白 / 有人醉到在卡座上哼歌 / 门外进来一个熟悉的身影）。只返回 JSON：{title, desc, involves:[成员名], optionA, optionB}。用户可选择是否观看。`;
+    const r=await A.ai.generate({ appTags:["bar","event"], instruction: instr+seedTxt });
+    const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) return;
+    let d; try{ d=JSON.parse(m[0]); }catch(e){ return; }
+    const watch = await uiConfirm(`🎲 突发事件：${d.title}\n${d.desc}\n\n要凑过去看吗？`);
+    if(!watch){ sysLine(`你们没去凑热闹，继续喝酒聊天。`); return; }
+    let extraChar=null;
+    const others=(window.__allChars||[]).filter(c=>!state.present.find(p=>p.id===c.id));
+    if(others.length && Math.random()<0.4){
+      extraChar=others[Math.floor(Math.random()*others.length)];
+      state.present.push(mkPresent(extraChar,true)); renderPresent();
+      sysLine(`🚪 没想到，${extraChar.name} 正好也来了 Kissa，被这阵骚动吸引了过来。`);
+    }
+    sysLine(`🎲 你们凑过去看：${d.title}`);
+    await loungeGenerate(`突发情况：${d.desc} 就发生在你们附近${extraChar?`，${extraChar.name} 也刚到`:""}。请自然地反应、互动、起哄或吐槽。`, false, true);
+    advanceTime(15); // 事件耗时
+    // 参与事件的角色/客人记一笔记忆；NPC 标记"本次参与了随机事件"
+    state.present.forEach(p=>{
+      if(p.isReal){
+        A.memory.addTimeline({ characterId:p.id, appLabel:"Kissa 灵魂酒吧", detail:"bar_event", summary:`在 Kissa 遇到突发事件「${d.title}」：${d.desc}` }).catch(()=>{});
+      } else {
+        p.participatedEvents=(p.participatedEvents||0)+1;
+        p.participatedThisVisit=true; // 计入升级路径连胜
+        p.memory=(p.memory||"")+`\n参与了事件：${d.title}`;
+        saveNpc(p);
+      }
+    });
+  }catch(e){}
+  finally{ setBusy(false); }
+}
+$("#eventBtn").onclick=rollRandomEvent;
+
+/* ---------- 启动 ---------- */
+init();
+</script>
+</body>
+</html>

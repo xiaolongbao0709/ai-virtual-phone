@@ -1,0 +1,59 @@
+{
+  "sdkVersion": "1.0",
+  "id": "soul.bar.kissa",
+  "name": "Kissa 灵魂酒吧",
+  "version": "1.0.0",
+  "author": "乖乖",
+  "description": "虚拟手机世界里一家有记忆的酒吧。约角色一起去调酒、卡座闲聊、听 BGM、偶遇客人、拍照发朋友圈；带醉酒度、时间流逝与结账系统，所有经历都会沉淀成角色记忆，下次来熟客会记得你，老客人还能升级为正式角色。",
+  "entry": "index.html",
+  "permissions": [
+    "app.data.read",
+    "app.data.write",
+    "app.launch.read",
+    "app.control",
+    "app.assets.read",
+    "characters.read",
+    "characters.write",
+    "characters.state.read",
+    "characters.relations.read",
+    "user.profile.read",
+    "user.persona.read",
+    "user.preferences.read",
+    "ai.generate",
+    "memory.readCore",
+    "memory.readLongTerm",
+    "memory.readShortTerm",
+    "memory.search",
+    "memory.write",
+    "memory.suggest",
+    "chat.write",
+    "chat.sendCard",
+    "chat.requestReply",
+    "chat.read",
+    "voice.tts",
+    "voice.play",
+    "ui.toast",
+    "ui.confirm",
+    "ui.notification",
+    "notifications.read",
+    "notifications.write",
+    "social.post",
+    "moments.write",
+    "feed.post",
+    "calendar.read",
+    "tasks.schedule"
+  ],
+  "extensions": {
+    "chat": {
+      "plusActions": [
+        {
+          "id": "invite-to-bar",
+          "label": "邀TA去酒吧",
+          "entry": "invite",
+          "presentation": "app",
+          "description": "从聊天室邀请当前角色一起去 Kissa 酒吧。"
+        }
+      ]
+    }
+  }
+}

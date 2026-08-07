@@ -1,0 +1,1 @@
+把酒吧BGM音频文件放这里，参考 manifest.json 中 bgmTracks 的 file 字段（如 lounge.mp3）。
