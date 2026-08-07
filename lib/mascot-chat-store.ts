@@ -25,6 +25,42 @@ const MASCOT_CHAT_STORE = "chat";
 const MASCOT_MESSAGES_KEY = "messages";
 const MAX_STORED_MASCOT_MESSAGES = 50;
 
+// 小卷聊天文字优先持久化到 localStorage（同步、在各类 webview / PWA 中最可靠，
+// 关闭或重开应用后仍能恢复），IndexedDB 仅作兼容旧数据的回退。
+const MASCOT_LS_KEY = "aiphone.mascot.chat.v1";
+
+function saveMascotMessagesToLocalStorage(nextMessages: MascotMsg[]): void {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    try {
+        window.localStorage.setItem(MASCOT_LS_KEY, JSON.stringify(nextMessages));
+        return;
+    } catch {
+        // 配额超限（通常是较大的 base64 图片）：剥离图片字段后重试，至少保住聊天文字
+        try {
+            const stripped = nextMessages.map((msg) => {
+                const copy: MascotMsg = { ...msg };
+                delete (copy as Partial<MascotMsg>).images;
+                return copy;
+            });
+            window.localStorage.setItem(MASCOT_LS_KEY, JSON.stringify(stripped));
+        } catch {
+            // 实在写不进就放弃，内存中仍可用
+        }
+    }
+}
+
+function loadMascotMessagesFromLocalStorage(): MascotMsg[] | null {
+    if (typeof window === "undefined" || !window.localStorage) return null;
+    try {
+        const raw = window.localStorage.getItem(MASCOT_LS_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
 type MascotChatSnapshot = {
     messages: MascotMsg[];
     hydrated: boolean;
@@ -59,6 +95,9 @@ function emit() {
 }
 
 function persistMessages(nextMessages: MascotMsg[]) {
+    // 首选：localStorage（同步、可靠）
+    saveMascotMessagesToLocalStorage(nextMessages);
+    // 兼容：同时写 IndexedDB（旧数据回退）
     if (typeof indexedDB === "undefined") return;
     try {
         const req = openMascotDb();
@@ -70,6 +109,9 @@ function persistMessages(nextMessages: MascotMsg[]) {
             } catch {
                 // Keep in-memory chat usable even if persistence fails.
             }
+        };
+        req.onerror = () => {
+            // 静默忽略：localStorage 已兜底
         };
     } catch {
         // Ignore IndexedDB availability issues.
@@ -283,10 +325,21 @@ export function resetMascotConversation(options: { withGreeting?: boolean } = {}
 export async function hydrateMascotChat(): Promise<void> {
     if (hydratePromise) return hydratePromise;
     hydratePromise = new Promise<void>((resolve) => {
+        // 1) 首选 localStorage（同步、跨关闭/重开最可靠）
+        const lsMessages = loadMascotMessagesFromLocalStorage();
+        if (lsMessages) {
+            messages = normalizeMessages(lsMessages);
+            hydrated = true;
+            emit();
+            resolve();
+            return;
+        }
+        // 2) 回退 IndexedDB（兼容旧数据，并镜像到 localStorage 避免再次丢失）
         if (typeof indexedDB === "undefined") {
             hydrated = true;
             const greeting = defaultGreetingMessage();
             messages = greeting ? [greeting] : [];
+            if (messages.length > 0) saveMascotMessagesToLocalStorage(messages);
             emit();
             resolve();
             return;
@@ -298,6 +351,7 @@ export async function hydrateMascotChat(): Promise<void> {
                     hydrated = true;
                     const greeting = defaultGreetingMessage();
                     messages = greeting ? [greeting] : [];
+                    if (messages.length > 0) saveMascotMessagesToLocalStorage(messages);
                     emit();
                     resolve();
                     return;
@@ -309,7 +363,7 @@ export async function hydrateMascotChat(): Promise<void> {
                     const greeting = loaded.length > 0 ? null : defaultGreetingMessage();
                     messages = greeting ? [greeting] : loaded;
                     hydrated = true;
-                    if (greeting) persistMessages(messages);
+                    if (messages.length > 0) saveMascotMessagesToLocalStorage(messages);
                     emit();
                     resolve();
                 };
