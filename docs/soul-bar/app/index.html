@@ -122,30 +122,6 @@
     border:1px solid var(--glass-bd);color:var(--txt);font:13.5px inherit;outline:none}
   .billrow{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed var(--glass-bd)}
   .billrow.total{border:none;font-weight:700;color:var(--gold);margin-top:4px}
-  /* 内嵌 BGM 控制条（不遮挡对话） */
-  .bgm-bar{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:10px;
-    background:rgba(255,255,255,.04);border:1px solid var(--glass-bd);margin:4px 0 6px;flex-wrap:wrap}
-  .bgm-label{font-size:14px;flex-shrink:0}
-  .bgm-now{font-size:11.5px;color:var(--gold);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
-  .bgm-list{display:none;width:100%;order:99;flex-basis:100%;max-height:160px;overflow-y:auto;
-    padding-top:4px;border-top:1px dashed var(--glass-bd);margin-top:4px;
-    display:flex;flex-direction:column;gap:4px}
-  .bgm-bar.open .bgm-list{display:flex}
-  .bgm-toggle{flex:0 0 auto;width:28px;height:28px;border-radius:8px;border:1px solid var(--glass-bd);
-    background:var(--glass);color:var(--sub);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}
-  .bgm-toggle:active{transform:scale(.92)}
-  /* bgm-list 内的歌曲项（复用 .song 样式但更紧凑） */
-  .bgm-list .song{padding:8px 12px}
-  .song{display:flex;justify-content:space-between;align-items:center;padding:13px 15px;
-    border-radius:14px;background:var(--glass);border:1px solid var(--glass-bd);cursor:pointer}
-  .song:active{background:rgba(255,255,255,.1)}
-  .song .meta .nm{font-size:14px}.song .meta .ds{font-size:11px;color:var(--sub);margin-top:2px}
-  .song .eq{display:flex;gap:2px;align-items:flex-end;height:18px}
-  .song .eq i{width:3px;background:var(--gold);border-radius:2px;animation:eq 1s infinite}
-  .song .eq i:nth-child(2){animation-delay:.2s}.song .eq i:nth-child(3){animation-delay:.4s}
-  .song .eq i:nth-child(4){animation-delay:.6s}
-  .song.paused .eq i{animation:none;height:4px;background:var(--sub)}
-  @keyframes eq{0%,100%{height:5px}50%{height:18px}}
   /* 相册 / 朋友圈 */
   .moments-feed{display:flex;flex-wrap:wrap;gap:10px;padding:4px 0;justify-content:center}
   .polaroid{background:#fbf7ef;color:#2a2330;border-radius:10px;padding:8px 8px 12px;margin:0;
@@ -264,13 +240,6 @@
     <!-- 卡座 -->
     <div class="room active lounge" id="room-lounge">
       <div class="zonehead"><b>🛋️ 卡座区</b> · 沙发陷下去，灯只亮一半，最适合说废话。</div>
-      <!-- 内嵌 BGM 控制条（不遮挡对话） -->
-      <div class="bgm-bar" id="bgmBar">
-        <span class="bgm-label">🎵</span>
-        <span class="bgm-now" id="bgmNow">未播放</span>
-        <div class="bgm-list" id="bgmList"></div>
-        <button class="bgm-toggle" id="bgmToggle" title="展开/收起歌曲列表">⋮</button>
-      </div>
       <div class="feed" id="feed"></div>
       <div class="event-bar"><button class="event-btn" id="eventBtn">🎲 触发随机事件</button></div>
       <div class="composer">
@@ -389,7 +358,6 @@ const state = {
   todaysSpecials: [],     // {name,desc,price}
   currentRoom: "lounge",
   visitId: "v_" + Date.now(),
-  bgm: null,              // {file, el}
   busy: false,
   npcs: [],               // 从 db 加载的酒吧常客/客人档案
   privateNotes: [],       // 酒吧内私信摘要，用于转回卡座时衔接话题
@@ -403,12 +371,6 @@ const state = {
   moments: [],            // {caption, scene, time}
   lateNoted: false,
 };
-const BGM_LIST = [
-  { url: "https://cdn.pixabay.com/audio/2022/10/25/audio_d1718b49d8.mp3", name: "深夜爵士",   desc: "慵懒萨克斯，微醺刚好" },
-  { url: "https://cdn.pixabay.com/audio/2024/03/05/audio_4c3e13dc94.mp3", name: "雨林白噪",   desc: "雨打窗沿，适合发呆" },
-  { url: "https://cdn.pixabay.com/audio/2022/08/09/audio_6c6ab2d07a.mp3", name: "复古 Disco", desc: "灯球转起来，气氛拉满" },
-  { url: "https://cdn.pixabay.com/audio/2022/05/27/audio_9ffdd3ef81.mp3", name: "Lo-Fi 慢拍",  desc: "温柔鼓点，聊天背景" },
-];
 
 /* ---------- 黑珍珠酒吧：固定员工（老板娘珍珠 + 招牌调酒师老K） ---------- */
 // aliases：用于在手机真实角色列表中按名识别。命中真实角色后，珍珠/老K 的记忆会
@@ -813,7 +775,7 @@ function renderRoleGrid(chars){
 async function enterBar(){
   await ensureStaffConfig();   // 首次进店：从角色列表里挑选老板娘 / 调酒师
   await addStaff();
-  renderPresent(); renderBartop(); renderJuke(); renderMoments();
+  renderPresent(); renderBartop(); renderMoments();
   const guests = state.present.filter(p=>!p.fixed).map(p=>p.name).join("、");
   const boss = state.present.find(p=>p.staff==="owner");
   const barkeep = state.present.find(p=>p.staff==="bartender");
@@ -1089,42 +1051,6 @@ async function moodBartend(){
   // 角色/调酒师调的酒计费 + 醉酒
   state.bill.push({ name:`${bartender.name}特调`, price:52, who:bartender.name }); addDrunk(20); advanceTime(8);
   $("#backToLounge").onclick=()=>{ $("#bartendPanel").style.display="none"; switchRoom("lounge"); };
-}
-
-/* ---------- 点唱机（内嵌 BGM 控制条） ---------- */
-function renderJuke(){
-  const list=$("#bgmList"); list.innerHTML="";
-  BGM_LIST.forEach((s, idx)=>{
-    const d=document.createElement("div"); d.className="song"+(state.bgm&&state.bgm.idx===idx?"":" paused");
-    d.innerHTML=`<div class="meta"><div class="nm">${s.name}</div><div class="ds">${s.desc}</div></div>
-      <div class="eq"><i></i><i></i><i></i><i></i></div>`;
-    d.onclick=()=>playBgm(s, idx, d); list.appendChild(d);
-  });
-  // BGM 展开收起
-  $("#bgmToggle").onclick=()=>{ $("#bgmBar").classList.toggle("open"); };
-}
-async function playBgm(song, idx, el){
-  const nowEl=$("#bgmNow");
-  document.querySelectorAll(".song").forEach(x=>x.classList.add("paused"));
-  if(el) el.classList.remove("paused");
-  // 切换同一首 → 停止
-  if(state.bgm && state.bgm.idx===idx){
-    try{ await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{}); }catch(e){}
-    state.bgm=null; if(el) el.classList.add("paused");
-    if(nowEl) nowEl.textContent="未播放";
-    return;
-  }
-  try{
-    if(state.bgm){ try{ await A.voice.stopPlayback({ channel:"ambience" }).catch(()=>{}); }catch(e){} }
-    await A.voice.play({ channel:"ambience", dataUrl:song.url, loop:true, volume:0.28 });
-    state.bgm={ idx, name:song.name };
-    if(nowEl) nowEl.textContent="♬ "+song.name;
-    toast("🎵 正在播放：" + song.name);
-  }catch(e){
-    // 静默降级：不报错，只标记状态让 UI 显示选中
-    state.bgm={ idx, name:song.name };
-    // 不 toast 报错——用户不需要知道音频技术细节
-  }
 }
 
 /* ---------- 入场/离场台词 ---------- */
