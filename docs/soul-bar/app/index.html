@@ -194,6 +194,33 @@
   .encounter p{margin:0;font-size:12.5px;color:var(--sub);line-height:1.65}
   .encounter .row{display:flex;gap:8px}
   .encounter .row .btn{flex:1;margin-top:0;text-align:center}
+  /* 头像预设选择 */
+  .avatar-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;width:100%;max-width:330px;max-height:46vh;overflow-y:auto}
+  .avatar-opt{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:22px;
+    background:var(--glass);border:1px solid var(--glass-bd);border-radius:12px;cursor:pointer}
+  .avatar-opt:active{background:rgba(255,255,255,.12)}
+  .avatar-opt.sel{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset;background:rgba(231,201,139,.16)}
+  /* 世界书 */
+  .wb-list{display:flex;flex-direction:column;gap:8px;width:100%;max-width:380px;max-height:54vh;overflow-y:auto}
+  .wb-item{background:var(--glass);border:1px solid var(--glass-bd);border-radius:12px;padding:10px 12px}
+  .wb-item .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .wb-item .ti{font-size:13.5px;color:var(--gold);font-weight:600}
+  .wb-item .kw{font-size:10.5px;color:var(--sub);margin-top:3px;line-height:1.5}
+  .wb-item .ct{font-size:11.5px;color:var(--txt);opacity:.82;margin-top:5px;line-height:1.55}
+  .wb-item .ops{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+  .wb-item .ops .o{flex:1;min-width:52px;text-align:center;padding:5px 0;border-radius:9px;border:1px solid var(--glass-bd);
+    background:rgba(255,255,255,.04);font-size:11.5px;cursor:pointer}
+  .wb-item .ops .o.on{color:var(--rose);border-color:rgba(240,166,192,.5)}
+  .wb-item .tag-c{font-size:9.5px;color:var(--bg0);background:var(--gold);border-radius:6px;padding:1px 5px;font-weight:700;white-space:nowrap}
+  .wb-edit{display:none;flex-direction:column;gap:8px;width:100%;max-width:380px}
+  .wb-edit.show{display:flex}
+  .wb-edit .fld{display:flex;flex-direction:column;gap:4px}
+  .wb-edit label{font-size:11px;color:var(--sub);letter-spacing:.5px}
+  .wb-edit input,.wb-edit textarea{width:100%;padding:9px 11px;border-radius:10px;background:rgba(255,255,255,.05);
+    border:1px solid var(--glass-bd);color:var(--txt);font:13px/1.5 inherit;outline:none}
+  .wb-edit textarea{min-height:90px;resize:vertical}
+  .wb-edit .row{display:flex;gap:10px;align-items:center;margin-top:2px}
+  .wb-edit .row label{display:flex;gap:5px;align-items:center;color:var(--txt);font-size:12.5px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -260,6 +287,7 @@
   <div class="foot">
     <button class="leave-btn" id="leaveBtn">🌙 离开酒吧（结账 · 保存今晚的记忆）</button>
     <button class="btn" id="staffCfgBtn" style="margin-top:8px">⚙ 重新配置员工</button>
+    <button class="btn" id="wbBtn" style="margin-top:8px">📖 世界书</button>
   </div>
 
   <!-- 选人遮罩 -->
@@ -295,6 +323,47 @@
       <div class="btn primary" id="staffDone" style="margin-top:14px" disabled>开始营业 ▸</div>
     </div>
   </div>
+
+  <!-- 头像预设选择 -->
+  <div class="mask hidden" id="avatarPicker">
+    <div class="setup-card" style="align-items:center">
+      <h2>挑个头像</h2>
+      <p class="sub">给这位角色选一个酒吧里的头像</p>
+      <div class="avatar-grid" id="avatarGrid"></div>
+      <div class="btn" id="avatarCancel" style="margin-top:12px">取消</div>
+    </div>
+  </div>
+
+  <!-- 世界书 -->
+  <div class="mask hidden" id="worldbook">
+    <div class="setup-card" style="width:92%;max-width:400px">
+      <h2>📖 黑珍珠 · 世界书</h2>
+      <p class="sub">挂载这座城市的人物与关系网。角色们会据此更沉浸地演绎、认出彼此、向熟人 / 商业伙伴打招呼。</p>
+      <div class="wb-list" id="wbList"></div>
+      <div class="btn primary" id="wbAdd">➕ 新增条目</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <div class="btn" id="wbImport" style="flex:1;text-align:center">⬆ 导入 JSON</div>
+        <div class="btn" id="wbExport" style="flex:1;text-align:center">⬇ 导出 JSON</div>
+        <div class="btn" id="wbReset" style="flex:1;text-align:center">↺ 恢复默认</div>
+      </div>
+      <div class="wb-edit" id="wbEdit">
+        <div class="fld"><label>标题</label><input id="wbFTitle" placeholder="如：珍珠 · 人物卡" /></div>
+        <div class="fld"><label>触发关键词（逗号分隔，命中才注入；留空+勾选常驻则每次都注入）</label><input id="wbFKeys" placeholder="珍珠,老板娘,BOSS" /></div>
+        <div class="fld"><label>内容（世界观 / 人物关系描述）</label><textarea id="wbFContent" placeholder="描述这段设定的内容，会作为 [世界书] 注入给 AI…"></textarea></div>
+        <div class="fld"><label>排序（小在前，越靠前越先注入）</label><input id="wbFOrder" type="number" value="10" /></div>
+        <div class="row">
+          <label><input type="checkbox" id="wbFConst" /> 常驻（每次对话都注入）</label>
+          <label><input type="checkbox" id="wbFEnabled" checked /> 启用</label>
+        </div>
+        <div style="display:flex;gap:8px">
+          <div class="btn primary" id="wbSave" style="flex:1;text-align:center">保存</div>
+          <div class="btn" id="wbEditCancel" style="flex:1;text-align:center">取消</div>
+        </div>
+      </div>
+      <div class="btn" id="wbClose" style="margin-top:8px">关闭</div>
+      <input type="file" id="wbFile" accept="application/json" style="display:none" />
+    </div>
+  </div>
 </div>
 
 <script>
@@ -313,6 +382,8 @@ const state = {
   npcs: [],               // 从 db 加载的酒吧常客/客人档案
   privateNotes: [],       // 酒吧内私信摘要，用于转回卡座时衔接话题
   encounterRolled: false,
+  worldbook: [],          // 世界书条目（挂载的城市人物/关系网）
+  avatarOverrides: {},    // 真实角色在酒吧里的头像覆盖 {id:avatar}
   // ---- P5 ----
   minutes: 21*60,         // 酒吧开门时间 21:00（minutes from midnight）
   drunk: 0,               // 醉酒度 0-100
@@ -361,15 +432,15 @@ async function addStaff(){
         // 该角色已随你进场：直接升级为固定员工，避免重复
         exist.fixed=true; exist.staff=def.role; exist.status=def.role; exist.persona=builtin.persona;
       } else {
-        state.present.push({ id:sel.id, name:sel.name, avatar:sel.avatar||builtin.avatar,
+        state.present.push({ id:sel.id, name:sel.name, avatar:state.avatarOverrides[sel.id]||sel.avatar||builtin.avatar,
           isReal:true, fixed:true, staff:def.role, status:def.role, persona:builtin.persona });
       }
       chosen.push(`${sel.name}（真实角色）`);
     } else {
-      // 未选或选了内置 → 退回 app 本地 staff_memory（内置人设）
-      let mem="";
-      try{ const m=await DB.get("staff_memory", builtin.id); mem = m && m.memory ? m.memory : ""; }catch(e){}
-      state.present.push({ ...builtin, isReal:false, fixed:true, status:def.role, memory:mem });
+      // 未选或选了内置 → 退回 app 本地 staff_memory（内置人设 + 已存头像）
+      let mem="", favatar="";
+      try{ const m=await DB.get("staff_memory", builtin.id); mem = m && m.memory ? m.memory : ""; favatar = m && m.avatar ? m.avatar : ""; }catch(e){}
+      state.present.push({ ...builtin, avatar: favatar||builtin.avatar, isReal:false, fixed:true, status:def.role, memory:mem });
       chosen.push(`${builtin.name}（店内人设）`);
     }
   }
@@ -390,7 +461,7 @@ function showStaffSetup(){
       const g=$(gridId); g.innerHTML="";
       chars.forEach(c=>{
         const d=document.createElement("div"); d.className="staff-opt";
-        d.innerHTML=`<span class="av">${(c.avatar||c.name||"?").slice(0,1)}</span><span>${c.name}</span>`;
+        d.innerHTML=`<span class="av">${c.avatar||(c.name||"?").slice(0,1)}</span><span>${c.name}</span>`;
         d.onclick=()=>{ sel[role]={type:"real",id:c.id,name:c.name,avatar:c.avatar}; mark(gridId,d); check(); };
         g.appendChild(d);
       });
@@ -424,9 +495,185 @@ async function reconfigStaff(){
 async function staffServe(drinkName){
   const k=state.present.find(p=>p.staff==="bartender"); if(!k) return;
   try{
-    const r=await A.ai.generate({ appTags:["bar","bartend"], instruction:`${k.persona}\n用户点了「${drinkName}」。以老K身份，用极简的动作和一句顶十句的话把酒推过去（可只写动作，不必多言）。` });
+    const r=await A.ai.generate({ appTags:["bar","bartend"], instruction:`${k.persona}\n用户点了「${drinkName}」。以老K身份，用极简的动作和一句顶十句的话把酒推过去（可只写动作，不必多言）。` + wbInject(drinkName) });
     const txt=(r.text||"").trim(); if(txt) pushBubble("other", k.name, txt);
   }catch(e){}
+}
+
+/* ---------- 角色头像预设 ---------- */
+const AVATAR_PRESETS = ["🦪","🥃","🍷","🍸","🥂","🍹","🐚","🌹","💋","🔥","🌙","⭐","🦁","🦊","🐺","🦅","🐍","🦋","🎩","🕶️","💎","🖤","🥀","🌊","🍾","🎷","🎺","🪩","🗝️","🎭","🃏","🪞","🛡️","👑","🌃","🏙️","💃","🕺","🎲","☕","📜","🔮","🧊"];
+function pickAvatar(initial){
+  return new Promise(resolve=>{
+    const modal=$("#avatarPicker"), grid=$("#avatarGrid");
+    grid.innerHTML="";
+    AVATAR_PRESETS.forEach(a=>{
+      const d=document.createElement("div"); d.className="avatar-opt"; d.textContent=a;
+      d.onclick=()=>{ modal.classList.add("hidden"); resolve(a); };
+      grid.appendChild(d);
+    });
+    $("#avatarCancel").onclick=()=>{ modal.classList.add("hidden"); resolve(null); };
+    modal.classList.remove("hidden");
+  });
+}
+async function applyAvatar(p, avatar){
+  if(!avatar) return;
+  p.avatar=avatar;
+  try{
+    if(p.fixed && !p.isReal){
+      let m=""; try{ const x=await DB.get("staff_memory", p.id); m=x&&x.memory?x.memory:""; }catch(e){}
+      await DB.set("staff_memory", p.id, { id:p.id, memory:m, avatar });
+    } else if(p.isReal){
+      state.avatarOverrides[p.id]=avatar;
+      await DB.set("bar_avatar_overrides", p.id, { id:p.id, avatar });
+    } else {
+      await saveNpc(p);
+    }
+  }catch(e){}
+  renderPresent();
+}
+async function loadAvatarOverrides(){ try{ const all=await DB.all("bar_avatar_overrides"); state.avatarOverrides={}; (all||[]).forEach(o=>{ if(o&&o.id) state.avatarOverrides[o.id]=o.avatar; }); }catch(e){ state.avatarOverrides={}; } }
+
+/* ---------- 世界书（世界观挂载） ---------- */
+async function loadWorldbook(){
+  let list=[]; try{ list=await DB.all("bar_worldbook"); }catch(e){}
+  if(!list || !list.length){ list=seedDefaultWorldbook(); for(const e of list){ try{ await DB.set("bar_worldbook", e.id, e); }catch(e){} } }
+  return list;
+}
+async function saveWorldbookEntry(e){ try{ await DB.set("bar_worldbook", e.id, e); }catch(e){} }
+async function deleteWorldbookEntry(id){ try{ await DB.set("bar_worldbook", id, null); }catch(e){} if(state.worldbook) state.worldbook=state.worldbook.filter(x=>x.id!==id); }
+function seedDefaultWorldbook(){
+  return [
+    { id:"wb_city", title:"黑珍珠 · 城市与酒吧", keywords:["黑珍珠","酒吧","城市","滨海","今晚"], order:1, enabled:true, constant:true, relations:[],
+      content:"「黑珍珠」是这座滨海城市里最有名的地下酒吧之一，藏在小巷深处却几乎人尽皆知——城中名流、夜场常客、生意人都爱来。这里没有招牌，靠口口相传。它是一个「谁都可能撞见谁」的地方：你认识的、不认识的、甚至商业上的伙伴或对手，都可能在同一个卡座旁喝酒。老板娘珍珠是城中交际圈核心人物，许多人都卖她面子。" },
+    { id:"wb_pearl", title:"珍珠 · 人物卡", keywords:["珍珠","老板娘","BOSS","老板"], order:2, enabled:true, constant:false, relations:[{with:"珍珠",type:"owner",note:"黑珍珠老板娘"}],
+      content:"珍珠是黑珍珠的老板娘，城中知名的交际花与红颜知己，桃花与风流往事极多但从不说破。她与城中许多世家、企业主、艺术家都有交情。见到熟人或商业伙伴会自然递酒寒暄、给面子；对待生客则风情而不失分寸。若在场有人是她的旧识或商业伙伴，她会主动招呼。" },
+    { id:"wb_k", title:"老K · 人物卡", keywords:["老K","调酒师","酒保","调酒"], order:3, enabled:true, constant:false, relations:[{with:"老K",type:"bartender",note:"黑珍珠招牌调酒师"}],
+      content:"老K 是黑珍珠的招牌调酒师，沉默寡言、调酒技术精湛。传闻他曾是某大型酒店集团的首席调酒顾问，因某桩事离开后只在黑珍珠落脚。他记得城中权贵的口味与八卦，话少但消息灵通；若有人提起他熟悉的名流或场所，他可能难得地接一句。" },
+    { id:"wb_partners", title:"商业伙伴 · 关系网", keywords:["夜航资本","玄武商会","潮汐文化","陈总","林姐","商业伙伴","合伙人","合作","集团","公司"], order:4, enabled:true, constant:false, relations:[{with:"夜航资本",type:"partner",note:"与黑珍珠及珍珠有合作",greet:"主动举杯招呼、给足面子"},{with:"玄武商会",type:"partner",note:"珍珠的旧识与生意伙伴",greet:"自然凑过去寒暄"},{with:"潮汐文化",type:"partner",note:"常来包场的合作方",greet:"笑着打招呼"}],
+      content:"以下企业与黑珍珠及珍珠有合作/熟客关系，老板娘见到其负责人会主动举杯招呼、给足面子：夜航资本、玄武商会、潮汐文化。若在场有人来自这些企业，或彼此是商业伙伴，角色间会自然地以「合作/竞合」口吻互动——介绍、互相捧场、或暗暗较劲。把在场者当「这座城市里彼此可能认识」的人来演绎。" },
+  ];
+}
+function wbInject(extra){
+  const wb=(state.worldbook||[]).filter(e=>e.enabled);
+  if(!wb.length) return "";
+  const names=state.present.map(p=>p.name);
+  const hay=[ (extra||""), ...names, state.currentRoom||"", "黑珍珠", "酒吧" ].join(" ").toLowerCase();
+  const hit=[];
+  for(const e of wb){
+    if(e.constant){ hit.push(e); continue; }
+    const kws=(e.keywords||[]).filter(Boolean);
+    if(kws.some(k=> hay.includes(String(k).toLowerCase()))) hit.push(e);
+  }
+  if(!hit.length) return "";
+  hit.sort((a,b)=>(a.order||0)-(b.order||0));
+  let txt="\n\n[世界书 · 当前世界观提示，用于让角色更贴合设定、自然认出彼此，不必逐字照搬]\n";
+  let len=0;
+  for(const e of hit){
+    const block=`•《${e.title}》${e.constant?"[常驻]":""}：${e.content}\n`;
+    if(len+block.length>1300) break;
+    txt+=block; len+=block.length;
+  }
+  return txt;
+}
+function buildRelations(name){
+  const out=[];
+  for(const e of (state.worldbook||[])){
+    if(!e.enabled) continue;
+    const kws=[...(e.keywords||[]), ...(e.relations||[]).map(r=>r.with||"").filter(Boolean)];
+    const hit=kws.some(k=> name && (name.includes(String(k)) || String(k).includes(name)));
+    if(hit){
+      const r=(e.relations&&e.relations.find(x=>x.with && (name.includes(x.with)||x.with.includes(name))))||{};
+      out.push({ title:e.title, note:r.note||"", greet:r.greet||"自然地凑过来打了个招呼" });
+    }
+  }
+  return out;
+}
+async function maybeGreetRelations(newName){
+  const rels=buildRelations(newName);
+  if(!rels.length) return;
+  const greeter=state.present.find(p=>p.staff) || state.present.find(p=>p.isReal && p.name!==newName) || null;
+  if(!greeter) return;
+  const r=rels[0];
+  sysLine(`💡 ${newName} 与在场的 ${greeter.name} 有关联（${r.title}${r.note?" · "+r.note:""}）。${greeter.name} ${r.greet}。`);
+  await genEntrance(`${greeter.name} 知道 ${newName} 与「${r.title}」有关联${r.note?"（"+r.note+"）":""}，${r.greet}。请以 ${greeter.name} 的身份自然地主动招呼、递酒或寒暄，点明这份关系。`, [greeter.id], true);
+}
+
+/* ---------- 世界书编辑 UI ---------- */
+function openWorldbook(){ renderWorldbook(); $("#worldbook").classList.remove("hidden"); }
+function renderWorldbook(){
+  const list=$("#wbList"); list.innerHTML="";
+  const items=(state.worldbook||[]).slice().sort((a,b)=>(a.order||0)-(b.order||0));
+  if(!items.length){ list.innerHTML=`<div class="sys">还没有世界书条目。点「➕ 新增条目」或「↺ 恢复默认」。</div>`; }
+  items.forEach(e=>{
+    const d=document.createElement("div"); d.className="wb-item";
+    d.innerHTML=`<div class="top"><div class="ti">${e.title}</div>${e.constant?'<span class="tag-c">常驻</span>':''}</div>
+      <div class="kw">关键词：${(e.keywords||[]).join("、")||"（无）"}</div>
+      <div class="ct">${e.content}</div>
+      <div class="ops">
+        <div class="o ${e.enabled?'on':''}" data-act="toggle">${e.enabled?'已启用':'已停用'}</div>
+        <div class="o" data-act="edit">编辑</div>
+        <div class="o" data-act="del">删除</div>
+      </div>`;
+    d.querySelector('[data-act="toggle"]').onclick=async()=>{ e.enabled=!e.enabled; await saveWorldbookEntry(e); renderWorldbook(); };
+    d.querySelector('[data-act="edit"]').onclick=()=>editWorldbook(e);
+    d.querySelector('[data-act="del"]').onclick=async()=>{ if(confirm("删除条目「"+e.title+"」？")){ await deleteWorldbookEntry(e.id); renderWorldbook(); } };
+    list.appendChild(d);
+  });
+  $("#wbEdit").classList.remove("show");
+}
+let _wbEditing=null;
+function editWorldbook(e){
+  _wbEditing=e||null;
+  $("#wbFTitle").value=e?e.title:"";
+  $("#wbFKeys").value=e?(e.keywords||[]).join(","):"";
+  $("#wbFContent").value=e?e.content:"";
+  $("#wbFOrder").value=e?(e.order||10):10;
+  $("#wbFConst").checked=!!(e&&e.constant);
+  $("#wbFEnabled").checked=!!(e?e.enabled!==false:true);
+  $("#wbEdit").classList.add("show");
+}
+async function saveWorldbookForm(){
+  const title=$("#wbFTitle").value.trim(); const content=$("#wbFContent").value.trim();
+  if(!title||!content){ toast("标题和内容都要填"); return; }
+  const keys=$("#wbFKeys").value.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+  const e=_wbEditing || { id:"wb_"+Date.now() };
+  e.title=title; e.keywords=keys; e.content=content; e.order=Number($("#wbFOrder").value)||10;
+  e.constant=$("#wbFConst").checked; e.enabled=$("#wbFEnabled").checked; e.relations=e.relations||[];
+  state.worldbook=state.worldbook||[];
+  if(!state.worldbook.find(x=>x.id===e.id)) state.worldbook.push(e);
+  await saveWorldbookEntry(e); renderWorldbook(); toast("已保存世界书条目");
+}
+async function resetWorldbook(){
+  if(!confirm("用默认世界书覆盖当前所有条目？（自定义条目会丢失）")) return;
+  try{ const all=await DB.all("bar_worldbook"); (all||[]).forEach(x=>{ try{ DB.set("bar_worldbook", x.id, null); }catch(e){} }); }catch(e){}
+  state.worldbook=seedDefaultWorldbook();
+  for(const e of state.worldbook){ try{ await DB.set("bar_worldbook", e.id, e); }catch(e){} }
+  renderWorldbook(); toast("已恢复默认世界书");
+}
+function exportWorldbook(){
+  const data=JSON.stringify(state.worldbook||[], null, 2);
+  const blob=new Blob([data],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download="黑珍珠_世界书.json"; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
+function importWorldbook(file){
+  const reader=new FileReader();
+  reader.onload=async()=>{
+    try{
+      const arr=JSON.parse(reader.result);
+      if(!Array.isArray(arr)) throw new Error("格式应为条目数组");
+      state.worldbook=state.worldbook||[];
+      let added=0;
+      for(const e of arr){
+        if(!e||!e.title||!e.content) continue;
+        e.id=e.id||("wb_"+Date.now()+"_"+Math.random().toString(36).slice(2,7));
+        if(!state.worldbook.find(x=>x.id===e.id)){ state.worldbook.push(e); await saveWorldbookEntry(e); added++; }
+      }
+      renderWorldbook(); toast("已导入 "+added+" 条世界书");
+    }catch(e){ alert("导入失败：" + e.message); }
+  };
+  reader.readAsText(file);
 }
 
 /* ---------- 工具 ---------- */
@@ -501,6 +748,8 @@ async function init(){
     state.staffConfig = await loadStaffConfig(); // 读取已保存的员工配置
     // 加载酒吧客人档案（跨次访问持久）
     try{ state.npcs = await loadNpcsFromDb(); }catch(e){ state.npcs = []; }
+    try{ state.worldbook = await loadWorldbook(); }catch(e){ state.worldbook=[]; }
+    await loadAvatarOverrides();
     // 用户昵称
     try{ const prof = await A.user.getProfile({}); state.userName = prof?.name || "你"; }catch(e){}
     renderStatusBar();
@@ -517,7 +766,7 @@ async function init(){
   }catch(e){ sysLine("初始化失败：" + e.message); }
 }
 
-function mkPresent(c, isReal){ return { id:c.id, name:c.name, avatar:c.avatar, isReal, status: isReal?"real":undefined }; }
+function mkPresent(c, isReal){ return { id:c.id, name:c.name, avatar:(state.avatarOverrides&&state.avatarOverrides[c.id])||c.avatar, isReal, status: isReal?"real":undefined }; }
 
 function renderRoleGrid(chars){
   const g=$("#roleGrid"); g.innerHTML="";
@@ -591,7 +840,10 @@ function renderPresent(){
     const badge = isStaff
       ? `<span class="npc-badge" style="border-color:rgba(231,201,139,.5);color:var(--gold)">${p.staff==="owner"?"老板":"调酒师"}</span>`
       : (p.isReal?"":`<span class="npc-badge">${p.status==="regular"?"常客":(p.status==="independent"?"老友":"客人")}</span>`);
-    c.innerHTML=`<span class="av">${(p.name||"?").slice(0,1)}</span><span>${p.name}</span>${badge}`+(isStaff?"":`<span class="x">×</span>`);
+    const av=document.createElement("span"); av.className="av"; av.textContent=p.avatar||(p.name||"?").slice(0,1);
+    av.onclick=(e)=>{ e.stopPropagation(); pickAvatar(p.avatar).then(a=>{ if(a) applyAvatar(p,a); }); };
+    const nm=document.createElement("span"); nm.textContent=p.name;
+    c.appendChild(av); c.appendChild(nm); c.insertAdjacentHTML("beforeend", badge+(isStaff?"":`<span class="x">×</span>`));
     if(!isStaff) c.onclick=()=>leaveCharacter(p);
     box.appendChild(c);
   });
@@ -646,7 +898,7 @@ async function loungeGenerate(userLine, opening, bypassBusy){
     const staffScene = fixedStaff.length ? `\n\n[场景] 当前大家都在「黑珍珠」酒吧里：${fixedStaff.map(p=> p.staff==="owner" ? `${p.name}是这家酒吧的老板娘` : (p.staff==="bartender" ? `${p.name}是招牌调酒师（沉默寡言但调酒技术精湛）` : `${p.name}是酒吧员工`)).join("；")}。请以各自在酒吧里的身份自然互动。` : "";
     const instr = `在场成员：\n${roster}\n用户：${state.userName} (id:user)\n\n请以在场真实角色身份，严格用 [台词@真实角色id] / [沉默@id] / [私信@真实角色id]内容 输出。${npcNote}${staffScene}${extra}${drunkSuffix()}\n\n${userLine}`;
     if(realIds.length){
-      const r = await A.ai.generate({ characterIds: realIds, appTags:["bar","lounge"], instruction: instr });
+      const r = await A.ai.generate({ characterIds: realIds, appTags:["bar","lounge"], instruction: instr + wbInject(userLine) });
       parseBarOutput(r.text||"");
     }
     await npcGenerate(userLine);
@@ -758,7 +1010,7 @@ async function suggestDrink(drinkName){
     const ids=realChars.map(p=>p.id);
     const roster=realChars.map(p=>`- ${p.name} (id:${p.id})`).join("\n");
     const r=await A.ai.generate({ characterIds:ids, appTags:["bar","suggest"],
-      instruction:`在场角色（用 [台词@id] 输出）：\n${roster}\n用户正看着「${drinkName}」。给一句真实建议。${drunkSuffix()}` });
+      instruction:`在场角色（用 [台词@id] 输出）：\n${roster}\n用户正看着「${drinkName}」。给一句真实建议。${drunkSuffix()}` + wbInject() });
     parseBarOutput(r.text||"");
   }catch(e){ sysLine("建议出错："+e.message); }
   finally{ setBusy(false); }
@@ -776,7 +1028,7 @@ async function selfBartend(){
     const ids=realChars.map(p=>p.id);
     const roster=realChars.map(p=>`- ${p.name} (id:${p.id})`).join("\n");
     const r=await A.ai.generate({ characterIds:ids, appTags:["bar","bartend"],
-      instruction:`在场角色（用 [台词@id] 输出）：\n${roster}\n${state.userName}刚调了一杯酒，举起来请大家尝。给评价/起哄/撒娇。${drunkSuffix()}` });
+      instruction:`在场角色（用 [台词@id] 输出）：\n${roster}\n${state.userName}刚调了一杯酒，举起来请大家尝。给评价/起哄/撒娇。${drunkSuffix()}` + wbInject() });
     $("#bartendBody").textContent=r.text||"（没有回应）";
   }catch(e){ $("#bartendBody").textContent="出错："+e.message; }
   finally{ setBusy(false); }
@@ -797,11 +1049,11 @@ async function moodBartend(){
   try{
     if(bartender.isReal){
       const r=await A.ai.generate({ characterId:bartender.id, appTags:["bar","bartend_mood"],
-        instruction:`用户心情：${mood}。以 ${bartender.name} 身份调一杯专属特调并描述。${drunkSuffix()}` });
+        instruction:`用户心情：${mood}。以 ${bartender.name} 身份调一杯专属特调并描述。${drunkSuffix()}` + wbInject(mood) });
       $("#bartendBody").textContent=r.text||"（没有回应）";
     } else {
       const r=await A.ai.generate({ appTags:["bar","bartend_mood"],
-        instruction:`${bartender.persona}\n\n用户心情：${mood}。以「${bartender.name}」身份调一杯专属特调并描述（老K 话少，用精确的几个动作和一句顶十句的话带过）。${drunkSuffix()}` });
+        instruction:`${bartender.persona}\n\n用户心情：${mood}。以「${bartender.name}」身份调一杯专属特调并描述（老K 话少，用精确的几个动作和一句顶十句的话带过）。${drunkSuffix()}` + wbInject(mood) });
       $("#bartendBody").textContent=r.text||"（没有回应）";
     }
   }catch(e){ $("#bartendBody").textContent="出错："+e.message; }
@@ -839,8 +1091,9 @@ async function playBgm(song, el){
 }
 
 /* ---------- 入场/离场台词 ---------- */
-async function genEntrance(line, ids){
-  if(state.busy||!ids.length) return;
+async function genEntrance(line, ids, bypassBusy){
+  if(state.busy && !bypassBusy) return;
+  const ownBusy = !state.busy;
   setBusy(true);
   try{
     const realIds = ids.filter(id=>{ const p=state.present.find(x=>x.id===id); return p&&p.isReal; });
@@ -849,12 +1102,12 @@ async function genEntrance(line, ids){
     const npcNote = npcIds.length ? `\n[注意] ${npcIds.map(id=>roleLine(id)).join("、")} 是酒吧客人（非角色），你只以真实角色身份回应。` : "";
     if(realIds.length){
       const r=await A.ai.generate({ characterIds:realIds, appTags:["bar","entrance"],
-        instruction:`在场角色（用 [台词@id] 输出）：\n${roster}\n${line}${npcNote}${drunkSuffix()}` });
+        instruction:`在场角色（用 [台词@id] 输出）：\n${roster}\n${line}${npcNote}${drunkSuffix()}` + wbInject(line) });
       parseBarOutput(r.text||"");
     }
     await npcGenerate(line);
   }catch(e){}
-  finally{ setBusy(false); }
+  finally{ if(ownBusy) setBusy(false); }
 }
 
 /* ---------- P5：拍照发朋友圈 ---------- */
@@ -1077,7 +1330,7 @@ async function npcGenerate(userLine){
   if(!npcs.length) return;
   const roster = npcs.map(p=>`- ${p.name} (id:${p.id})，人设：${p.persona||""}，当前心情：${p.mood||""}${p.memory?`，与用户的过往：${p.memory}`:""}`).join("\n");
   const instr=`你是 黑珍珠 酒吧里的几位客人，请各自自然接话、可对用户或其他人反应。\n${roster}\n用户：${state.userName}\n\n${userLine}\n请严格用 [台词@id] / [沉默@id] / [私信@id]内容 输出每位（没话就说[沉默@id]）。${drunkSuffix()}`;
-  try{ const r=await A.ai.generate({ appTags:["bar","npc"], instruction: instr }); parseBarOutput(r.text||""); }catch(e){}
+  try{ const r=await A.ai.generate({ appTags:["bar","npc"], instruction: instr + wbInject(userLine) }); parseBarOutput(r.text||""); }catch(e){}
 }
 
 // 进场偶遇
@@ -1089,7 +1342,8 @@ async function maybeEncounterOnEntry(){
     ensureNpcVisit(npc);
     state.npcs = state.npcs.map(n=>n.id===npc.id?npc:n);
     state.present.push(npc); renderPresent();
-    sysLine(`🍷 老熟人：${npc.name} 本来就在酒吧里，抬眼跟你打了个招呼。`);
+    if(buildRelations(npc.name).length){ await maybeGreetRelations(npc.name); }
+    else { sysLine(`🍷 老熟人：${npc.name} 本来就在酒吧里，抬眼跟你打了个招呼。`); }
     if(npc.memory) pushBubble("other", npc.name, `（记得你）${npc.greet||"又来啦？"}`, false);
   } else {
     await rollRandomNpc(`${state.userName}一进门，就注意到吧台边坐着个陌生人。`);
@@ -1104,10 +1358,11 @@ async function rollRandomNpc(entranceLine){
     const r=await A.ai.generate({ appTags:["bar","npc_gen"], instruction:instr });
     const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) return;
     let d; try{ d=JSON.parse(m[0]); }catch(e){ return; }
-    const npc={ id:"npc_"+Date.now()+"_"+Math.floor(Math.random()*999), name:d.name, persona:d.persona, mood:d.mood||"", greet:d.greet||"", isReal:false, appearedVisits:[state.visitId], participatedEvents:0, participatedThisVisit:false, eventStreak:0, appearanceCount:0, status:"one-time", memory:"" };
+    const npc={ id:"npc_"+Date.now()+"_"+Math.floor(Math.random()*999), name:d.name, persona:d.persona, mood:d.mood||"", greet:d.greet||"", avatar: AVATAR_PRESETS[Math.floor(Math.random()*AVATAR_PRESETS.length)], isReal:false, appearedVisits:[state.visitId], participatedEvents:0, participatedThisVisit:false, eventStreak:0, appearanceCount:0, status:"one-time", memory:"" };
     state.npcs.push(npc); await saveNpc(npc);
     state.present.push(npc); renderPresent();
-    sysLine(`✨ 偶遇：${npc.name} 也在酒吧里。`);
+    if(buildRelations(npc.name).length){ await maybeGreetRelations(npc.name); }
+    else { sysLine(`✨ 偶遇：${npc.name} 也在酒吧里。`); }
     if(npc.greet) pushBubble("other", npc.name, npc.greet);
     if(Math.random()<0.25){ setTimeout(()=>leaveCharacter(npc, true), 2600); }
   }catch(e){}
@@ -1136,6 +1391,7 @@ $("#inviteRandom").onclick=async()=>{ $("#inviteMask").classList.add("hidden"); 
 async function inviteReal(c){
   state.present.push(mkPresent(c,true)); renderPresent();
   sysLine(`${c.name} 被你邀到了卡座。`);
+  await maybeGreetRelations(c.name);
   await loungeGenerate(`${c.name} 刚被邀到卡座坐下，自然地接话或打招呼。`, false);
 }
 // 缓存全部角色，供加人面板使用
@@ -1153,7 +1409,7 @@ async function rollRandomEvent(){
     if(state.drunk>0) seed.push("当前醉酒程度："+["清醒","微醺","上头","烂醉"][drunkLevel()]);
     const seedTxt = seed.length ? ("参考线索（仅参考，不必照搬）："+seed.join("；")+"。"):"";
     const instr=`你是 黑珍珠 酒吧的即兴编剧。基于在场成员（${ctx}）和今晚氛围，生成一条突发、有画面感的酒吧小事件（例如：新来的服务员打翻酒泼到某位客人身上 / 隔壁桌突然划拳 / 停电烛光里有人告白 / 有人醉到在卡座上哼歌 / 门外进来一个熟悉的身影）。只返回 JSON：{title, desc, involves:[成员名], optionA, optionB}。用户可选择是否观看。`;
-    const r=await A.ai.generate({ appTags:["bar","event"], instruction: instr+seedTxt });
+    const r=await A.ai.generate({ appTags:["bar","event"], instruction: instr+seedTxt + wbInject() });
     const m=(r.text||"").match(/\{[\s\S]*\}/); if(!m) return;
     let d; try{ d=JSON.parse(m[0]); }catch(e){ return; }
     const watch = await uiConfirm(`🎲 突发事件：${d.title}\n${d.desc}\n\n要凑过去看吗？`);
@@ -1164,6 +1420,7 @@ async function rollRandomEvent(){
       extraChar=others[Math.floor(Math.random()*others.length)];
       state.present.push(mkPresent(extraChar,true)); renderPresent();
       sysLine(`🚪 没想到，${extraChar.name} 正好也来了 黑珍珠，被这阵骚动吸引了过来。`);
+      await maybeGreetRelations(extraChar.name);
     }
     sysLine(`🎲 你们凑过去看：${d.title}`);
     await loungeGenerate(`突发情况：${d.desc} 就发生在你们附近${extraChar?`，${extraChar.name} 也刚到`:""}。请自然地反应、互动、起哄或吐槽。`, false, true);
@@ -1183,6 +1440,15 @@ async function rollRandomEvent(){
   finally{ setBusy(false); }
 }
 $("#eventBtn").onclick=rollRandomEvent;
+$("#wbBtn").onclick=openWorldbook;
+$("#wbClose").onclick=()=>$("#worldbook").classList.add("hidden");
+$("#wbAdd").onclick=()=>editWorldbook(null);
+$("#wbSave").onclick=saveWorldbookForm;
+$("#wbEditCancel").onclick=()=>{ $("#wbEdit").classList.remove("show"); };
+$("#wbExport").onclick=exportWorldbook;
+$("#wbReset").onclick=resetWorldbook;
+$("#wbImport").onclick=()=>$("#wbFile").click();
+$("#wbFile").onchange=(e)=>{ const f=e.target.files&&e.target.files[0]; if(f) importWorldbook(f); e.target.value=""; };
 
 /* ---------- 启动 ---------- */
 init();
