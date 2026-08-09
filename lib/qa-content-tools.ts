@@ -137,6 +137,57 @@ const contentGuideTool: QaContentTool = {
     },
 };
 
+// ── 补丁替换（按锚点改已有源码，不用整份覆盖）──
+
+type QaTextPatch = {
+    oldText: string;
+    newText: string;
+    occurrence: number;
+};
+
+/**
+ * 对源码做一组锚点替换，整体校验、全部命中才返回新文本；任一补丁未命中或锚点不唯一（且未指定 occurrence）即整体失败。
+ * 这样工坊 agent 改一小段时无需掌握全文，只提供原文锚点即可安全写入，不会半写坏文件。
+ */
+function applyPatches(
+    source: string,
+    patches: QaTextPatch[],
+): { ok: true; result: string } | { ok: false; error: string } {
+    let current = source;
+    for (let i = 0; i < patches.length; i++) {
+        const patch = patches[i];
+        const oldText = patch.oldText;
+        if (!oldText) return { ok: false, error: `补丁 ${i + 1} 缺少 oldText（要替换的原文锚点）。` };
+        const newText = patch.newText;
+        const occurrence = Math.floor(patch.occurrence) || 0;
+
+        const positions: number[] = [];
+        let idx = current.indexOf(oldText);
+        while (idx >= 0) {
+            positions.push(idx);
+            idx = current.indexOf(oldText, idx + oldText.length);
+        }
+        if (positions.length === 0) {
+            const preview = oldText.length > 50 ? `${oldText.slice(0, 50)}…` : oldText;
+            return { ok: false, error: `补丁 ${i + 1} 未命中：现有源码里找不到锚点「${preview}」。请先用「读取本机内容」核对要替换的原文（逐字符一致，含缩进与引号）。` };
+        }
+        let pos: number;
+        if (occurrence > 0) {
+            if (positions.length < occurrence) {
+                return { ok: false, error: `补丁 ${i + 1} 的 occurrence=${occurrence} 超出锚点实际出现次数（${positions.length} 次）。` };
+            }
+            pos = positions[occurrence - 1];
+        } else {
+            if (positions.length > 1) {
+                return { ok: false, error: `补丁 ${i + 1} 的锚点在源码中出现 ${positions.length} 次，不唯一。请用 occurrence 指定第几次（从 1 开始），或让锚点更长更精确。` };
+            }
+            pos = positions[0];
+        }
+        current = current.slice(0, pos) + newText + current.slice(pos + oldText.length);
+    }
+    return { ok: true, result: current };
+}
+
 // ── 安装自定义 APP ──
 
 const SINGLE_HTML_APP_PERMISSIONS: CustomAppPermission[] = [
@@ -170,34 +221,71 @@ const installAppTool: QaContentTool = {
         type: "object",
         properties: {
             name: { type: "string", description: "应用名（显示在桌面）" },
-            html: { type: "string", description: "完整单文件 HTML（含内联 CSS/JS）" },
+            html: { type: "string", description: "可选：完整单文件 HTML（含内联 CSS/JS）。与 patches 至少给一个；都给了会先覆盖再打补丁" },
             description: { type: "string", description: "一句话简介" },
+            patches: {
+                type: "array",
+                description: "可选：补丁替换，按锚点改现有源码，无需提供完整 html。每项 {oldText, newText, occurrence?}：oldText 为要替换的原文片段（需与源码逐字符一致，建议取 20 字符以上保证唯一），newText 为替换后的内容，occurrence 为锚点出现多次时指定第几次（从 1 开始，不传则要求唯一）。所有补丁先整体校验、全部命中才写入，任一未命中整体失败不保存。",
+                items: {
+                    type: "object",
+                    properties: {
+                        oldText: { type: "string", description: "要替换的原文片段（锚点，需与源码完全一致，含缩进与引号）" },
+                        newText: { type: "string", description: "替换后的新内容" },
+                        occurrence: { type: "number", description: "可选：锚点出现多次时指定第几次（从 1 开始）；不传则要求唯一" },
+                    },
+                    required: ["oldText", "newText"],
+                },
+            },
         },
-        required: ["name", "html"],
+        required: ["name"],
     },
     description:
-        "把写好的单文件 HTML 自定义 APP 直接安装到用户的小手机桌面（等同用户手动导入单 HTML）。同名应用会原地更新（保留应用数据）。写之前先读「创作指南」type=app 了解宿主 API。",
+        "把写好的单文件 HTML 自定义 APP 直接安装到用户的小手机桌面（等同用户手动导入单 HTML）。同名应用会原地更新（保留应用数据）。两种用法：① 给完整 html 整份覆盖安装/更新；② 只传 patches 数组按锚点打补丁（改一小段不用读全量源码、不整份覆盖，省 token），全部补丁校验通过才写入，未命中的补丁整体失败、绝不半写坏文件。写之前先读「创作指南」type=app 了解宿主 API。",
     schemaLines: [
         "  参数：",
         "    · name (必填) — 应用名（会显示在桌面）",
-        "    · html (必填) — 完整单文件 HTML（含内联 CSS/JS）",
+        "    · html (可选，与 patches 至少给一个) — 完整单文件 HTML（含内联 CSS/JS）",
+        "    · patches (可选) — 补丁数组 [{oldText, newText, occurrence?}]，按锚点替换现有源码，无需整份 html",
         "    · description (可选) — 一句话简介",
         '  调用：[执行动作:安装本机应用({"name":"番茄钟","html":"<!doctype html>…"})]',
+        '  补丁调用：[执行动作:安装本机应用({"name":"特令行动","patches":[{"oldText":"function renderDMListItem(){","newText":"function renderDMListItem(){} // 已停用"}]})]',
     ],
     async run(args, context) {
         const name = text(args.name, 60);
-        const html = typeof args.html === "string" ? args.html : "";
         if (!name) return "缺少 name（应用名）。";
-        if (!html.trim()) return "缺少 html（完整单文件 HTML 内容）。";
-        const description = text(args.description, 200);
-        const now = new Date().toISOString();
+        const html = typeof args.html === "string" ? args.html : "";
+        const rawPatches = Array.isArray(args.patches) ? args.patches : [];
+        const patches = rawPatches
+            .filter((p): p is Record<string, unknown> => Boolean(p && typeof p === "object"))
+            .map((p) => ({
+                oldText: typeof p.oldText === "string" ? p.oldText : "",
+                newText: typeof p.newText === "string" ? p.newText : "",
+                occurrence: typeof p.occurrence === "number" ? p.occurrence : 0,
+            }));
+        if (!html.trim() && patches.length === 0) {
+            return "缺少 html（完整单文件 HTML）或 patches（补丁替换），二者至少给一个。";
+        }
 
         const apps = loadInstalledCustomApps();
         const existing = apps.find((app) => app.name.trim().toLowerCase() === name.toLowerCase());
+
+        // 基础源码：给了 html 用 html（整份覆盖），否则沿用现有 entryHtml
+        let base = html.trim() ? html : (existing?.entryHtml ?? "");
+        if (patches.length > 0) {
+            if (!existing && !html.trim()) return `本机没有「${name}」，首次安装必须提供完整 html，不能用补丁。`;
+            if (!base.trim()) return `本机应用「${name}」没有可打补丁的源码（entryHtml 为空）。`;
+            const applied = applyPatches(base, patches);
+            if (!applied.ok) return applied.error;
+            base = applied.result;
+        }
+
+        const description = text(args.description, 200);
+        const now = new Date().toISOString();
+
         if (existing) {
             const updated: InstalledCustomApp = {
                 ...existing,
-                entryHtml: html,
+                entryHtml: base,
                 description: description || existing.description,
                 // 关联市场版的 APP 被改动：与 UI 编辑/换包一致，标记有未发布改动
                 hasUnpublishedChanges: existing.marketItemId ? true : existing.hasUnpublishedChanges,
@@ -206,7 +294,8 @@ const installAppTool: QaContentTool = {
             await saveInstalledCustomAppsAsync([updated, ...apps.filter((app) => app.id !== existing.id)]);
             context?.onContentCreated?.({ type: "app", refId: existing.id, title: name });
             const linkedNote = existing.marketItemId ? "该 APP 已上架，本地测试卡片会显示「有未发布改动」，用户点「发布」即可提交更新到市场。" : "";
-            return `✓ 已更新本机应用「${name}」（应用数据保留）。${linkedNote}请告诉用户：点输入框旁的预览按钮即可直接打开，或到桌面找「${name}」。`;
+            const patchNote = patches.length > 0 ? `已应用 ${patches.length} 处补丁替换。` : "";
+            return `✓ 已更新本机应用「${name}」（应用数据保留）。${patchNote}${linkedNote}请告诉用户：点输入框旁的预览按钮即可直接打开，或到桌面找「${name}」。`;
         }
 
         const app: InstalledCustomApp = {
@@ -214,7 +303,7 @@ const installAppTool: QaContentTool = {
             name,
             version: "1.0.0",
             description: description || undefined,
-            entryHtml: html,
+            entryHtml: base,
             permissions: SINGLE_HTML_APP_PERMISSIONS,
             manifest: {
                 id: normalizeCustomAppManifestId(name),
