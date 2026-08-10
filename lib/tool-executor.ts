@@ -3334,7 +3334,9 @@ async function mcpRequest(
     });
 
     if (res.status === 401) {
-        return { error: { code: 401, message: res.headers["www-authenticate"] || "Unauthorized" }, headers: res.headers };
+        // 把响应体带回去：401 可能来自应用登录网关、隧道/反代或 MCP 服务器本身，
+        // 上层靠 body + WWW-Authenticate 头才能区分并给出正确指引。
+        return { error: { code: 401, message: res.text.slice(0, 300) || "Unauthorized" }, headers: res.headers };
     }
 
     if (res.status < 200 || res.status >= 300) {
@@ -3357,6 +3359,23 @@ async function mcpRequest(
 }
 
 // ── MCP Initialize Handshake ──────────────────
+
+/**
+ * 401 分流：同一个状态码可能来自三个完全不同的地方，指错路会让用户在
+ * 「OAuth 授权」按钮上打转（服务器不支持 OAuth 时那条路是死胡同）。
+ */
+function describeMcpUnauthorized(wwwAuthenticate: string | undefined, bodyText: string): string {
+    // 托管部署下 middleware 对 /api/tool-proxy 的登录拦截——和 MCP 服务器无关
+    if (bodyText.includes("请先登录")) {
+        return "鉴权失败（401）：应用登录已过期，请刷新页面重新登录后再试（与 MCP 服务器配置无关）。";
+    }
+    // 标准 MCP OAuth 服务器会带 WWW-Authenticate 头，此时点授权按钮才是正解
+    if (wwwAuthenticate) {
+        return "需要 OAuth 授权。请在设置中点击「授权」按钮。";
+    }
+    return "鉴权失败（401）：Token 可能无效或已过期。本地工具类 MCP 通常不支持 OAuth，"
+        + "请在设置中检查「访问 Token」是否为最新值（这类工具重启后 token 会变化），不必点击授权按钮。";
+}
 
 async function mcpInitialize(server: McpServerConfig, signal?: AbortSignal): Promise<{ success: boolean; error?: string }> {
     throwIfAborted(signal);
@@ -3385,9 +3404,9 @@ async function mcpInitialize(server: McpServerConfig, signal?: AbortSignal): Pro
         clientInfo: MCP_CLIENT_INFO,
     }, authHeaders, false, useSse, signal);
 
-    // Handle 401 — needs OAuth
+    // Handle 401 — 按来源分流：应用登录网关 / 真 OAuth 服务器 / Token 失效
     if (initRes.error?.code === 401) {
-        return { success: false, error: "需要 OAuth 授权。请在设置中点击「授权」按钮。" };
+        return { success: false, error: describeMcpUnauthorized(initRes.headers["www-authenticate"], initRes.error.message) };
     }
 
     if (initRes.error) {
@@ -3462,10 +3481,15 @@ async function ensureTokenFresh(server: McpServerConfig, signal?: AbortSignal): 
     }
 }
 
+/** 用户常把 "Bearer xxx" 整段粘进 Token 栏，发出去会变成 "Bearer Bearer xxx"——这里兜底剥掉前缀。 */
+function bearerAuthValue(accessToken: string): string {
+    return `Bearer ${accessToken.replace(/^bearer\s+/i, "")}`;
+}
+
 function buildMcpAuthHeaders(server: McpServerConfig): Record<string, string> {
     const headers: Record<string, string> = cleanHeaders(server.headers);
     if (server.accessToken) {
-        headers["Authorization"] = `Bearer ${server.accessToken}`;
+        headers["Authorization"] = bearerAuthValue(server.accessToken);
     }
     return headers;
 }
@@ -3473,7 +3497,7 @@ function buildMcpAuthHeaders(server: McpServerConfig): Record<string, string> {
 function getMcpSessionHeaders(server: McpServerConfig): Record<string, string> {
     const headers: Record<string, string> = cleanHeaders(server.headers);
     if (server.sessionId) headers["Mcp-Session-Id"] = server.sessionId;
-    if (server.accessToken) headers["Authorization"] = `Bearer ${server.accessToken}`;
+    if (server.accessToken) headers["Authorization"] = bearerAuthValue(server.accessToken);
     return headers;
 }
 
@@ -3612,7 +3636,7 @@ async function resolveMcpOAuthMetadata(
         }
     }
 
-    throw new Error("无法发现 OAuth 授权端点");
+    throw new Error("无法发现 OAuth 授权端点——该服务器可能不支持 OAuth。若已有 Token，直接填入「访问 Token」即可，无需授权。");
 }
 
 function persistMcpOAuthState(server: McpServerConfig): void {

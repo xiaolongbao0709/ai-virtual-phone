@@ -1559,7 +1559,7 @@ export function ToolboxSettings() {
                                     value={editMcp.accessToken || ""}
                                     placeholder="需要鉴权的 MCP 填这里，会作为 Bearer Token 发送"
                                     onChange={e => setM({
-                                        accessToken: e.target.value.trim(),
+                                        accessToken: e.target.value.trim().replace(/^bearer\s+/i, ""),
                                         refreshToken: undefined,
                                         tokenExpiresAt: undefined,
                                         oauthClientId: undefined,
@@ -1608,6 +1608,9 @@ export function ToolboxSettings() {
                                         </button>
                                     </div>
                                     {editMcp.accessToken && <span className="menu-desc text-[var(--c-icon-green)]">✓ 已配置 Token</span>}
+                                    {editMcp.accessToken && Object.keys(editMcp.headers || {}).some(k => k.trim().toLowerCase() === "authorization") && (
+                                        <span className="menu-desc text-[var(--c-danger)]">已配置访问 Token，请求头中的 Authorization 将被忽略（以 Token 栏为准）</span>
+                                    )}
                                     {authResult && <span className={`menu-desc ${authResult.includes("✓") ? "text-[var(--c-icon-green)]" : "text-[var(--c-danger)]"}`}>{authResult}</span>}
                                     {discoverError && <span className="menu-desc text-[var(--c-danger)]">{discoverError}</span>}
                                     {editMcp.discoveredTools && editMcp.discoveredTools.length > 0 && (
