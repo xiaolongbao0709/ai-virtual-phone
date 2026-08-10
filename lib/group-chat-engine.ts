@@ -72,6 +72,7 @@ import type { DebugPromptSnapshot } from "./debug-store";
 import { throwIfAborted } from "./abort-utils";
 import { buildCharacterTimeContext, buildGroupTimeContext } from "./character-time";
 import { getPromptTimestampOptionsForTimeContext } from "./prompt-time";
+import { getVirtualNow } from "./virtual-time";
 
 function stripGroupFinancialActionsForMetadataRepair(text: string): string {
     return stripStateAndInnerForPrompt(text)
@@ -321,7 +322,7 @@ async function buildGroupChatPromptMessages(
     const memConfig = loadMemoryConfig();
     const allWorldBooks = loadWorldBooks();
 
-    const now = new Date();
+    const now = getVirtualNow();
     const memberTimeContexts: Record<string, ReturnType<typeof buildCharacterTimeContext>> = {};
     const memberDataPromises = participantIds.map(async (charId): Promise<GroupMemberData | null> => {
         const character = charMap.get(charId);

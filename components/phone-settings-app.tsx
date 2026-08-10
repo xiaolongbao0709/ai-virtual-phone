@@ -18,6 +18,7 @@ import { BindingManager } from "./settings/binding-manager";
 import { WeixinSettings } from "./settings/weixin-settings";
 import { ToolboxSettings } from "./settings/toolbox-settings";
 import { ModerationCenter } from "./settings/moderation-center";
+import { VirtualTimeSettings } from "./settings/virtual-time-settings";
 import { fetchIsAdmin } from "@/lib/moderation-client";
 import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
 import { PageShell } from "./ui/page-shell";
@@ -367,6 +368,9 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                     <div className="card-featured-desc">控制全局历史事件流中是否注入时间戳</div>
                                 </div>
                                 <Toggle checked={timeAware} onChange={handleTimeAwareChange} className="settings-toggle-control" />
+                            </div>
+                            <div className="mt-3">
+                                <VirtualTimeSettings onNotice={onNotice} />
                             </div>
                         </div>
                         {isAdmin ? (

@@ -1,3 +1,5 @@
+import { getVirtualNow } from "./virtual-time";
+
 const WEEKDAY_NAMES = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
 
 function padTwo(n: number): string {
@@ -8,7 +10,7 @@ export function formatChatUiTime(dateStr: string): string {
     const date = new Date(dateStr);
     if (Number.isNaN(date.getTime())) return "";
 
-    const now = new Date();
+    const now = getVirtualNow();
     const hhmm = `${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`;
 
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
