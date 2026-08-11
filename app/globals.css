@@ -42,3 +42,26 @@
   --font-size-lg: 17px;  --font-size-xl: 20px;
   --font-size-2xl: 24px; --font-size-3xl: 30px;
 }
+
+/* ── 手机横屏提示遮罩（触屏 + 横屏 + 矮视口 ≈ 手机横拿时显示）── */
+.rotate-lock-hint {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: #14120f;
+  color: #d9cdb2;
+  font-size: 15px;
+  letter-spacing: 0.2em;
+}
+/* min-aspect-ratio 3/2：真横屏宽高比 ≥2，而键盘弹出把视口压扁只有 ~1.2，
+   避免输入法弹出的瞬间被误判成横屏闪遮罩 */
+@media (orientation: landscape) and (hover: none) and (pointer: coarse) and (max-height: 620px) and (min-aspect-ratio: 3/2) {
+  .rotate-lock-hint {
+    display: flex;
+  }
+}

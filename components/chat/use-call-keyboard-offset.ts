@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { isMobileShell } from "@/lib/mobile-shell";
 
 export function useCallKeyboardOffsetStyle(): CSSProperties {
     const [offset, setOffset] = useState(0);
@@ -9,8 +10,7 @@ export function useCallKeyboardOffsetStyle(): CSSProperties {
         if (typeof window === "undefined") return;
 
         const isAndroidMobile =
-            /Android/i.test(navigator.userAgent) &&
-            window.matchMedia("(max-width: 500px) and (hover: none) and (pointer: coarse)").matches;
+            /Android/i.test(navigator.userAgent) && isMobileShell();
 
         if (isAndroidMobile) {
             setOffset(0);

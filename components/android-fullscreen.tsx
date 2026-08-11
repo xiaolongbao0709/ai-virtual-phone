@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { isMobileShell } from "@/lib/mobile-shell";
 
 /**
  * 安卓全屏兜底：点击屏幕进入全屏模式（iOS 不支持此 API，会自动忽略）。
@@ -11,21 +12,11 @@ import { useEffect } from "react";
  */
 export function AndroidFullscreen() {
   useEffect(() => {
-    const isMobile = window.matchMedia(
-      "(max-width: 500px) and (hover: none) and (pointer: coarse)"
-    ).matches;
+    const isMobile = isMobileShell();
     if (!isMobile) return;
 
-    function tryFullscreen() {
-      const doc = document.documentElement;
-      if (document.fullscreenElement) return;
-      doc.requestFullscreen?.().catch(() => { });
-    }
-    // 每次点击都尝试进入全屏（退出后可重新进入）
-    document.addEventListener("click", tryFullscreen);
-    return () => {
-      document.removeEventListener("click", tryFullscreen);
-    };
+    // [TEST 分支验证] 点击强制全屏已禁用（同 main-app，验证强制横屏根因）
+    return () => { };
   }, []);
 
   return null;

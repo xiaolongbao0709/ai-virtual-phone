@@ -276,7 +276,7 @@
   padding-bottom: 0 !important;
   margin: 0 !important;
   width: 100%;
-  max-width: 100vw;
+  max-width: 100%;
   overflow-x: hidden;
   background: transparent;
 }

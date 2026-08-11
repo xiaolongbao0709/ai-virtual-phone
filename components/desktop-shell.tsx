@@ -3,6 +3,7 @@
 import { Component, memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 
 import { updateStatusBarTone } from "@/lib/bg-tone";
+import { MOBILE_SHELL_MQ } from "@/lib/mobile-shell";
 import { startDiaryEntryTimerService, stopDiaryEntryTimerService } from "@/lib/diary-entry-timer-service";
 import { startFollowUpService, stopFollowUpService } from "@/lib/follow-up-service";
 import { startMomentsService, stopMomentsService } from "@/lib/moments-engine";
@@ -663,6 +664,17 @@ function placeIconOnAvailablePage(
 }
 
 /** Convert pointer screen position to a grid cell (0-based) */
+/** 桌面/平板模式下壳被 zoom（或 data-zoom-fallback 时 transform:scale）等比
+ *  放大；computed 样式是布局值，rect/clientX 是视觉值——两个空间换算都要
+ *  乘/除这个系数。直接读 <html> 上的 --shell-zoom（两条缩放路径共同的事实
+ *  来源；老 WebKit 兜底路径下 computed zoom 恒为 1，读不到真实系数）。
+ *  手机模式没有这个变量，恒为 1。 */
+function getShellZoom(): number {
+  if (typeof document === "undefined") return 1;
+  const z = parseFloat(document.documentElement.style.getPropertyValue("--shell-zoom") || "1");
+  return Number.isFinite(z) && z > 0 ? z : 1;
+}
+
 function pointerToGridCell(
   px: number,
   py: number,
@@ -670,15 +682,17 @@ function pointerToGridCell(
 ): { row: number; col: number } | null {
   const rect = gridEl.getBoundingClientRect();
   const computed = getComputedStyle(gridEl);
+  const zoom = getShellZoom();
   const colWidths = computed.gridTemplateColumns.split(/\s+/).map(parseFloat);
-  const colWidth = colWidths[0] || 66;
-  const colGap = parseFloat(computed.columnGap) || 20;
-  const rowGap = parseFloat(computed.rowGap) || 0;
-  /* rect 高度是 border-box（含 padding），网格行轨道只占内容盒。 */
-  const padY = (parseFloat(computed.paddingTop) || 0) + (parseFloat(computed.paddingBottom) || 0);
+  const colWidth = (colWidths[0] || 66) * zoom;
+  const colGap = (parseFloat(computed.columnGap) || 20) * zoom;
+  const rowGap = (parseFloat(computed.rowGap) || 0) * zoom;
+  /* rect 高度是 border-box（含 padding），网格行轨道只占内容盒；
+     computed padding 是布局值，参与 rect 混算前同样要乘 zoom。 */
+  const padY = ((parseFloat(computed.paddingTop) || 0) + (parseFloat(computed.paddingBottom) || 0)) * zoom;
   const contentWidth = colWidths.length * colWidth + (colWidths.length - 1) * colGap;
   const originX = rect.left + (rect.width - contentWidth) / 2;
-  const originY = rect.top + (parseFloat(computed.paddingTop) || 0);
+  const originY = rect.top + (parseFloat(computed.paddingTop) || 0) * zoom;
   const colStep = colWidth + colGap;
   const totalRowGap = (GRID_ROWS - 1) * rowGap;
   const rowHeight = (rect.height - padY - totalRowGap) / GRID_ROWS;
@@ -832,7 +846,7 @@ function useAndroidCaretKeyboardLift() {
       return;
     }
 
-    const mobileMq = window.matchMedia("(max-width: 500px) and (hover: none) and (pointer: coarse)");
+    const mobileMq = window.matchMedia(MOBILE_SHELL_MQ);
     const viewport = window.visualViewport;
     let focusedElement: HTMLElement | null = null;
     let raf = 0;
@@ -852,7 +866,7 @@ function useAndroidCaretKeyboardLift() {
     const update = () => {
       raf = 0;
       const element = focusedElement;
-      if (!element || document.activeElement !== element || !mobileMq.matches || !viewport) {
+      if (!element || document.activeElement !== element || !(mobileMq.matches || root.hasAttribute("data-force-mobile")) || !viewport) {
         applyLift(0);
         return;
       }
@@ -1137,8 +1151,9 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     for (const item of entries) {
       const before = prev.get(item.key);
       if (!before) continue;
-      const dx = before.x - item.x;
-      const dy = before.y - item.y;
+      const flipZoom = getShellZoom();
+      const dx = (before.x - item.x) / flipZoom;
+      const dy = (before.y - item.y) / flipZoom;
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
       if (item.el.classList.contains("dragging") || item.el.closest(".dragging")) continue;
       item.el.style.transition = "none";
@@ -2325,11 +2340,13 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       const gridEl = gridRefs.current[page];
       if (gridEl) {
         const cs = getComputedStyle(gridEl);
-        const colW = parseFloat(cs.gridTemplateColumns.split(/\s+/)[0] || "66");
-        const colGap = parseFloat(cs.columnGap) || 20;
-        const rowGap = parseFloat(cs.rowGap) || 0;
-        /* rect 高度是 border-box（含 padding），网格行轨道只占内容盒。 */
-        const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+        const zoom = getShellZoom();
+        const colW = parseFloat(cs.gridTemplateColumns.split(/\s+/)[0] || "66") * zoom;
+        const colGap = (parseFloat(cs.columnGap) || 20) * zoom;
+        const rowGap = (parseFloat(cs.rowGap) || 0) * zoom;
+        /* rect 高度是 border-box（含 padding），网格行轨道只占内容盒；
+           computed padding 是布局值，参与 rect 混算前同样要乘 zoom。 */
+        const padY = ((parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)) * zoom;
         const rowH = (gridEl.getBoundingClientRect().height - padY - (GRID_ROWS - 1) * rowGap) / GRID_ROWS;
         grabCellCol = Math.floor((clientX - rect.left) / (colW + colGap));
         grabCellRow = Math.floor((clientY - rect.top) / (rowH + rowGap));
@@ -2393,8 +2410,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       clone.style.gridRow = "";
       clone.style.gridColumn = "";
       // Set explicit size — the clone loses .icon-grid CSS variable context
-      clone.style.width = `${drag.ghostW}px`;
-      clone.style.height = `${drag.ghostH}px`;
+      const ghostZoom = getShellZoom();
+      clone.style.width = `${drag.ghostW / ghostZoom}px`;
+      clone.style.height = `${drag.ghostH / ghostZoom}px`;
       clone.style.minHeight = "";
       clone.style.boxSizing = "border-box";
       // 拿起手感：克隆体轻微放大 + 投影
@@ -2405,8 +2423,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
         clone.style.filter = "drop-shadow(0 14px 22px rgba(0,0,0,0.32))";
       });
       ghost.style.display = "block";
-      ghost.style.width = `${drag.ghostW}px`;
-      ghost.style.height = `${drag.ghostH}px`;
+      ghost.style.width = `${drag.ghostW / ghostZoom}px`;
+      ghost.style.height = `${drag.ghostH / ghostZoom}px`;
     }
     const shellRect = shellRef.current?.getBoundingClientRect();
     drag.shellLeft = shellRect?.left ?? 0;
@@ -2419,7 +2437,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
   function updateGhostPos(x: number, y: number) {
     const drag = editDragRef.current;
     if (!drag || !ghostRef.current) return;
-    ghostRef.current.style.transform = `translate3d(${x - drag.offsetX - drag.shellLeft}px, ${y - drag.offsetY - drag.shellTop}px, 0)`;
+    const zoom = getShellZoom();
+    ghostRef.current.style.transform = `translate3d(${(x - drag.offsetX - drag.shellLeft) / zoom}px, ${(y - drag.offsetY - drag.shellTop) / zoom}px, 0)`;
   }
 
   /** True when the pointer is within (a slightly padded) dock footer. */
@@ -2791,7 +2810,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       const inner = ghost.firstElementChild as HTMLElement | null;
       if (inner) { inner.style.transform = "scale(1)"; inner.style.filter = "none"; }
       ghost.style.transition = "transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1)";
-      ghost.style.transform = `translate3d(${r.left - shellLeft}px, ${r.top - shellTop}px, 0)`;
+      const dropZoom = getShellZoom();
+      ghost.style.transform = `translate3d(${(r.left - shellLeft) / dropZoom}px, ${(r.top - shellTop) / dropZoom}px, 0)`;
       window.setTimeout(finalize, 210);
     });
   }
@@ -3486,6 +3506,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
   return (
     <>
       <section
+        data-main-shell="1"
         className="phone-shell-wrap"
         style={{
           ...phoneThemeStyle,
@@ -3507,6 +3528,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
               data-widget-effect={widgetEffect}
               data-glass-pass={glassPaintPass % 2}
               data-borders={draftTheme.enableGlobalBorder ? "on" : "off"}
+              // 桌面态禁用原生长按菜单：安卓长按图标/组件想拖动时会呼出系统
+              // contextmenu 或选中文字，打断拖拽。app 打开时不拦（保留聊天里
+              // 长按存图、选中复制等原生能力）。
+              onContextMenu={e => { if (!activeApp) e.preventDefault(); }}
               style={{
                 "--user-border-color": draftTheme.globalBorderColor,
                 "--desktop-outline-color": resolvedOutlineColor,

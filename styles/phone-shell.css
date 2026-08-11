@@ -169,6 +169,9 @@
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   height: var(--status-bar-height, 36px);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
   padding: 0 24px;
   z-index: 10;
   color: var(--status-bar-color);
@@ -277,6 +280,8 @@
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+  /* 容器查询：图标网格按容器高度伸展行距（下方 cqh 规则） */
+  container-type: size;
 }
 /* 仅桌面态外扩吃掉壳的 12px 内边距：图标/组件的投影原本渗入内边距区、
    在工作区 overflow 裁剪边上被生硬截断，形成一条纵向"背景接缝"。外扩后
@@ -340,6 +345,16 @@
    把变量在首页/组件页架空，导致底部留白只对纯图标翻页生效。 */
 .icon-grid-page1 {
   padding-bottom: var(--home-grid-bottom-trim);
+}
+
+/* ── 高视口下图标行距舒展（竖向）──
+   只把"多余的高度"变成行距：容器高超过 640px（6 行内容 + 基础间隙的需求线）
+   时，超出部分的 1/5 进入 row-gap，封顶 24px；不足时维持 3px——行高永远
+   不被挤压，手机零变化。老浏览器不支持 cqh 时维持固定值。 */
+@supports (height: 1cqh) {
+  .icon-grid {
+    --slot-gap-y: clamp(3px, calc((100cqh - 640px) / 5), 24px);
+  }
 }
 
 
@@ -1056,11 +1071,16 @@
 
 /* ── Mobile responsive ── */
 
-@media (max-width: 500px) and (hover: none) and (pointer: coarse) {
+/* 不限宽度：纯触摸设备一律手机壳全屏（平板不再落进桌面 mockup 白边）。
+   与 lib/mobile-shell.ts 的 MOBILE_SHELL_MQ 保持一致。 */
+@media (hover: none) and (pointer: coarse) {
 
+  /* 大屏档整屏缩放：--shell-zoom 由 layout.tsx 内联脚本/lib/mobile-shell.ts 写入
+     （平板/折叠屏内屏 ≥520 短边才有值，手机恒缺省=1）。壳自身 zoom 放大，
+     屏幕尺寸变量除以 zoom——壳内有效视口按设计稿比例缩小，渲染后仍铺满全屏。 */
   :root {
-    --phone-screen-width: 100vw;
-    --phone-screen-height: 100lvh;
+    --phone-screen-width: calc(100vw / var(--shell-zoom, 1));
+    --phone-screen-height: calc(100lvh / var(--shell-zoom, 1));
   }
 
   html,
@@ -1093,13 +1113,15 @@
     margin-inline: 0;
     gap: 0;
     transform-origin: top left;
+    zoom: var(--shell-zoom, 1);
     /* 状态栏占位上移：部分安卓浏览器不允许网页绘制到真实状态栏，视口从状态栏下方开始；
        而缩放仍按完整屏高算，844 设计稿被拉成整屏高、却只能从状态栏下方画起，底部被切。
        用负上边距把整块画面上移 --status-bar-drop 像素：顶部那段（虚拟状态栏区域）超出
        .app-root 被裁掉，底部栏随之顶回可视区。上移量可在「状态栏」弹窗里按设备调节，
-       让它约等于真实状态栏高度即可铺满。0 = 不上移（iOS 等能全屏的浏览器保持 0）。 */
-    margin-top: calc(-1 * var(--status-bar-drop, 0px));
-    transform: translate3d(0, calc(-1 * var(--mobile-keyboard-lift, 0px)), 0);
+       让它约等于真实状态栏高度即可铺满。0 = 不上移（iOS 等能全屏的浏览器保持 0）。
+       drop/lift 是用户校准/JS 实测的物理像素，除以 zoom 抵消壳内再放大。 */
+    margin-top: calc(-1 * var(--status-bar-drop, 0px) / var(--shell-zoom, 1));
+    transform: translate3d(0, calc(-1 * var(--mobile-keyboard-lift, 0px) / var(--shell-zoom, 1)), 0);
     transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
     will-change: transform;
   }
@@ -1165,4 +1187,215 @@
 
 .phone-shell[data-borders="on"] .icon-glyph-box {
   border: var(--desktop-outline-width, 1.5px) solid var(--desktop-outline-color, var(--user-border-color, #000)) !important;
+}
+
+/* ── 强制手机模式（物理判定）──
+   与上方 @media (hover:none)+(pointer:coarse) 块互为镜像：
+   当浏览器谎报/搞大视口（桌面版网站、夸克等私有缩放、系统显示大小调小）但
+   物理屏幕确为手机时，app/layout.tsx 的内联脚本会在 <html> 打上
+   data-force-mobile，由这组规则接管。修改上方媒体块时务必同步这里。 */
+html[data-force-mobile] {
+  --phone-screen-width: calc(100vw / var(--shell-zoom, 1));
+  --phone-screen-height: calc(100lvh / var(--shell-zoom, 1));
+}
+
+html[data-force-mobile],
+html[data-force-mobile] body {
+  overflow: hidden;
+  width: 100%;
+  height: 100lvh;
+  background: var(--c-page-body-bg);
+}
+
+html[data-force-mobile] .app-root {
+  width: 100vw;
+  height: 100lvh;
+  padding: 0;
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  overflow: hidden;
+  background: var(--c-page-body-bg);
+}
+
+html[data-force-mobile] .phone-shell-wrap {
+  --phone-case-padding: 0px;
+  --phone-case-border-size: 0px;
+  --phone-frame-size: 0px;
+  --phone-screen-radius: 0px;
+  --phone-frame-radius: 0px;
+  --phone-case-radius: 0px;
+  width: var(--phone-screen-width);
+  margin-inline: 0;
+  gap: 0;
+  transform-origin: top left;
+  margin-top: calc(-1 * var(--status-bar-drop, 0px));
+  transform: translate3d(0, calc(-1 * var(--mobile-keyboard-lift, 0px)), 0);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+html[data-force-mobile] .phone-shell-wrap .phone-case {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-force-mobile] .phone-shell-wrap .phone-case::before,
+html[data-force-mobile] .phone-shell-wrap .phone-case::after {
+  display: none;
+}
+
+html[data-force-mobile] .phone-shell-wrap .phone-frame {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-force-mobile] .phone-shell-wrap .phone-frame::before,
+html[data-force-mobile] .phone-shell-wrap .phone-frame::after {
+  display: none;
+}
+
+html[data-force-mobile] .app-root.splash-root {
+  width: 100vw;
+  height: 100lvh;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  overflow: hidden;
+  background: var(--c-page-body-bg);
+}
+
+html[data-force-mobile] .splash-shell-wrap {
+  width: var(--phone-screen-width);
+  transform-origin: top left;
+}
+
+html[data-force-mobile] .splash-shell-wrap .phone-case,
+html[data-force-mobile] .splash-shell-wrap .phone-frame {
+  width: var(--phone-screen-width);
+}
+
+
+/* ── 无壳化：全设备统一手机布局 ──
+   壳的边框/圆角/金属装饰全部取消，App 在任何设备上都是"铺满高度、宽度自适应
+   （受 --shell-max-width 封顶）"的形态。原 @media 移动块与 data-force-mobile
+   镜像块仍保留（规则重复无害），手机行为不变；这组规则把同样的无壳样式
+   推广到平板/桌面。standalone 页面（characters 等不含 .app-root 的页面）不受影响。 */
+.app-root {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: hidden;
+  background: var(--c-page-body-bg);
+}
+
+.phone-shell-wrap {
+  --phone-case-padding: 0px;
+  --phone-case-border-size: 0px;
+  --phone-frame-size: 0px;
+  --phone-screen-radius: 0px;
+  --phone-frame-radius: 0px;
+  --phone-case-radius: 0px;
+  width: var(--phone-screen-width);
+  margin-inline: 0;
+  gap: 0;
+  transform-origin: top left;
+  /* --shell-zoom 仅在大屏触摸档被写入，桌面/手机缺省 1，本块对它们零变化 */
+  zoom: var(--shell-zoom, 1);
+  margin-top: calc(-1 * var(--status-bar-drop, 0px) / var(--shell-zoom, 1));
+  transform: translate3d(0, calc(-1 * var(--mobile-keyboard-lift, 0px) / var(--shell-zoom, 1)), 0);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.phone-shell-wrap .phone-case {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.phone-shell-wrap .phone-case::before,
+.phone-shell-wrap .phone-case::after {
+  display: none;
+}
+
+.phone-shell-wrap .phone-frame {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.phone-shell-wrap .phone-frame::before,
+.phone-shell-wrap .phone-frame::after {
+  display: none;
+}
+
+.app-root.splash-root {
+  /* base.css 给开屏根容器限了 min(1120px, 92vw)，特异性更高会盖掉无壳铺满——显式还原 */
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--c-page-body-bg);
+}
+
+.splash-shell-wrap {
+  width: var(--phone-screen-width);
+  transform-origin: top left;
+}
+
+.splash-shell-wrap .phone-case,
+.splash-shell-wrap .phone-frame {
+  width: var(--phone-screen-width);
+}
+
+/* 登录页例外：无壳块把 .app-root 设为 flex + align-items:flex-start，
+   压过了 account-gate-root 自己的 grid 居中——显式还原（只影响账号页）。 */
+.app-root.account-gate-root {
+  display: grid;
+  place-items: center;
+}
+
+/* ── zoom 失效兜底（老 WebKit）──
+   iPadOS 18 之前的 WebKit 不认 zoom:var(--shell-zoom) 这种写法：变量把壳
+   缩小成 100vw/zoom，zoom 却没把它放大回来，表现为居中小屏+大片留白。
+   layout.tsx 的 head 内联脚本探测到 zoom 不生效时在 <html> 打
+   data-zoom-fallback，本块改用 transform: scale 完成同样的整屏放大。
+   只有大屏触摸档会写入 --shell-zoom；其余设备缩放系数恒为 1 且不会打
+   这个标记，本块零影响。必须放在文件末尾：与各无壳块同特异性，靠
+   书写顺序压过它们。 */
+
+/* 布局盒是缩小前的尺寸（100vw/zoom），scale 以左上角为锚放大后才铺满；
+   若保持水平居中，放大后会向右溢出——强制左上对齐。 */
+html[data-zoom-fallback] .app-root:not(.account-gate-root) {
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+html[data-zoom-fallback] .phone-shell-wrap {
+  zoom: 1;
+  margin-inline: 0;
+  /* zoom 会连同自身 margin 一起放大，所以原规则把 drop 预先除以 zoom；
+     transform 不放大 margin，这里直接用物理像素。 */
+  margin-top: calc(-1 * var(--status-bar-drop, 0px));
+  /* scale 在外、translate 在里：键盘抬升量（物理像素）先除以 zoom 再被
+     scale 乘回来，视觉位移与 zoom 路径完全一致。 */
+  transform: scale(var(--shell-zoom, 1)) translate3d(0, calc(-1 * var(--mobile-keyboard-lift, 0px) / var(--shell-zoom, 1)), 0);
+  transform-origin: top left;
 }

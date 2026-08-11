@@ -12,6 +12,7 @@ import { MusicProvider } from "@/lib/music-context";
 import { hydrateKvDb } from "@/lib/kv-db";
 import { getThemeAssetMap, readThemeProfile } from "@/lib/theme-storage";
 import { resolveActiveIconSkins, type ThemeProfile } from "@/lib/theme-types";
+import { applyShellZoom, isMobileShell } from "@/lib/mobile-shell";
 import { hasPendingMcpOAuthCallback } from "@/lib/tool-executor";
 
 const TEXT = {
@@ -251,24 +252,32 @@ export function MainApp() {
     })();
 
     // 安卓全屏兜底：点击屏幕进入全屏模式（iOS 不支持此 API，会自动忽略）
-    const isMobile = window.matchMedia("(max-width: 500px) and (hover: none) and (pointer: coarse)").matches;
+    const isMobile = isMobileShell();
     // Edge 改用 minimal-ui 保留原生状态栏，不能再被强制全屏顶掉（仅 Edge 跳过，其它浏览器照旧）
     const isEdge = /Edg/i.test(navigator.userAgent);
     if (!isMobile || isEdge) return () => {
       cancelled = true;
     };
 
-    function tryFullscreen() {
-      const doc = document.documentElement;
-      if (document.fullscreenElement) return;
-      doc.requestFullscreen?.().catch(() => { });
-    }
-    // 每次点击都尝试进入全屏（退出后可重新进入）
-    document.addEventListener("click", tryFullscreen);
+    // [TEST 分支验证] 点击强制全屏已完全禁用——验证 Via 强制横屏根因
     return () => {
       cancelled = true;
-      document.removeEventListener("click", tryFullscreen);
     };
+  }, []);
+
+  // 大屏档整屏缩放：首帧由 layout.tsx 内联脚本算好，这里只负责旋转/分屏后重算。
+  // 只在宽度变化时重算——键盘弹出只改高度，打字过程中缩放不能跳。
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    applyShellZoom();
+    let lastWidth = window.innerWidth;
+    const onResize = () => {
+      if (window.innerWidth === lastWidth) return;
+      lastWidth = window.innerWidth;
+      applyShellZoom();
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   return (

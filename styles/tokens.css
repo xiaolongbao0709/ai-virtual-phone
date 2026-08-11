@@ -180,8 +180,11 @@
   /* 组件装饰粉（心形/引号/符号） */
 
   /* ═══ Phone Shell ═══ */
-  --phone-screen-width: 390px;
-  --phone-screen-height: 844px;
+  /* 无壳化：全设备自适应铺满。想限制最大宽度时改 --shell-max-width
+     （如 430px → 平板/桌面变成居中竖条；100vw = 完全铺满）。 */
+  --shell-max-width: 100vw;
+  --phone-screen-width: min(100vw, var(--shell-max-width));
+  --phone-screen-height: 100lvh;
   --phone-screen-radius: 48px;
   --phone-frame-size: 4px;
   --phone-frame-color: #111111;

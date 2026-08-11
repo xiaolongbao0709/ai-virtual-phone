@@ -4,8 +4,9 @@
 
 .wb-layout {
   position: relative;
-  width: 100vw;
-  height: 100vh;
+  /* 壳屏幕变量而非裸视口单位：大屏档壳被 zoom 放大，裸 100vw/vh 会等比溢出 */
+  width: var(--phone-screen-width, 100vw);
+  height: var(--phone-screen-height, 100vh);
   padding-top: env(safe-area-inset-top, 0px);
   color: #e0ddd8;
   font-family: system-ui, -apple-system, sans-serif;
@@ -82,11 +83,9 @@
   left: 0;
   z-index: 2147483647;
   isolation: isolate;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* fixed + inset 已铺满视口；100% 在 zoom 子树里也正确，裸 100vw/vh 会等比溢出 */
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
