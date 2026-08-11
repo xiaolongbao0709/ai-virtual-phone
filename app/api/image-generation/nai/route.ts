@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ProxyAgent, type Dispatcher } from "undici";
+import JSZip from "jszip";
 import { NOVELAI_ENDPOINT, buildNovelAiRequestBody } from "@/lib/novelai-adapter";
 
 // NAI 官方生图接口是逆向协议、无正式文档，单张耗时通常 30~90 秒。
@@ -76,17 +77,46 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: message }, { status: 502 });
     }
 
+    // NAI 返回 application/zip（ZIP 压缩包），里面是 image_0.png / image_1.png 等。
+    // 需要解压取出第一张图再透传。老版本 NAI 可能直接返回 image/png，保留兼容。
     if (contentType.startsWith("image/")) {
-      // 直接把图片二进制透传回去，产品端现有解析逻辑能识别 image/* 响应。
       return new NextResponse(buffer, {
         status: 200,
         headers: { "Content-Type": contentType },
       });
     }
 
+    if (contentType.includes("zip") || contentType.includes("octet-stream")) {
+      try {
+        const zip = await JSZip.loadAsync(buffer);
+        // 找第一张图片文件（按文件名排序，image_0 优先）
+        const imageFiles = Object.keys(zip.files)
+          .filter(name => /\.(png|jpg|jpeg|webp)$/i.test(name))
+          .sort();
+        if (imageFiles.length === 0) {
+          const fileList = Object.keys(zip.files).slice(0, 10).join(", ");
+          return NextResponse.json(
+            { error: `NAI 返回了 ZIP 但没有图片文件。内含: ${fileList}` },
+            { status: 502 },
+          );
+        }
+        const imageData = await zip.files[imageFiles[0]].async("nodebuffer");
+        // 从文件名猜 MIME 类型
+        const ext = (imageFiles[0].split(".").pop() || "png").toLowerCase();
+        const mimeMap: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
+        return new NextResponse(imageData, {
+          status: 200,
+          headers: { "Content-Type": mimeMap[ext] || "image/png" },
+        });
+      } catch (zipErr) {
+        const msg = zipErr instanceof Error ? zipErr.message : String(zipErr);
+        return NextResponse.json({ error: `NAI ZIP 解压失败：${msg}` }, { status: 502 });
+      }
+    }
+
     const text = buffer.toString("utf-8");
     return NextResponse.json(
-      { error: `NAI 返回了非图片响应 (${contentType || "unknown"}): ${text.slice(0, 300)}` },
+      { error: `NAI 返回了未预期的响应类型 (${contentType || "unknown"}): ${text.slice(0, 300)}` },
       { status: 502 },
     );
   } catch (err) {

@@ -9,41 +9,41 @@ export const NOVELAI_ENDPOINT = "https://image.novelai.net/ai/generate-image";
 
 // NAI 官方没有公开模型列表接口，这里给出已知模型名供「拉取模型」使用。
 export const NOVELAI_MODELS = [
+  "nai-diffusion-4",
+  "nai-diffusion-4-anime",
+  "nai-diffusion-4-furry",
   "nai-diffusion-3",
   "nai-diffusion-3-anime",
   "nai-diffusion-3-furry",
   "nai-diffusion-furry-3",
   "nai-diffusion-2",
   "nai-diffusion-furry-2",
+  "nai-diffusion-4-curated-preview",
 ];
 
 export function isNovelAiBaseUrl(baseUrl: string): boolean {
   return baseUrl.trim().toLowerCase().startsWith(NOVELAI_SCHEME);
 }
 
-// 产品 UI 只有三种尺寸；NAI 要求宽高为 64 的倍数且在模型支持范围内。
-// v3 系最长边可到 1216；v2 系上限 1024。
+// NAI 要求宽高为 64 的倍数且在模型支持范围内。
+// v3/v4 系最长边可到 1216；v2 系上限 1024。
 const V3_SIZE_MAP: Record<string, [number, number]> = {
   "1024x1024": [1024, 1024],
-  "1024x1536": [832, 1216], // 2:3 竖图
-  "1536x1024": [1216, 832], // 3:2 横图
+  "1024x1536": [832, 1216],
+  "1536x1024": [1216, 832],
 };
 const V2_SIZE_MAP: Record<string, [number, number]> = {
   "1024x1024": [1024, 1024],
-  "1024x1536": [640, 960], // 2:3 竖图（v2 上限内）
-  "1536x1024": [960, 640], // 3:2 横图
+  "1024x1536": [640, 960],
+  "1536x1024": [960, 640],
 };
-const DEFAULT_V3_SIZE: [number, number] = [832, 1216];
-const DEFAULT_V2_SIZE: [number, number] = [640, 960];
+const DEFAULT_SIZE: [number, number] = [832, 1216];
 
-function isV3Model(model: string): boolean {
-  return /3/.test(model);
+// 模型名里含 3 或 4 的按 v3+ 尺寸表，其余走 v2
+function isV3Plus(model: string): boolean {
+  return /[34]/.test(model);
 }
 
-// 从提示词里提取负面词行。支持两种写法：
-//   负面词：bad anatomy, extra fingers
-//   negative: lowres, worst quality
-// 提取后原行会从正向提示词里移除，负面词单独放进 NAI 的 negative_prompt 参数。
 export function splitNegativePrompt(prompt: string): { prompt: string; negativePrompt: string } {
   const lines = prompt.split("\n");
   const kept: string[] = [];
@@ -73,20 +73,20 @@ export type NovelAiRequestOptions = {
 export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
   const { model, size, quality } = options;
   const { prompt, negativePrompt } = splitNegativePrompt(options.prompt);
-  const isV3 = isV3Model(model);
+  const isV3 = isV3Plus(model);
   const sizeMap = isV3 ? V3_SIZE_MAP : V2_SIZE_MAP;
-  const fallbackSize = isV3 ? DEFAULT_V3_SIZE : DEFAULT_V2_SIZE;
-  const [width, height] = (size && sizeMap[size]) || fallbackSize;
-  // 产品的 quality（low/medium/high）没有 NAI 对应字段，映射到采样步数。
+  const [width, height] = (size && sizeMap[size]) || DEFAULT_SIZE;
+  // 产品的 quality（low/medium/high）映射到采样步数。
   const steps = quality === "low" ? 20 : quality === "high" ? 32 : 28;
   const negative = [negativePrompt, options.negativePrompt || ""].filter(Boolean).join(", ");
+  const paramsVersion = isV3 ? 3 : 2;
 
   return {
     input: prompt,
     model,
     action: "generate",
     parameters: {
-      params_version: isV3 ? 3 : 2,
+      params_version: paramsVersion,
       width,
       height,
       scale: 5,
@@ -104,7 +104,6 @@ export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
       skip_cfg_before_second_sampling: false,
       dynamic_thresholding: false,
       controlnet_strength: 1,
-      random: 1,
     },
   };
 }
