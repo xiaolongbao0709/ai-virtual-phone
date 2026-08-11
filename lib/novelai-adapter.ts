@@ -9,16 +9,12 @@ export const NOVELAI_ENDPOINT = "https://image.novelai.net/ai/generate-image";
 
 // NAI 官方没有公开模型列表接口，这里给出已知模型名供「拉取模型」使用。
 export const NOVELAI_MODELS = [
-  "nai-diffusion-4",
-  "nai-diffusion-4-anime",
-  "nai-diffusion-4-furry",
   "nai-diffusion-3",
   "nai-diffusion-3-anime",
   "nai-diffusion-3-furry",
   "nai-diffusion-furry-3",
   "nai-diffusion-2",
   "nai-diffusion-furry-2",
-  "nai-diffusion-4-curated-preview",
 ];
 
 export function isNovelAiBaseUrl(baseUrl: string): boolean {
@@ -26,7 +22,7 @@ export function isNovelAiBaseUrl(baseUrl: string): boolean {
 }
 
 // NAI 要求宽高为 64 的倍数且在模型支持范围内。
-// v3/v4 系最长边可到 1216；v2 系上限 1024。
+// v3 系最长边可到 1216；v2 系上限 1024。
 const V3_SIZE_MAP: Record<string, [number, number]> = {
   "1024x1024": [1024, 1024],
   "1024x1536": [832, 1216],
@@ -39,9 +35,8 @@ const V2_SIZE_MAP: Record<string, [number, number]> = {
 };
 const DEFAULT_SIZE: [number, number] = [832, 1216];
 
-// 模型名里含 3 或 4 的按 v3+ 尺寸表，其余走 v2
-function isV3Plus(model: string): boolean {
-  return /[34]/.test(model);
+function isV3Model(model: string): boolean {
+  return /3/.test(model);
 }
 
 export function splitNegativePrompt(prompt: string): { prompt: string; negativePrompt: string } {
@@ -73,20 +68,19 @@ export type NovelAiRequestOptions = {
 export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
   const { model, size, quality } = options;
   const { prompt, negativePrompt } = splitNegativePrompt(options.prompt);
-  const isV3 = isV3Plus(model);
+  const isV3 = isV3Model(model);
   const sizeMap = isV3 ? V3_SIZE_MAP : V2_SIZE_MAP;
   const [width, height] = (size && sizeMap[size]) || DEFAULT_SIZE;
   // 产品的 quality（low/medium/high）映射到采样步数。
   const steps = quality === "low" ? 20 : quality === "high" ? 32 : 28;
   const negative = [negativePrompt, options.negativePrompt || ""].filter(Boolean).join(", ");
-  const paramsVersion = isV3 ? 3 : 2;
 
   return {
     input: prompt,
     model,
     action: "generate",
     parameters: {
-      params_version: paramsVersion,
+      params_version: isV3 ? 3 : 2,
       width,
       height,
       scale: 5,
