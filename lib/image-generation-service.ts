@@ -3,6 +3,7 @@ import { loadImageGenerationSettings } from "./settings-storage";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import { storeMediaBlob } from "./media-cache-storage";
 import { throwIfAborted } from "./abort-utils";
+import { isNovelAiBaseUrl, NOVELAI_MODELS } from "./novelai-adapter";
 
 export type ImageGenerationResult = {
   mediaRef: string;
@@ -270,6 +271,7 @@ export function filterLikelyImageModels(models: string[]): string[] {
 }
 
 export async function fetchImageGenerationModels(settings: Pick<ImageGenerationSettings, "apiKey" | "baseUrl" | "requestMode">): Promise<string[]> {
+  if (isNovelAiBaseUrl(settings.baseUrl)) return [...NOVELAI_MODELS];
   if (settings.requestMode === "direct") {
     try {
       const res = await fetch(buildModelsUrl(settings.baseUrl), {
@@ -479,6 +481,46 @@ async function generateImageViaServer(params: {
   }
 }
 
+async function generateImageViaNovelAi(params: {
+  settings: ImageGenerationSettings;
+  prompt: string;
+  signal?: AbortSignal;
+}): Promise<ImageGenerationApiResponse> {
+  const { settings, prompt, signal } = params;
+  const controller = new AbortController();
+  const onOuterAbort = () => controller.abort();
+  if (signal) signal.addEventListener("abort", onOuterAbort, { once: true });
+  const totalTimer = setTimeout(() => controller.abort(), 360_000);
+  try {
+    // NAI 模式强制走服务端路由：官方接口不允许浏览器跨域，token 也只发给自己的服务端。
+    const res = await fetch("/api/image-generation/nai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        token: settings.apiKey,
+        prompt,
+        model: settings.model,
+        size: settings.size,
+        quality: settings.quality,
+      }),
+    });
+    throwIfAborted(signal);
+    return await parseImageGenerationResponse(res, signal);
+  } catch (error) {
+    if (controller.signal.aborted && !signal?.aborted) {
+      throw new Error("NAI 生图超时（360 秒未返回）");
+    }
+    if (error instanceof TypeError) {
+      throw new Error("NAI 服务端路由连接失败");
+    }
+    throw error;
+  } finally {
+    clearTimeout(totalTimer);
+    if (signal) signal.removeEventListener("abort", onOuterAbort);
+  }
+}
+
 export async function generateImageFromConfiguredApi(params: {
   description: string;
   characterId?: string;
@@ -503,9 +545,11 @@ export async function generateImageFromConfiguredApi(params: {
   throwIfAborted(params.signal);
   const prompt = mergePrompt(description, settings.extraPrompt);
 
-  const data = settings.requestMode === "direct"
-    ? await generateImageDirect({ settings, prompt, referenceImageDataUrl, signal: params.signal })
-    : await generateImageViaServerOrProxy({ settings, prompt, referenceImageDataUrl, signal: params.signal });
+  const data = isNovelAiBaseUrl(settings.baseUrl)
+    ? await generateImageViaNovelAi({ settings, prompt, signal: params.signal })
+    : settings.requestMode === "direct"
+      ? await generateImageDirect({ settings, prompt, referenceImageDataUrl, signal: params.signal })
+      : await generateImageViaServerOrProxy({ settings, prompt, referenceImageDataUrl, signal: params.signal });
 
   throwIfAborted(params.signal);
   const mimeType = data.mimeType || "image/png";

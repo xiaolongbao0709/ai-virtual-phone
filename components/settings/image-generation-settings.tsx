@@ -239,6 +239,9 @@ export function ImageGenerationSettings() {
                         onChange={(event) => updateSettings({ baseUrl: event.target.value })}
                         placeholder="https://api.example.com/v1"
                     />
+                    <span className="menu-desc ml-1 opacity-70">
+                        填 <code>nai://official</code> 可直接使用 NovelAI 官方接口（无需代理）：API Key 填 NAI 网站的 Persistent Token，模型名填 nai-diffusion-3 等；该模式强制走服务端转发。
+                    </span>
                 </div>
 
                 <div className="flex flex-col gap-1">
