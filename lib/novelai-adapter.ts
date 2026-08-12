@@ -39,7 +39,10 @@ const V2_SIZE_MAP: Record<string, [number, number]> = {
 };
 const DEFAULT_SIZE: [number, number] = [832, 1216];
 
-// 模型名含 3 或 4 的用 v3+ 尺寸表
+function isV4Model(model: string): boolean {
+  return /\b4/.test(model.toLowerCase());
+}
+
 function isV3Plus(model: string): boolean {
   return /[34]/.test(model.toLowerCase());
 }
@@ -77,25 +80,64 @@ export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
   const sizeMap = isV3 ? V3_SIZE_MAP : V2_SIZE_MAP;
   const [width, height] = (size && sizeMap[size]) || DEFAULT_SIZE;
   const steps = quality === "low" ? 20 : quality === "high" ? 32 : 28;
-  const negative = [negativePrompt, options.negativePrompt || ""].filter(Boolean).join(", ");
 
-  // v4 系列（含 v4.5）使用极简请求体：NAI v4 的协议可能与 v3 完全不兼容，
-  // 不确定参数宁可不传，让 NAI 用默认值。只传模型名、提示词、尺寸、负面词。
-  if (model.toLowerCase().includes("4")) {
+  // v4 系列使用新协议：v4_prompt/v4_negative_prompt 结构
+  if (isV4Model(model)) {
+    const defaultNegative = "blurry, lowres, bad quality, jpeg artifacts, worst quality";
+    const finalNegative = [negativePrompt, options.negativePrompt].filter(Boolean).join(", ") || defaultNegative;
+    
     return {
       input: prompt,
       model,
+      action: "generate",
       parameters: {
+        params_version: 3,
         width,
         height,
-        negative_prompt: negative,
+        scale: 5,
+        sampler: "k_euler_ancestral",
+        steps,
+        seed: Math.floor(Math.random() * 4294967295),
         n_samples: 1,
+        ucPreset: 0,
+        qualityToggle: true,
+        autoSmea: false,
+        dynamic_thresholding: false,
+        controlnet_strength: 1,
+        legacy: false,
+        add_original_image: true,
+        cfg_rescale: 0,
+        noise_schedule: "karras",
+        legacy_v3_extend: false,
+        skip_cfg_above_sigma: null,
+        use_coords: false,
+        legacy_uc: false,
+        v4_prompt: {
+          caption: {
+            base_caption: prompt,
+            char_captions: [],
+          },
+          use_coords: false,
+          use_order: true,
+        },
+        v4_negative_prompt: {
+          caption: {
+            base_caption: finalNegative,
+            char_captions: [],
+          },
+          legacy_uc: false,
+        },
+        negative_prompt: finalNegative,
+        deliberate_euler_ancestral_bug: false,
+        prefer_brownian: true,
       },
     };
   }
 
-  // v3 及以下使用已验证可用的参数
+  // v3 及以下使用已验证可用的旧协议
   const isV3Model = /3/.test(model.toLowerCase());
+  const negative = [negativePrompt, options.negativePrompt || ""].filter(Boolean).join(", ");
+  
   return {
     input: prompt,
     model,
@@ -108,7 +150,7 @@ export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
       sampler: isV3Model ? "k_dpmpp_2m" : "k_euler",
       steps,
       negative_prompt: negative,
-      seed: 0,
+      seed: Math.floor(Math.random() * 4294967295),
       n_samples: 1,
       sm: false,
       sm_dyn: false,
