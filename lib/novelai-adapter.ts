@@ -65,6 +65,14 @@ export function splitNegativePrompt(prompt: string): { prompt: string; negativeP
   };
 }
 
+// 合并主提示词：把从 options.prompt 里提取的补充提示词合并进角色描述
+// options.prompt 格式：角色描述\n补充提示词
+function extractAndMergePrompts(fullPrompt: string): string {
+  // fullPrompt 已经包含了「角色描述 + \n + 补充提示词」
+  // 如果有多行，合并成一行，用逗号连接（保留权重语法）
+  return fullPrompt.replace(/\n+/g, ", ").trim();
+}
+
 export type NovelAiRequestOptions = {
   model: string;
   prompt: string;
@@ -75,7 +83,7 @@ export type NovelAiRequestOptions = {
 
 export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
   const { model, size, quality } = options;
-  const { prompt, negativePrompt } = splitNegativePrompt(options.prompt);
+  const { prompt: mainPrompt, negativePrompt: extractedNegative } = splitNegativePrompt(options.prompt);
   const isV3 = isV3Plus(model);
   const sizeMap = isV3 ? V3_SIZE_MAP : V2_SIZE_MAP;
   const [width, height] = (size && sizeMap[size]) || DEFAULT_SIZE;
@@ -84,10 +92,12 @@ export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
   // v4 系列使用新协议：v4_prompt/v4_negative_prompt 结构
   if (isV4Model(model)) {
     const defaultNegative = "blurry, lowres, bad quality, jpeg artifacts, worst quality";
-    const finalNegative = [negativePrompt, options.negativePrompt].filter(Boolean).join(", ") || defaultNegative;
+    const finalNegative = [extractedNegative, options.negativePrompt].filter(Boolean).join(", ") || defaultNegative;
+    // 关键修正：options.prompt 包含「角色描述\n补充提示词」，全部合并进 base_caption
+    const fullPrompt = extractAndMergePrompts(mainPrompt);
     
     return {
-      input: prompt,
+      input: fullPrompt,
       model,
       action: "generate",
       parameters: {
@@ -114,7 +124,7 @@ export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
         legacy_uc: false,
         v4_prompt: {
           caption: {
-            base_caption: prompt,
+            base_caption: fullPrompt,
             char_captions: [],
           },
           use_coords: false,
@@ -136,10 +146,10 @@ export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
 
   // v3 及以下使用已验证可用的旧协议
   const isV3Model = /3/.test(model.toLowerCase());
-  const negative = [negativePrompt, options.negativePrompt || ""].filter(Boolean).join(", ");
+  const negative = [extractedNegative, options.negativePrompt || ""].filter(Boolean).join(", ");
   
   return {
-    input: prompt,
+    input: mainPrompt,
     model,
     action: "generate",
     parameters: {
