@@ -39,9 +39,12 @@ const V2_SIZE_MAP: Record<string, [number, number]> = {
 };
 const DEFAULT_SIZE: [number, number] = [832, 1216];
 
-// 模型名含 3、4、4.5 的走 v3+ params，其余走 v2
-function isV3Plus(model: string): boolean {
-  return /[34]/.test(model);
+// v4.5 需要 params_version=4，v3/v4 用 3，v2 用 2
+function getParamsVersion(model: string): number {
+  const lower = model.toLowerCase();
+  if (lower.includes("4-5") || lower.includes("4.5")) return 4;
+  if (lower.includes("4") || lower.includes("3")) return 3;
+  return 2;
 }
 
 export function splitNegativePrompt(prompt: string): { prompt: string; negativePrompt: string } {
@@ -73,23 +76,25 @@ export type NovelAiRequestOptions = {
 export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
   const { model, size, quality } = options;
   const { prompt, negativePrompt } = splitNegativePrompt(options.prompt);
-  const isV3 = isV3Plus(model);
+  const isV3 = /\b[34]/.test(model.toLowerCase()) || model.toLowerCase().includes("4-5");
   const sizeMap = isV3 ? V3_SIZE_MAP : V2_SIZE_MAP;
   const [width, height] = (size && sizeMap[size]) || DEFAULT_SIZE;
-  // 产品的 quality（low/medium/high）映射到采样步数。
   const steps = quality === "low" ? 20 : quality === "high" ? 32 : 28;
   const negative = [negativePrompt, options.negativePrompt || ""].filter(Boolean).join(", ");
+  const paramsVersion = getParamsVersion(model);
+  // v4.5 用 k_dpmpp_2m_sde，v3/v4 用 k_dpmpp_2m，v2 用 k_euler
+  const sampler = paramsVersion === 4 ? "k_dpmpp_2m_sde" : paramsVersion >= 3 ? "k_dpmpp_2m" : "k_euler";
 
   return {
     input: prompt,
     model,
     action: "generate",
     parameters: {
-      params_version: isV3 ? 3 : 2,
+      params_version: paramsVersion,
       width,
       height,
       scale: 5,
-      sampler: isV3 ? "k_dpmpp_2m" : "k_euler",
+      sampler,
       steps,
       negative_prompt: negative,
       seed: 0,
