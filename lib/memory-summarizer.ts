@@ -8,7 +8,6 @@ import {
     loadMemoryConfig,
     loadMemoryEntries,
     saveMemoryEntry,
-    deleteMemoryEntries,
     getEventCounter,
     resetEventCounter,
     getLastSummarizedTimestamp,
@@ -20,6 +19,46 @@ import { loadNativeTimeline, formatTimelineForSummarization } from "./short-term
 import { generateEmbedding, resolveEmbeddingModel } from "./memory-embedding";
 import { simpleLLMCall } from "./api-helpers";
 import { maybeRunCoreMemoryPipeline } from "./core-memory-builder";
+import { checkWriteAdmission } from "./memory-lifecycle";
+
+/**
+ * Parse the optional trailing [META] line produced by the summarization
+ * prompt: valence / arousal / importance / tags. Returns cleaned summary
+ * (META line stripped) + parsed fields; malformed values fall back to
+ * defaults so old prompts and non-compliant models keep working.
+ */
+function parseSummaryMeta(text: string): {
+    summary: string;
+    valence: number;
+    arousal: number;
+    importance: number;
+    tags: string[];
+} {
+    const fallback = { valence: 0.5, arousal: 0.5, importance: 0.8, tags: [] as string[] };
+    const metaMatch = text.match(/^\s*\[META\][^\n]*$/im);
+    if (!metaMatch) return { summary: text.trim(), ...fallback };
+
+    const metaLine = metaMatch[0];
+    const summary = text.replace(metaLine, "").trim();
+    const num = (key: string, def: number): number => {
+        const m = metaLine.match(new RegExp(`${key}\\s*=\\s*([0-9.]+)`, "i"));
+        if (!m) return def;
+        const v = parseFloat(m[1]);
+        return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : def;
+    };
+    const tagsMatch = metaLine.match(/tags\s*=\s*([^\s].*?)\s*$/i);
+    const tags = tagsMatch
+        ? tagsMatch[1].split(/[,，、]/).map(t => t.trim()).filter(Boolean).slice(0, 64)
+        : [];
+
+    return {
+        summary: summary || text.trim(),
+        valence: num("valence", fallback.valence),
+        arousal: num("arousal", fallback.arousal),
+        importance: num("importance", fallback.importance),
+        tags,
+    };
+}
 
 /** Per-character lock to prevent concurrent summarization. */
 const summarizingSet = new Set<string>();
@@ -111,7 +150,19 @@ export async function runSummarizationPipeline(
         return { success: false, error: "记忆总结结果疑似被截断，已取消入库，请稍后重试或提高模型输出上限" };
     }
 
-    const summary = result.content;
+    const meta = parseSummaryMeta(result.content);
+    const summary = meta.summary;
+
+    // OB write admission gate: reject near-duplicate auto writes
+    const existingLongTerm = (await loadMemoryEntries(characterId)).filter(e => e.type === "long_term");
+    const verdict = checkWriteAdmission(summary, existingLongTerm, config, !options?.force);
+    if (!verdict.admitted) {
+        // Advance watermark & counter anyway so the same span isn't retried forever
+        setLastSummarizedTimestamp(characterId, latest);
+        resetEventCounter(characterId);
+        console.log(`[MemorySummarizer] Write rejected by admission gate: ${verdict.reason}`);
+        return { success: false, error: `写入门卫拒绝：${verdict.reason}` };
+    }
 
     // Generate embedding for the summary (only if vector recall is enabled)
     let embedding: number[] | undefined;
@@ -148,7 +199,12 @@ export async function runSummarizationPipeline(
         type: "long_term",
         content: summary,
         embedding,
-        importance: 0.8,
+        importance: meta.importance,
+        valence: meta.valence,
+        arousal: meta.arousal,
+        tags: meta.tags,
+        lastActive: now,
+        activationCount: 0,
         createdAt: now,
         updatedAt: now,
         metadata: {
@@ -163,11 +219,20 @@ export async function runSummarizationPipeline(
     setLastSummarizedTimestamp(characterId, latest);
     resetEventCounter(characterId);
 
-    // Enforce long-term limit
-    const allLongTerm = await loadMemoryEntries(characterId);
+    // Enforce long-term limit: soft-archive oldest (OB-style), never touch pinned
+    const allLongTerm = (await loadMemoryEntries(characterId))
+        .filter(e => e.type === "long_term" && !e.archived);
     if (allLongTerm.length > config.maxLongTermEntries) {
-        const excess = allLongTerm.slice(0, allLongTerm.length - config.maxLongTermEntries);
-        await deleteMemoryEntries(excess.map(e => e.id));
+        const excess = allLongTerm
+            .filter(e => !e.pinned && !e.protected)
+            .slice(0, allLongTerm.length - config.maxLongTermEntries);
+        const archiveTs = new Date().toISOString();
+        for (const e of excess) {
+            e.archived = true;
+            e.deletedAt = archiveTs;
+            e.updatedAt = archiveTs;
+            await saveMemoryEntry(e);
+        }
     }
 
     incrementCoreMemoryCounter(characterId);

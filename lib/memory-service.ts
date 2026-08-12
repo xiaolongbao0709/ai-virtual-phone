@@ -1,63 +1,68 @@
 // lib/memory-service.ts
 // High-level memory orchestration: retrieve long-term memories for prompt injection.
+// Retrieval core is the Ombre Brain 7-dimension scoring engine (memory-scoring.ts)
+// with lazy decay + touch/ripple lifecycle (memory-lifecycle.ts).
+// Public function signatures are unchanged from v1 — callers need no changes.
 
 import type { MemoryConfig, MemoryEntry } from "./memory-types";
 import { loadMemoryEntriesByType } from "./memory-storage";
 import { resolveAuxiliaryApiConfig } from "./settings-storage";
-import { generateEmbedding, resolveEmbeddingModel, cosineSimilarity } from "./memory-embedding";
+import { generateEmbedding, resolveEmbeddingModel } from "./memory-embedding";
 import { estimateTokens } from "./token-counter";
+import { scoreMemories, type ScoredMemory } from "./memory-scoring";
+import { maybeRunDecay, touchMemories } from "./memory-lifecycle";
 
 /**
  * Retrieve relevant long-term memories for prompt injection.
  * Strategy:
- *   1. Total tokens <= longTermTokenBudget → return all
- *   2. Over budget + embedding API configured → vector-rank, fill until budget
- *   3. Over budget + no embedding → time-sorted (newest first), fill until budget
+ *   1. Lazy decay sweep (throttled, archives low-retention entries)
+ *   2. Active pool fits budget → return all (still touch them)
+ *   3. Over budget → 7-dim OB scoring (topic/emotion/time/importance/touch/
+ *      semantic/bm25), literal hits force-recalled, fill until token budget
  * Embedding API is resolved from auxiliary binding (global, not per-character).
+ * Missing embedding config degrades gracefully: semantic dim scores 0,
+ * the other 6 dims still rank meaningfully.
  */
 export async function retrieveMemoriesForPrompt(
     characterId: string,
     currentContext: string,
     config: MemoryConfig
 ): Promise<MemoryEntry[]> {
-    const longTermEntries = await loadMemoryEntriesByType(characterId, "long_term");
-    if (longTermEntries.length === 0 || !currentContext.trim()) return [];
+    await maybeRunDecay(characterId);
+
+    const allEntries = await loadMemoryEntriesByType(characterId, "long_term");
+    const pool = allEntries.filter(e => !e.archived && !e.dontSurface);
+    if (pool.length === 0 || !currentContext.trim()) return [];
 
     const budget = config.longTermTokenBudget;
 
-    // Calculate total tokens for all entries
+    // All fit within budget → return all
     let totalTokens = 0;
-    for (const entry of longTermEntries) {
+    for (const entry of pool) {
         totalTokens += estimateTokens(entry.content) + 4;
     }
-
-    // Strategy 1: all fit within budget → return all
     if (totalTokens <= budget) {
-        return longTermEntries;
+        void touchMemories(pool, allEntries);
+        return sortByCreated(pool);
     }
 
-    // Strategy 2: vector recall enabled + embedding API configured → vector search, fill by relevance
+    // Over budget → OB 7-dimension scoring
+    let queryEmbedding: number[] | null = null;
     const embeddingApiConfig = config.vectorRecallEnabled ? resolveAuxiliaryApiConfig("embeddingApiConfigId") : null;
     if (embeddingApiConfig && resolveEmbeddingModel(embeddingApiConfig)) {
-        const queryEmbedding = await generateEmbedding(currentContext, embeddingApiConfig);
-        if (queryEmbedding) {
-            const withEmbeddings = longTermEntries.filter(m => m.embedding && m.embedding.length > 0);
-            if (withEmbeddings.length > 0) {
-                const scored = withEmbeddings.map(entry => ({
-                    entry,
-                    score: cosineSimilarity(queryEmbedding, entry.embedding!),
-                }));
-                scored.sort((a, b) => b.score - a.score);
-                return fillByBudget(scored.map(s => s.entry), budget);
-            }
-        }
+        try {
+            queryEmbedding = await generateEmbedding(currentContext, embeddingApiConfig);
+        } catch { /* semantic dim degrades to 0 */ }
     }
 
-    // Strategy 3: no embedding support → newest first, fill by budget
-    const sorted = [...longTermEntries].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-    return fillByBudget(sorted, budget);
+    const scored = scoreMemories(pool, {
+        query: currentContext,
+        queryEmbedding,
+    });
+
+    const selected = fillByBudgetScored(scored, budget);
+    void touchMemories(selected, allEntries);
+    return sortByCreated(selected);
 }
 
 export async function retrieveCoreMemoriesForPrompt(
@@ -65,9 +70,14 @@ export async function retrieveCoreMemoriesForPrompt(
     config: MemoryConfig,
 ): Promise<MemoryEntry[]> {
     const coreEntries = await loadMemoryEntriesByType(characterId, "core");
-    if (coreEntries.length === 0) return [];
+    const pool = coreEntries.filter(e => !e.archived);
+    if (pool.length === 0) return [];
 
-    const sorted = [...coreEntries].sort((a, b) => {
+    const sorted = [...pool].sort((a, b) => {
+        // pinned first, then active flag, then event date
+        const aPin = a.pinned || a.protected ? 1 : 0;
+        const bPin = b.pinned || b.protected ? 1 : 0;
+        if (aPin !== bPin) return bPin - aPin;
         const aActive = a.metadata?.active ? 1 : 0;
         const bActive = b.metadata?.active ? 1 : 0;
         if (aActive !== bActive) return bActive - aActive;
@@ -77,6 +87,24 @@ export async function retrieveCoreMemoriesForPrompt(
     });
 
     return fillByBudget(sorted, config.coreMemoryTokenBudget);
+}
+
+/** Chronological order for prompt injection (scoring picks WHAT, time orders HOW). */
+function sortByCreated(entries: MemoryEntry[]): MemoryEntry[] {
+    return [...entries].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/**
+ * Fill scored entries until token budget is exhausted.
+ * OB rule: literal hits are force-recalled — they are placed first so budget
+ * cutoff cannot drop them.
+ */
+function fillByBudgetScored(scored: ScoredMemory[], budget: number): MemoryEntry[] {
+    const literalFirst = [
+        ...scored.filter(s => s.literalHit),
+        ...scored.filter(s => !s.literalHit),
+    ];
+    return fillByBudget(literalFirst.map(s => s.entry), budget);
 }
 
 /** Pick entries in order until token budget is exhausted. */
