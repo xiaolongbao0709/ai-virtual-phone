@@ -9,6 +9,10 @@ export const NOVELAI_ENDPOINT = "https://image.novelai.net/ai/generate-image";
 
 // NAI 官方没有公开模型列表接口，这里给出已知模型名供「拉取模型」使用。
 export const NOVELAI_MODELS = [
+  "nai-diffusion-4-5-full",
+  "nai-diffusion-4-5-curated",
+  "nai-diffusion-4-full",
+  "nai-diffusion-4-curated-preview",
   "nai-diffusion-3",
   "nai-diffusion-3-anime",
   "nai-diffusion-3-furry",
@@ -22,7 +26,7 @@ export function isNovelAiBaseUrl(baseUrl: string): boolean {
 }
 
 // NAI 要求宽高为 64 的倍数且在模型支持范围内。
-// v3 系最长边可到 1216；v2 系上限 1024。
+// v3/v4 系最长边 1216；v2 系上限 1024。
 const V3_SIZE_MAP: Record<string, [number, number]> = {
   "1024x1024": [1024, 1024],
   "1024x1536": [832, 1216],
@@ -35,8 +39,9 @@ const V2_SIZE_MAP: Record<string, [number, number]> = {
 };
 const DEFAULT_SIZE: [number, number] = [832, 1216];
 
-function isV3Model(model: string): boolean {
-  return /3/.test(model);
+// 模型名含 3、4、4.5 的走 v3+ params，其余走 v2
+function isV3Plus(model: string): boolean {
+  return /[34]/.test(model);
 }
 
 export function splitNegativePrompt(prompt: string): { prompt: string; negativePrompt: string } {
@@ -68,7 +73,7 @@ export type NovelAiRequestOptions = {
 export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
   const { model, size, quality } = options;
   const { prompt, negativePrompt } = splitNegativePrompt(options.prompt);
-  const isV3 = isV3Model(model);
+  const isV3 = isV3Plus(model);
   const sizeMap = isV3 ? V3_SIZE_MAP : V2_SIZE_MAP;
   const [width, height] = (size && sizeMap[size]) || DEFAULT_SIZE;
   // 产品的 quality（low/medium/high）映射到采样步数。
