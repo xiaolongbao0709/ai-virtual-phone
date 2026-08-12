@@ -42,7 +42,7 @@ export default function RootLayout({
             __html: `(function(){try{var d=document.documentElement;var t=(navigator.maxTouchPoints||0)>0;var s=Math.min(screen.width,screen.height);var m=window.matchMedia("(hover: none) and (pointer: coarse)").matches;if(!m&&t&&s>0&&s<=620){d.setAttribute("data-force-mobile","1");m=true;}if(m&&s>=520){var z=Math.min(window.innerWidth/390,window.innerHeight/844);if(isFinite(z)&&z>1.001){d.style.setProperty("--shell-zoom",z.toFixed(4));try{var p=document.createElement("div");p.style.cssText="position:absolute;left:-9999px;top:0;width:100px;--zp:2;zoom:var(--zp)";d.appendChild(p);var w=p.getBoundingClientRect().width;d.removeChild(p);if(!(w>150)){d.setAttribute("data-zoom-fallback","1");}}catch(e2){}}}}catch(e){}})();`,
           }}
         />
-        <link rel="manifest" href="/manifest.webmanifest" />
+        <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#f8f7f2" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
         <link rel="icon" href="/icon-192.png" type="image/png" />
