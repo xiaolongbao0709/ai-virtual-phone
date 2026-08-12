@@ -39,15 +39,7 @@ const V2_SIZE_MAP: Record<string, [number, number]> = {
 };
 const DEFAULT_SIZE: [number, number] = [832, 1216];
 
-// v4 和 v4.5 都需要 params_version=4，v3 用 3，v2 用 2
-function getParamsVersion(model: string): number {
-  const lower = model.toLowerCase();
-  if (/\b4/.test(lower)) return 4;
-  if (/\b3/.test(lower)) return 3;
-  return 2;
-}
-
-// v3+ 走大尺寸表
+// 模型名含 3 或 4 的用 v3+ 尺寸表
 function isV3Plus(model: string): boolean {
   return /[34]/.test(model.toLowerCase());
 }
@@ -86,20 +78,34 @@ export function buildNovelAiRequestBody(options: NovelAiRequestOptions) {
   const [width, height] = (size && sizeMap[size]) || DEFAULT_SIZE;
   const steps = quality === "low" ? 20 : quality === "high" ? 32 : 28;
   const negative = [negativePrompt, options.negativePrompt || ""].filter(Boolean).join(", ");
-  const paramsVersion = getParamsVersion(model);
-  // v4+ 用 k_dpmpp_2m_sde，v3 用 k_dpmpp_2m，v2 用 k_euler
-  const sampler = paramsVersion >= 4 ? "k_dpmpp_2m_sde" : paramsVersion === 3 ? "k_dpmpp_2m" : "k_euler";
 
+  // v4 系列（含 v4.5）使用极简请求体：NAI v4 的协议可能与 v3 完全不兼容，
+  // 不确定参数宁可不传，让 NAI 用默认值。只传模型名、提示词、尺寸、负面词。
+  if (model.toLowerCase().includes("4")) {
+    return {
+      input: prompt,
+      model,
+      parameters: {
+        width,
+        height,
+        negative_prompt: negative,
+        n_samples: 1,
+      },
+    };
+  }
+
+  // v3 及以下使用已验证可用的参数
+  const isV3Model = /3/.test(model.toLowerCase());
   return {
     input: prompt,
     model,
     action: "generate",
     parameters: {
-      params_version: paramsVersion,
+      params_version: isV3Model ? 3 : 2,
       width,
       height,
       scale: 5,
-      sampler,
+      sampler: isV3Model ? "k_dpmpp_2m" : "k_euler",
       steps,
       negative_prompt: negative,
       seed: 0,
