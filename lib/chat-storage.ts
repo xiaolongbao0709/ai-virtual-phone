@@ -67,6 +67,10 @@ export type ChatSession = {
     groupMutes?: Record<string, string>; // (characterId | "self") → mute expiry ISO
     allowAdminActionsOnUser?: boolean; // characters may kick/mute the user (default off)
     isSpectator?: boolean; // 围观群：用户不在群内，只能生成/线下
+    // ── Virtual clock ──
+    virtualClockAnchor?: string;   // ISO string: the "target" datetime the user set
+    virtualClockSetAt?: string;    // ISO string: real time when the anchor was set
+    virtualClockMode?: "flowing" | "frozen"; // flowing = time passes normally from anchor; frozen = always returns anchor
 };
 
 export type ChatMessageStatus = "sending" | "sent" | "read" | "failed";

@@ -70,7 +70,7 @@ import { parseOfflineResponse, type ParsedOfflineResponse } from "./chat-offline
 import { buildProviderRequest, nativeToolProtocolForConfig, toLlmRequestMessages, type LlmRequestMessage, type LlmToolCall } from "./llm-provider-adapter";
 import type { DebugPromptSnapshot } from "./debug-store";
 import { throwIfAborted } from "./abort-utils";
-import { buildCharacterTimeContext, buildGroupTimeContext } from "./character-time";
+import { buildCharacterTimeContext, buildGroupTimeContext, resolveVirtualNow, resolveVirtualTimestamp } from "./character-time";
 import { getPromptTimestampOptionsForTimeContext } from "./prompt-time";
 
 function stripGroupFinancialActionsForMetadataRepair(text: string): string {
@@ -321,7 +321,7 @@ async function buildGroupChatPromptMessages(
     const memConfig = loadMemoryConfig();
     const allWorldBooks = loadWorldBooks();
 
-    const now = new Date();
+    const now = resolveVirtualNow(session);
     const memberTimeContexts: Record<string, ReturnType<typeof buildCharacterTimeContext>> = {};
     const memberDataPromises = participantIds.map(async (charId): Promise<GroupMemberData | null> => {
         const character = charMap.get(charId);
@@ -375,7 +375,15 @@ async function buildGroupChatPromptMessages(
 
     const enabledTools = options?.disableTools ? [] : getEnabledTools("group_chat");
     const usesNativeActions = Boolean(nativeToolProtocolForConfig(config) && enabledTools.length > 0);
-    const annotatedHistory = annotateGroupHistory(history, participantIds, userName);
+    const annotatedHistory = annotateGroupHistory(history, participantIds, userName).map(message => {
+        const storedDate = new Date(message.createdAt);
+        return {
+            ...message,
+            createdAt: isNaN(storedDate.getTime())
+                ? message.createdAt
+                : resolveVirtualTimestamp(storedDate, session).toISOString(),
+        };
+    });
     const {
         truncatedHistory: truncatedAnnotatedHistory,
         wbActivationContext,

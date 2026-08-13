@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
     CHAT_INITIAL_VISIBLE_MESSAGE_COUNT,
     CHAT_LOAD_MORE_MESSAGE_COUNT,
@@ -36,7 +36,8 @@ import { clearChatOfflineTurns } from "@/lib/chat-offline-storage";
 import { triggerDeleteFriendReaction } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
-import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Trash2, Smile, Sparkles, type LucideIcon } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, Video, Mic, UserMinus, UserPlus, Users, Pin, MessageSquare, Search, AlertCircle, Code, Trash2, Smile, Sparkles, Clock, type LucideIcon } from "lucide-react";
+import { resolveVirtualNow } from "@/lib/character-time";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
 import CSSSchemeBar from "@/components/ui/css-scheme-picker";
 import { ConfirmDialog } from "@/components/ui/modal";
@@ -183,6 +184,66 @@ export function ChatSettingsPanel({
         const latest = sessions.find(s => s.id === session.id);
         return (latest as Record<string, unknown>)?.customCSS as string || session.customCSS || "";
     });
+
+    // ── Virtual Clock state ──
+    const [virtualClockEnabled, setVirtualClockEnabled] = useState(Boolean(session.virtualClockAnchor));
+    const [virtualClockMode, setVirtualClockMode] = useState<"flowing" | "frozen">(session.virtualClockMode || "flowing");
+    const [virtualClockInput, setVirtualClockInput] = useState(() => {
+        if (!session.virtualClockAnchor) return "";
+        // Format to datetime-local input value (YYYY-MM-DDThh:mm)
+        const d = new Date(session.virtualClockAnchor);
+        if (isNaN(d.getTime())) return "";
+        const pad = (n: number) => n < 10 ? `0${n}` : `${n}`;
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    });
+    const [virtualClockPreview, setVirtualClockPreview] = useState("");
+
+    // Keep the displayed virtual clock live without changing message storage timestamps.
+    useEffect(() => {
+        if (!virtualClockEnabled || !session.virtualClockAnchor) {
+            setVirtualClockPreview("");
+            return;
+        }
+        const tick = () => {
+            const now = resolveVirtualNow(session);
+            const pad = (n: number) => n < 10 ? `0${n}` : `${n}`;
+            setVirtualClockPreview(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`);
+        };
+        tick();
+        const interval = window.setInterval(tick, 1000);
+        return () => window.clearInterval(interval);
+    }, [virtualClockEnabled, session.virtualClockAnchor, session.virtualClockSetAt, session.virtualClockMode]);
+
+    const applyVirtualClock = () => {
+        if (!virtualClockInput) return;
+        const anchor = new Date(virtualClockInput);
+        if (isNaN(anchor.getTime())) return;
+        const now = new Date().toISOString();
+        updateSession({
+            virtualClockAnchor: anchor.toISOString(),
+            virtualClockSetAt: now,
+            virtualClockMode,
+        });
+        setVirtualClockEnabled(true);
+        // Update session object for preview
+        session.virtualClockAnchor = anchor.toISOString();
+        session.virtualClockSetAt = now;
+        session.virtualClockMode = virtualClockMode;
+    };
+
+    const clearVirtualClock = () => {
+        updateSession({
+            virtualClockAnchor: undefined,
+            virtualClockSetAt: undefined,
+            virtualClockMode: undefined,
+        });
+        setVirtualClockEnabled(false);
+        setVirtualClockInput("");
+        setVirtualClockPreview("");
+        session.virtualClockAnchor = undefined;
+        session.virtualClockSetAt = undefined;
+        session.virtualClockMode = undefined;
+    };
 
     const [showConfirmClear, setShowConfirmClear] = useState(false);
     const [showConfirmClearOffline, setShowConfirmClearOffline] = useState(false);
@@ -804,6 +865,93 @@ export function ChatSettingsPanel({
                             </div>
                         </button>
                     </>
+                </div>
+
+                {/* Virtual Clock */}
+                <div className="menu-group">
+                    <div className="menu-item">
+                        <ChatInfoIcon icon={Clock} color={BINDING_ACCENTS.memory} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">虚拟时间</span>
+                            <span className="menu-desc">让角色感知你设定的时间而非真实时间</span>
+                        </div>
+                        <div className="menu-right">
+                            <Toggle
+                                checked={virtualClockEnabled}
+                                onChange={c => {
+                                    if (!c) { clearVirtualClock(); }
+                                    else { setVirtualClockEnabled(true); }
+                                }}
+                            />
+                        </div>
+                    </div>
+                    {virtualClockEnabled && (
+                        <>
+                            <div className="menu-item" style={{ flexWrap: "wrap", gap: 8 }}>
+                                <ChatInfoIcon icon={Clock} color={BINDING_ACCENTS.api} />
+                                <div className="menu-label-group" style={{ minWidth: 0 }}>
+                                    <span className="menu-label">目标时间</span>
+                                </div>
+                                <div className="menu-right" style={{ flex: "1 0 auto" }}>
+                                    <input
+                                        type="datetime-local"
+                                        value={virtualClockInput}
+                                        onChange={e => setVirtualClockInput(e.target.value)}
+                                        className="ui-input h-8 text-xs"
+                                        style={{ width: 200 }}
+                                    />
+                                </div>
+                            </div>
+                            <div className="menu-item">
+                                <ChatInfoIcon icon={Clock} color={BINDING_ACCENTS.preset} />
+                                <div className="menu-label-group">
+                                    <span className="menu-label">时间模式</span>
+                                    <span className="menu-desc">{virtualClockMode === "flowing" ? "流动：从目标时间起正常走秒" : "冻结：始终停留在目标时间"}</span>
+                                </div>
+                                <div className="menu-right">
+                                    <select
+                                        value={virtualClockMode}
+                                        onChange={e => {
+                                            const mode = e.target.value as "flowing" | "frozen";
+                                            setVirtualClockMode(mode);
+                                        }}
+                                        className="ui-input h-8 text-xs"
+                                    >
+                                        <option value="flowing">流动</option>
+                                        <option value="frozen">冻结</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="menu-item" style={{ flexWrap: "wrap", gap: 8 }}>
+                                <ChatInfoIcon icon={Clock} color={BINDING_ACCENTS.voice} />
+                                <div className="menu-label-group" style={{ flex: 1 }}>
+                                    <span className="menu-label">当前虚拟时间</span>
+                                    {virtualClockPreview && <span className="menu-desc">{virtualClockPreview}</span>}
+                                    {!virtualClockPreview && !session.virtualClockAnchor && <span className="menu-desc">未设置</span>}
+                                </div>
+                                <div className="menu-right gap-2">
+                                    <button
+                                        type="button"
+                                        className="ui-btn ui-btn-primary h-8 px-3 text-xs"
+                                        onClick={applyVirtualClock}
+                                        disabled={!virtualClockInput}
+                                    >
+                                        应用
+                                    </button>
+                                    {session.virtualClockAnchor && (
+                                        <button
+                                            type="button"
+                                            className="ui-btn h-8 px-3 text-xs"
+                                            style={{ color: "var(--c-danger)" }}
+                                            onClick={clearVirtualClock}
+                                        >
+                                            清除
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 {/* Backgrounds & UI */}
