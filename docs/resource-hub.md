@@ -67,3 +67,5 @@ jsDelivr 单文件上限 20MB；图片建议单张 ≤ 300KB。
 - **没配 Token**：匿名 POST 到独立部署的上传服务（share 仓库 `netlify/functions/upload.mjs`，从该仓库单独建 Netlify 站点 + 配 `SHARE_BOT_TOKEN` 环境变量），由机器人代开 PR 待审核。默认地址 `https://floatshare.netlify.app/.netlify/functions/upload`，设置里可改
 
 安全设计：匿名与普通用户的提交都只生成 PR，管理员 merge 才上架；上传服务含单文件/总量体积限制（≤5MB）与 IP 频控。上传服务与主站部署完全隔离。
+
+投稿前建议先阅读 share 仓库 `README.md` 的投稿约定，确保目录结构与命名规范一致，便于管理员快速审核合并。
