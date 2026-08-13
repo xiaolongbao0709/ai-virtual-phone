@@ -18,6 +18,7 @@ import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
 import { isAndroidBrowser } from "./voice-input-platform";
 import { CallVolumeControl } from "./call-volume-control";
+import { startIncomingCallVibration } from "@/lib/call-vibration";
 
 // ── Types ───────────────────────────────────────────
 
@@ -81,6 +82,13 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
     // Keep refs in sync
     useEffect(() => { stateRef.current = callState; }, [callState]);
+
+    // 来电等待接听：循环振动（开关在聊天主页，iOS 网页不支持自动无效果）
+    useEffect(() => {
+        if (initiator !== "character" || callState !== "CONNECTING") return;
+        const stop = startIncomingCallVibration();
+        return stop;
+    }, [initiator, callState]);
 
     // Pause WeChat keep-alive while the call holds the mic/audio; restore on exit.
     useEffect(() => {

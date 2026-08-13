@@ -1069,27 +1069,101 @@ const saveTheaterDraftTool: QaContentTool = {
 
 // ── 本机内容清单 ──
 
+/** 关键词匹配：对一组字段做包含匹配，返回命中的字段标签；keyword 为空时返回 null（不过滤，列出全部）。 */
+function keywordHits(fields: Array<[label: string, value: string]>, keyword: string): string[] | null {
+    const lower = keyword.toLowerCase();
+    if (!lower) return null;
+    const hits: string[] = [];
+    for (const [label, value] of fields) {
+        if (value && value.toLowerCase().includes(lower)) hits.push(label);
+    }
+    return hits;
+}
+
 const listContentTool: QaContentTool = {
     name: "本机内容清单",
     nativeName: "list_local_content",
-    // 空参数工具：带一个无意义可选字段，避免部分 provider（如 Gemini）拒绝空 properties
-    parameters: { type: "object", properties: { noop: { type: "string", description: "无需参数，忽略" } } },
-    description: "列出当前本机的自定义 APP、游戏/剧场草稿箱、本机测试游戏与剧场，用于确认安装结果或决定读取/修改哪个。",
-    schemaLines: ["  参数：无", "  调用：[执行动作:本机内容清单({})]"],
-    async run() {
+    parameters: {
+        type: "object",
+        properties: {
+            keyword: { type: "string", description: "可选：按关键词过滤（匹配名称、简介、标签、源码等），不填列出全部" },
+            noop: { type: "string", description: "无需参数，忽略" },
+        },
+    },
+    description:
+        "列出当前本机的自定义 APP、游戏/剧场草稿箱、本机测试游戏与剧场，用于确认安装结果或决定读取/修改哪个。传 keyword 可按关键词检索：只列出名称/简介/标签/源码等字段包含该词的条目，并标注命中字段。",
+    schemaLines: [
+        "  参数：",
+        "    · keyword (可选) — 按关键词过滤，只列出命中的条目；不填列出全部",
+        '  调用：[执行动作:本机内容清单({})] 或 [执行动作:本机内容清单({"keyword":"五子棋"})]',
+    ],
+    async run(args) {
+        const keyword = typeof args.keyword === "string" ? args.keyword.trim() : "";
         const draftMark = (linked: boolean, dirty?: boolean) =>
             linked ? `（已发布${dirty ? "，有未发布改动" : ""}）` : "（未发布）";
+        const hitMark = (hits: string[] | null) => (hits ? ` ← 命中：${hits.join("、")}` : "");
         const lines: string[] = [];
+        let total = 0;
+
         const apps = loadInstalledCustomApps();
-        lines.push(`自定义 APP（${apps.length} 个）：${apps.length ? apps.map((a) => `${a.name}${a.marketItemId ? draftMark(true, a.hasUnpublishedChanges) : ""}`).join("、") : "无"}`);
+        const appHits = apps
+            .map((a) => ({
+                item: `${a.name}${a.marketItemId ? draftMark(true, a.hasUnpublishedChanges) : ""}`,
+                hits: keywordHits([["名称", a.name], ["简介", a.description || ""], ["源码", a.entryHtml]], keyword),
+            }))
+            .filter((r) => !r.hits || r.hits.length > 0);
+        total += appHits.length;
+        lines.push(`自定义 APP（${keyword ? `命中 ${appHits.length}/${apps.length} 个` : `${apps.length} 个`}）：${appHits.length ? appHits.map((r) => `${r.item}${hitMark(r.hits)}`).join("、") : "无"}`);
+
         const gameDrafts = loadGameDrafts();
-        lines.push(`游戏草稿箱（${gameDrafts.length} 个）：${gameDrafts.length ? gameDrafts.map((d) => `${d.title}${draftMark(Boolean(d.publishedTemplateId), d.hasUnpublishedChanges)}`).join("、") : "无"}`);
+        const gameDraftHits = gameDrafts
+            .map((d) => ({
+                item: `${d.title}${draftMark(Boolean(d.publishedTemplateId), d.hasUnpublishedChanges)}`,
+                hits: keywordHits([["标题", d.title], ["subtitle", d.draft.subtitle || ""], ["synopsis", d.draft.synopsis || ""], ["标签", d.draft.tagsText || ""], ["gameHtml", d.draft.gameHtml || ""], ["pickerHtml", d.draft.pickerHtml || ""]], keyword),
+            }))
+            .filter((r) => !r.hits || r.hits.length > 0);
+        total += gameDraftHits.length;
+        lines.push(`游戏草稿箱（${keyword ? `命中 ${gameDraftHits.length}/${gameDrafts.length} 个` : `${gameDrafts.length} 个`}）：${gameDraftHits.length ? gameDraftHits.map((r) => `${r.item}${hitMark(r.hits)}`).join("、") : "无"}`);
+
         const games = loadGameState().installedGames.filter((g) => isLocalTestGameId(g.localId));
-        lines.push(`本机测试游戏（${games.length} 个）：${games.length ? games.map((g) => g.templateSnapshot.title).join("、") : "无"}`);
+        const gameHits = games
+            .map((g) => {
+                const t = g.templateSnapshot;
+                return {
+                    item: t.title,
+                    hits: keywordHits([["标题", t.title], ["subtitle", t.subtitle || ""], ["synopsis", t.synopsis || ""], ["标签", (t.tags || []).join("、")], ["gameHtml", t.gameHtml || ""], ["pickerHtml", t.pickerHtml || ""]], keyword),
+                };
+            })
+            .filter((r) => !r.hits || r.hits.length > 0);
+        total += gameHits.length;
+        lines.push(`本机测试游戏（${keyword ? `命中 ${gameHits.length}/${games.length} 个` : `${games.length} 个`}）：${gameHits.length ? gameHits.map((r) => `${r.item}${hitMark(r.hits)}`).join("、") : "无"}`);
+
         const bmDrafts = loadBmDrafts();
-        lines.push(`剧场草稿箱（${bmDrafts.length} 个）：${bmDrafts.length ? bmDrafts.map((d) => `${d.title}${draftMark(Boolean(d.sourceTemplateId), d.hasUnpublishedChanges)}`).join("、") : "无"}`);
+        const bmDraftHits = bmDrafts
+            .map((d) => ({
+                item: `${d.title}${draftMark(Boolean(d.sourceTemplateId), d.hasUnpublishedChanges)}`,
+                hits: keywordHits([["标题", d.title], ["subtitle", text(d.draft.subtitle, 300) || ""], ["synopsis", text(d.draft.synopsis, 1000) || ""], ["storyText", text(d.draft.storyText, 3000) || ""], ["标签", text(d.draft.tagsText, 200) || ""], ["aiInstruction", String(d.draft.aiInstruction ?? "")], ["openingHtml", String(d.draft.openingHtml ?? "")]], keyword),
+            }))
+            .filter((r) => !r.hits || r.hits.length > 0);
+        total += bmDraftHits.length;
+        lines.push(`剧场草稿箱（${keyword ? `命中 ${bmDraftHits.length}/${bmDrafts.length} 个` : `${bmDrafts.length} 个`}）：${bmDraftHits.length ? bmDraftHits.map((r) => `${r.item}${hitMark(r.hits)}`).join("、") : "无"}`);
+
         const theaters = loadBlackMarketState().ownedTheaters.filter((t) => isLocalTestTheaterId(t.localId));
-        lines.push(`本机测试剧场（${theaters.length} 个）：${theaters.length ? theaters.map((t) => t.templateSnapshot.title).join("、") : "无"}`);
+        const theaterHits = theaters
+            .map((t) => {
+                const tmpl = t.templateSnapshot;
+                return {
+                    item: tmpl.title,
+                    hits: keywordHits([["标题", tmpl.title], ["subtitle", tmpl.subtitle || ""], ["synopsis", tmpl.synopsis || ""], ["storyText", tmpl.storyText || ""], ["标签", (tmpl.tags || []).join("、")], ["aiInstruction", tmpl.aiInstruction || ""], ["openingHtml", tmpl.openingHtml || ""]], keyword),
+                };
+            })
+            .filter((r) => !r.hits || r.hits.length > 0);
+        total += theaterHits.length;
+        lines.push(`本机测试剧场（${keyword ? `命中 ${theaterHits.length}/${theaters.length} 个` : `${theaters.length} 个`}）：${theaterHits.length ? theaterHits.map((r) => `${r.item}${hitMark(r.hits)}`).join("、") : "无"}`);
+
+        if (keyword) {
+            lines.unshift(`【关键词「${keyword}」命中 ${total} 条】`);
+        }
         lines.push("用「读取」查看某条内容的完整源码；小改用「编辑」（find/replace），大改/新写用「写入」，写完「发布」。");
         return lines.join("\n");
     },

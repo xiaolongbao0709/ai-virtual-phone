@@ -1192,6 +1192,25 @@
   background: color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 46%, transparent);
 }
 
+/* 毛玻璃态：迷你格用与大图标同源的打光配方（斜向高光 + 底色透出 + 内描边）。
+   不用真 backdrop-filter——嵌在已有 backdrop-filter 的玻璃盒里采样不可靠，
+   而且每个文件夹 4 个迷你格的实时模糊太贵；身后本来就是 tile 模糊好的壁纸，
+   叠上高光就是"霜上加霜"的效果。 */
+.phone-shell[data-icon-effect="glass"] .folder-mini {
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.32),
+      color-mix(in srgb, var(--c-desktop-icon-bg, #c7b8ff) 8%, transparent) 45%,
+      rgba(255, 255, 255, 0.10)),
+    linear-gradient(0deg,
+      color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 38%, transparent),
+      color-mix(in srgb, var(--c-desktop-icon-box, #ffffff) 38%, transparent)),
+    rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 0.5px 1px rgba(255, 255, 255, 0.5),
+    inset 0 -0.5px 0.5px rgba(255, 255, 255, 0.10);
+}
+
 .phone-shell[data-icon-effect="flat"] .folder-mini {
   background: color-mix(in srgb, var(--c-desktop-icon, #2f343b) 12%, transparent);
 }

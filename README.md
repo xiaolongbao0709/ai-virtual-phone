@@ -60,6 +60,12 @@ NEXT_PUBLIC_SELF_HOSTED_MODE=true
 
 4. 部署完成后打开站点，按「首次使用」配置即可。
 
+> **Netlify 顶部出现 "This project is private… Go live or manage access" 横幅？**
+> 这是 Netlify 新项目的默认「未上线」状态，说的是 **Netlify 项目**的访问权限，
+> **与 GitHub 仓库公开/私有完全无关**（不需要也不建议把你的仓库改成公开）。
+> 处理：点横幅里的 "Go live or manage access"，或到 Netlify 后台 → 该项目 →
+> Project settings → Access & security，把项目设为公开（Go live）即可，免费套餐可用。
+
 ## 环境变量总表
 
 除 `NEXT_PUBLIC_SELF_HOSTED_MODE` 外全部可选，不填时对应功能自动隐藏或停用。

@@ -127,6 +127,7 @@ import { generateChatCompletion, flattenCompletionResult } from "@/lib/chat-engi
 import { parseAIResponse } from "@/lib/rich-message-parser";
 import { requestBackgroundChatReply, scheduleFollowUp } from "@/lib/follow-up-service";
 import { CHAT_MESSAGE_NOTICE_EVENT, CHAT_OPEN_SESSION_EVENT, type ChatMessageNoticeDetail } from "@/lib/chat-notification-events";
+import { startIncomingCallVibration } from "@/lib/call-vibration";
 import { setMascotContext } from "@/lib/mascot-context";
 import { DESKTOP_WIDGETS_CHANGED_EVENT } from "@/lib/mascot-events";
 import { useWeixinBridge } from "@/lib/use-weixin-bridge";
@@ -1083,6 +1084,11 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   const [incomingCall, setIncomingCall] = useState<{
     sessionId: string; type: "voice" | "video"; charName: string; charAvatar: string | null; isGroup?: boolean;
   } | null>(null);
+  // 桌面来电横幅显示期间循环振动（开关在聊天主页"语音/视频来电振动"）
+  useEffect(() => {
+    if (!incomingCall) return;
+    return startIncomingCallVibration();
+  }, [incomingCall]);
   const [chatMessageNotice, setChatMessageNotice] = useState<{
     sessionId: string;
     title: string;
