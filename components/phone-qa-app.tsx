@@ -4,12 +4,12 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExterna
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
-import { AppWindow, ArrowUp, BrushCleaning, Check, ChevronLeft, ChevronRight, Copy, Drama, FileCode2, Gamepad2, Github, Loader2, Menu, Pencil, Play, Plus, Square, Trash2, Wrench, X } from "lucide-react";
-import { getQaApiLogs, clearQaApiLogs, type DebugInfo } from "@/lib/api-log-store";
+import { AppWindow, ArrowUp, BrushCleaning, Check, ChevronLeft, ChevronRight, Copy, Drama, Gamepad2, Github, Loader2, Menu, Pencil, Play, Plus, Square, Trash2, Wrench, X } from "lucide-react";
 import { QaFileCard } from "@/components/qa-file-card";
 import { parseQaFileMarker } from "@/lib/qa-computer-tools";
 import { mdiHammerWrench } from "@mdi/js";
 import { CustomAppRunner } from "@/components/app-market/custom-app-runner";
+import { CustomAppForegroundBoundary } from "@/components/app-market/custom-app-failure";
 import { GameHubApp } from "@/components/game/game-hub-app";
 import { BlackMarketApp } from "@/components/shopping/black-market-app";
 import { getInstalledCustomApp } from "@/lib/custom-app-storage";
@@ -733,7 +733,6 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
   const [repoConnected, setRepoConnected] = useState(false);
   const [clearToolsOpen, setClearToolsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [apiLogOpen, setApiLogOpen] = useState(false);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [viewerImage, setViewerImage] = useState<string | null>(null);
   const [editingMsg, setEditingMsg] = useState<QaMsg | null>(null);
@@ -916,15 +915,6 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
           {repoConnected && <span className="qa-header-sub">已连接仓库</span>}
         </div>
         <div className="qa-header-right">
-          <button
-            type="button"
-            className="qa-icon-btn"
-            onClick={() => setApiLogOpen(true)}
-            aria-label="调用记录"
-            title="查看工坊的 AI 调用记录"
-          >
-            <FileCode2 size={17} strokeWidth={1.75} />
-          </button>
           <button
             type="button"
             className="qa-icon-btn"
@@ -1168,10 +1158,6 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
         <QaSettingsSheet onClose={() => setSettingsOpen(false)} onNotice={onNotice} />
       )}
 
-      {apiLogOpen && (
-        <QaApiLogSheet onClose={() => setApiLogOpen(false)} onNotice={onNotice} />
-      )}
-
       {repoSheetOpen && (
         <QaRepoSheet onClose={() => setRepoSheetOpen(false)} onSaved={refreshComposerMeta} />
       )}
@@ -1213,7 +1199,17 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
         <div className="qa-preview-runtime">
           {previewItem.type === "app" ? (
             previewApp ? (
-              <CustomAppRunner app={previewApp} onClose={() => setPreviewItem(null)} />
+              <CustomAppForegroundBoundary
+                key={previewApp.id}
+                appName={previewApp.name}
+                appId={previewApp.id}
+                appVersion={previewApp.version}
+                manifestId={previewApp.manifest?.id}
+                closeLabel="返回"
+                onClose={() => setPreviewItem(null)}
+              >
+                <CustomAppRunner app={previewApp} onClose={() => setPreviewItem(null)} />
+              </CustomAppForegroundBoundary>
             ) : (
               <div className="qa-preview-missing">
                 <p>这个应用已被卸载或找不到了。</p>
@@ -1229,108 +1225,6 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-/* ══════════════════════════════════════════
-   工坊调用记录面板：右上角「调用记录」按钮进入，
-   只展示工坊自己的 LLM 调用（与聊天页底层日志完全独立）。
-   ══════════════════════════════════════════ */
-function QaApiLogSheet({ onClose, onNotice }: { onClose: () => void; onNotice?: (msg: string) => void }) {
-  const [logs, setLogs] = useState<DebugInfo[]>(() => [...getQaApiLogs()].reverse());
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  const refresh = useCallback(() => setLogs([...getQaApiLogs()].reverse()), []);
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const handleClear = () => {
-    clearQaApiLogs();
-    setLogs([]);
-    onNotice?.("已清空工坊调用记录");
-  };
-
-  const formatTime = (ts: string) => {
-    const d = new Date(ts);
-    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
-  };
-
-  return (
-    <div className="qa-sheet-backdrop" onClick={onClose}>
-      <div className="qa-sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="qa-sheet-head">
-          <span className="qa-sheet-title">
-            <FileCode2 size={16} /> 调用记录
-          </span>
-          <div className="qa-sheet-head-actions">
-            {logs.length > 0 && (
-              <button type="button" className="qa-sheet-btn" onClick={handleClear}>
-                <Trash2 size={14} /> 清空
-              </button>
-            )}
-            <button type="button" className="qa-icon-btn" onClick={onClose} aria-label="关闭">
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-        <div className="qa-sheet-body hide-scrollbar qa-log-body">
-          {logs.length === 0 ? (
-            <p className="qa-sheet-note">
-              还没有工坊的 AI 调用记录。调用过模型后，这里会显示每次请求的 Prompt 与 AI 原始回复（含思维链），供排查用。
-            </p>
-          ) : (
-            <>
-              <p className="qa-sheet-note">
-                工坊每次调用大模型的记录，与聊天页「底层调用大模型日志」互相独立，互不混入。
-              </p>
-              <div className="qa-log-list">
-                {logs.map((log) => {
-                  const isOpen = expandedId === log.id;
-                  return (
-                    <div key={log.id} className="qa-log-item">
-                      <button
-                        type="button"
-                        className="qa-log-item-head"
-                        onClick={() => setExpandedId(isOpen ? null : log.id)}
-                      >
-                        <div className="qa-log-item-meta">
-                          <span className="qa-log-item-time">{formatTime(log.timestamp)}</span>
-                          <span className="qa-log-item-detail">
-                            {log.model ? `Model: ${log.model}` : ""}
-                            {log.model && log.messages.length ? " · " : ""}
-                            {log.messages.length} 条消息
-                            {log.usage ? ` · Tokens: ${log.usage.prompt_tokens ?? "—"} / ${log.usage.completion_tokens ?? "—"} / ${log.usage.total_tokens ?? "—"}` : ""}
-                          </span>
-                        </div>
-                        <ChevronRight size={15} className={isOpen ? "qa-log-chevron-open" : ""} />
-                      </button>
-                      {isOpen && (
-                        <div className="qa-log-item-body">
-                          <div className="qa-log-label">Prompt（{log.messages.length} 条消息）</div>
-                          {log.messages.map((m, i) => (
-                            <div key={i} className="qa-log-entry" data-role={m.role}>
-                              <div className="qa-log-entry-role">[{i}] {m.role}</div>
-                              <div className="qa-log-entry-content">{m.content}</div>
-                            </div>
-                          ))}
-                          {log.reasoning && (
-                            <>
-                              <div className="qa-log-label">思维链（Reasoning）</div>
-                              <pre className="qa-log-response">{log.reasoning}</pre>
-                            </>
-                          )}
-                          <div className="qa-log-label is-danger">AI 原始回复</div>
-                          <pre className="qa-log-response">{log.rawResponse}</pre>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

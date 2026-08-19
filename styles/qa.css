@@ -1449,9 +1449,8 @@
 /* ── 消息操作菜单（长按 / 右键弹出：复制、编辑）── */
 .qa-msg-wrap {
   position: relative;
-  /* 消息级懒渲染：视口外的消息跳过布局与绘制，显著降低长对话点击输入框/resize 的卡顿。
-     contain-intrinsic-size 给浏览器一个预估高度，避免滚动条剧烈跳动。
-     不支持该属性的浏览器会正常回退到全量渲染。 */
+  /* 消息级懒渲染：视口外的消息跳过布局与绘制，降低长对话在输入框聚焦和视口 resize 时的开销。
+     浏览器首次跳过内容时使用预估高度，渲染后记住实际高度；不支持时自动回退。 */
   content-visibility: auto;
   contain-intrinsic-size: auto 80px;
 }
@@ -1678,124 +1677,4 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-}
-
-/* ── 工坊调用记录面板 ── */
-.qa-sheet-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.qa-sheet-head-actions .qa-sheet-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  width: auto;
-  font-size: 12.5px;
-  border-radius: 9px;
-}
-.qa-log-body {
-  padding-top: 10px;
-}
-.qa-log-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.qa-log-item {
-  border: 1px solid var(--qa-border-subtle);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--qa-bg-overlay) 55%, transparent);
-  overflow: hidden;
-}
-.qa-log-item-head {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  color: var(--qa-text-primary);
-  text-align: left;
-}
-.qa-log-item-head:hover {
-  background: var(--qa-state-hover);
-}
-.qa-log-item-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.qa-log-item-time {
-  font-size: 13px;
-  font-weight: 600;
-}
-.qa-log-item-detail {
-  font-size: 11.5px;
-  color: var(--qa-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.qa-log-chevron-open {
-  transform: rotate(90deg);
-}
-.qa-log-item-body {
-  padding: 4px 12px 12px;
-  border-top: 1px solid var(--qa-border-subtle);
-}
-.qa-log-label {
-  margin: 12px 0 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--qa-accent, #5b7b64);
-}
-.qa-log-label.is-danger {
-  color: var(--c-danger, #d33);
-}
-.qa-log-entry {
-  margin-bottom: 8px;
-  padding: 8px 10px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--qa-text-primary) 5%, transparent);
-}
-.qa-log-entry[data-role="system"] {
-  border-left: 3px solid var(--qa-accent, #5b7b64);
-}
-.qa-log-entry[data-role="user"] {
-  border-left: 3px solid #4a7ba6;
-}
-.qa-log-entry[data-role="assistant"] {
-  border-left: 3px solid #a67a3d;
-}
-.qa-log-entry-role {
-  font-size: 11px;
-  font-weight: 700;
-  margin-bottom: 4px;
-  opacity: 0.75;
-}
-.qa-log-entry-content {
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: var(--qa-text-primary);
-}
-.qa-log-response {
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--qa-text-primary) 5%, transparent);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: var(--qa-text-primary);
-  overflow-x: hidden;
 }
