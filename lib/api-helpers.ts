@@ -285,10 +285,17 @@ function describeEmptyLLMResponse(
  * Extract text content from various API response formats.
  * Supports: OpenAI, Anthropic, Google Gemini, DashScope, simple proxies.
  */
-/** Strip AI-hallucinated timestamps: (2026-03-19 13:54) and legacy (system time: ...) */
-function stripHallucinatedTimestamps(text: string): string {
+/**
+ * Strip AI-hallucinated timestamps. Single source of truth — llm-provider-adapter
+ * re-exports this one, and the WeChat assistant runtime keeps a byte-identical copy
+ * (tools/weixin-local-assistant/assistant-core.mjs · cleanReplyText).
+ *
+ * 括号内以完整日期时间开头的一律剥掉：兼容带秒、时区（Europe/Madrid、UTC+2）、
+ * 星期等尾巴与全角括号——prompt 给历史消息标注的时间带时区时，AI 会照格式模仿。
+ */
+export function stripHallucinatedTimestamps(text: string): string {
     return text
-        .replace(/\(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\)\s*/g, "")
+        .replace(/[（(]\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?(?:\s+[^)）]*)?[)）]\s*/g, "")
         .replace(/\(system\s*time\s*[:：][^)]*\)\s*/gi, "");
 }
 

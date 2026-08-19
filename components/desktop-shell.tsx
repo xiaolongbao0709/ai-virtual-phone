@@ -39,6 +39,7 @@ import InterviewMagazineApp from "@/components/interview/interview-magazine-app"
 import { CoCreateApp } from "@/components/cocreate/cocreate-app";
 import { AppMarketApp } from "@/components/app-market/app-market-app";
 import { CustomAppRunner } from "@/components/app-market/custom-app-runner";
+import { CustomAppForegroundBoundary } from "@/components/app-market/custom-app-failure";
 import { hydrateKvDb, kvGet, kvSet, kvRemove, kvKeysWithPrefix } from "@/lib/kv-db";
 import { deleteDatabase } from "@/lib/data-management/idb";
 import { hydrateStoryStorage } from "@/lib/story-storage";
@@ -3802,12 +3803,21 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     const customApp = getCustomAppForIcon(activeApp);
     if (customApp) {
       return (
-        <CustomAppRunner
-          app={customApp}
-          launchContext={customAppLaunchContext?.appId === customApp.id ? customAppLaunchContext.context : null}
+        <CustomAppForegroundBoundary
+          key={customApp.id}
+          appName={customApp.name}
+          appId={customApp.id}
+          appVersion={customApp.version}
+          manifestId={customApp.manifest?.id}
           onClose={() => closeCustomAppRunner(customApp)}
-          onNotice={setNotice}
-        />
+        >
+          <CustomAppRunner
+            app={customApp}
+            launchContext={customAppLaunchContext?.appId === customApp.id ? customAppLaunchContext.context : null}
+            onClose={() => closeCustomAppRunner(customApp)}
+            onNotice={setNotice}
+          />
+        </CustomAppForegroundBoundary>
       );
     }
 

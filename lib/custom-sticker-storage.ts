@@ -31,6 +31,8 @@ export interface StickerItem {
 export interface StickerPack {
     id: string;
     name: string;
+    /** Optional note for the whole pack. Missing on legacy data. */
+    note?: string;
     stickers: StickerItem[];
     createdAt: string;
 }
@@ -72,10 +74,25 @@ export function loadStickerPacks(): StickerPack[] {
     return readPacks();
 }
 
-export function createStickerPack(name: string): StickerPack {
+/** 图集名称/备注的长度上限：两者都会随备份与云同步走，不设限的话一次粘贴就能把整份索引撑大。 */
+export const STICKER_PACK_NAME_MAX = 40;
+export const STICKER_PACK_NOTE_MAX = 500;
+
+function cleanPackName(value: string): string {
+    return value.trim().slice(0, STICKER_PACK_NAME_MAX);
+}
+
+function cleanPackNote(value: string): string {
+    return value.trim().slice(0, STICKER_PACK_NOTE_MAX);
+}
+
+export function createStickerPack(name: string, note = ""): StickerPack {
+    const cleanedNote = cleanPackNote(note);
     const pack: StickerPack = {
         id: `pack_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        name,
+        name: cleanPackName(name),
+        // 空备注不落字段，保持与 note?: string 的可选语义一致
+        ...(cleanedNote ? { note: cleanedNote } : {}),
         stickers: [],
         createdAt: new Date().toISOString(),
     };
@@ -102,10 +119,24 @@ export async function deleteStickerPack(packId: string): Promise<void> {
 }
 
 export function renameStickerPack(packId: string, newName: string): void {
+    updateStickerPackInfo(packId, { name: newName });
+}
+
+/** 一次写完名称与备注：分两次读改写会在中途失败时留下「名字改了、备注没改」的半更新状态。 */
+export function updateStickerPackInfo(packId: string, info: { name?: string; note?: string }): void {
     const packs = readPacks();
     const pack = packs.find(p => p.id === packId);
     if (!pack) return;
-    pack.name = newName;
+    if (typeof info.name === "string") {
+        const name = cleanPackName(info.name);
+        if (!name) return; // 空名字不接受，避免把图集改成无名
+        pack.name = name;
+    }
+    if (typeof info.note === "string") {
+        const note = cleanPackNote(info.note);
+        if (note) pack.note = note;
+        else delete pack.note;
+    }
     writePacks(packs);
 }
 

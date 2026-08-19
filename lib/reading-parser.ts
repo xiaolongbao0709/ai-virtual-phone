@@ -77,7 +77,13 @@ function scoreDecodedTxt(text: string): number {
         - controlCount * 20;
 }
 
-export function decodeTxtArrayBuffer(buffer: ArrayBuffer): TxtDecodeResult {
+/**
+ * 解码 TXT 字节流为文本。
+ * @param preferredEncoding 用户手动指定的编码（auto 或 undefined = 自动探测）。
+ *   指定时优先用该编码解码（BOM 仍优先，因为 BOM 是权威的）；用于用户遇到自动探测
+ *   误判导致的乱码时，手动指定 TXT 的真实编码重新导入。
+ */
+export function decodeTxtArrayBuffer(buffer: ArrayBuffer, preferredEncoding?: string): TxtDecodeResult {
     const bytes = new Uint8Array(buffer);
     const bomCandidates: Array<[string, boolean]> = [];
 
@@ -89,9 +95,17 @@ export function decodeTxtArrayBuffer(buffer: ArrayBuffer): TxtDecodeResult {
         bomCandidates.push(["utf-16be", true]);
     }
 
+    // BOM 优先：有 BOM 就以 BOM 声明的编码为准（BOM 比手选更权威）
     for (const [encoding] of bomCandidates) {
         const text = decodeWithEncoding(buffer, encoding);
         if (text !== null) return { text, encoding };
+    }
+
+    // 用户手动指定了编码：直接用指定编码解码，不再自动探测
+    if (preferredEncoding && preferredEncoding !== "auto") {
+        const text = decodeWithEncoding(buffer, preferredEncoding);
+        if (text !== null) return { text, encoding: preferredEncoding };
+        return { text: "", encoding: preferredEncoding };
     }
 
     let best: TxtDecodeResult | null = null;

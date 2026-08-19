@@ -216,7 +216,7 @@ export function AccountGate({ children }: AccountGateProps) {
             />
             {VERIFY_APPLICATIONS_OPEN ? (
               <a className="account-gate-verify-link" href="/verify" target="_blank" rel="noreferrer">
-                没有激活码？申请内测资格 →
+                没有激活码？申请访问资格 →
               </a>
             ) : (
               <span className="account-gate-verify-link" aria-disabled="true">

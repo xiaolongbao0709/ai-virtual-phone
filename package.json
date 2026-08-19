@@ -9,6 +9,7 @@
     "start": "node scripts/local-next-server.mjs --prod",
     "lint": "next lint",
     "check:sdk": "node scripts/check-custom-app-sdk-consistency.mjs",
+    "check:weixin": "node scripts/check-weixin-prompt-equivalence.mjs",
     "weixin:assistant": "node tools/weixin-local-assistant/assistant.mjs",
     "weixin:assistant:once": "node tools/weixin-local-assistant/assistant.mjs --once",
     "weixin:build-dist": "node scripts/build-weixin-assistant-dist.mjs"

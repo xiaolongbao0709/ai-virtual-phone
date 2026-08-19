@@ -19,6 +19,16 @@ const PARAGRAPH_MODE_OPTIONS: { value: ReadingParagraphMode; label: string; desc
     { value: "line", label: "每行一段", desc: "纯回车换行分段落（无空行无缩进）" },
 ];
 
+const TXT_ENCODING_OPTIONS: { value: NonNullable<ReadingInteractionConfig["txtEncoding"]>; label: string; desc: string }[] = [
+    { value: "auto", label: "自动", desc: "自动识别文件的编码（推荐）" },
+    { value: "utf-8", label: "UTF-8", desc: "现代标准编码，多数文件默认" },
+    { value: "gb18030", label: "GB18030", desc: "中文国标全集（含 GBK/GB2312）" },
+    { value: "gbk", label: "GBK", desc: "简体中文常用编码" },
+    { value: "big5", label: "Big5", desc: "繁体中文常用编码" },
+    { value: "utf-16le", label: "UTF-16LE", desc: "Windows 记事本可存此编码" },
+    { value: "utf-16be", label: "UTF-16BE", desc: "大端 UTF-16" },
+];
+
 const VIEW_MODE_OPTIONS: { value: ReadingViewMode; label: string; desc: string }[] = [
     { value: "page", label: "翻页", desc: "一屏一页，左右点击/滑动翻页" },
     { value: "scroll", label: "滚动", desc: "连续滚动阅读，上下滑动翻读" },
@@ -26,18 +36,6 @@ const VIEW_MODE_OPTIONS: { value: ReadingViewMode; label: string; desc: string }
 
 const RETRY_MIN = 0;
 const RETRY_MAX = 5;
-
-/** 批注预生成触发时机：读到上一批批注的比例 */
-const PREFETCH_THRESHOLD_OPTIONS: { value: number; label: string; desc: string }[] = [
-    { value: 1 / 2, label: "读到一半", desc: "预留生成时间更充足" },
-    { value: 2 / 3, label: "读到 2/3", desc: "默认推荐" },
-    { value: 3 / 4, label: "读到 3/4", desc: "接近读完才生成" },
-];
-
-/** 浮点档位比较容差 */
-function prefetchThresholdMatches(a: number, b: number): boolean {
-    return Math.abs(a - b) < 0.01;
-}
 
 type Props = {
     onClose: () => void;
@@ -90,6 +88,29 @@ export function ReadingInteractionDialog({ onClose }: Props) {
                                 type="button"
                                 className={`reading-option-card ${config.paragraphMode === opt.value ? "is-active" : ""}`}
                                 onClick={() => setConfig((prev) => ({ ...prev, paragraphMode: opt.value }))}
+                            >
+                                <span className="reading-option-card-label">{opt.label}</span>
+                                <span className="reading-option-card-desc">{opt.desc}</span>
+                            </button>
+                        ))}
+                    </div>
+                </section>
+
+                <section className="reading-settings-group">
+                    <div className="reading-settings-heading">
+                        <Settings size={15} />
+                        <span>导入 TXT 编码</span>
+                    </div>
+                    <p className="reading-settings-inline-note">
+                        <span>导入 TXT 小说时按哪种编码解析。自动识别一般够用；个别 TXT 自动识别出错导致乱码时，可手动指定其真实编码后重新导入。</span>
+                    </p>
+                    <div className="reading-option-grid">
+                        {TXT_ENCODING_OPTIONS.map((opt) => (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                className={`reading-option-card ${config.txtEncoding === opt.value ? "is-active" : ""}`}
+                                onClick={() => setConfig((prev) => ({ ...prev, txtEncoding: opt.value }))}
                             >
                                 <span className="reading-option-card-label">{opt.label}</span>
                                 <span className="reading-option-card-desc">{opt.desc}</span>
@@ -162,35 +183,44 @@ export function ReadingInteractionDialog({ onClose }: Props) {
                     </div>
                     <div className="reading-settings-toggle-row">
                         <span className="reading-settings-toggle-label">
-                            提前生成下一批批注
+                            TXT 预批注
                         </span>
                         <Toggle
                             checked={config.autoAnnotatePrefetch === true}
                             onChange={(next) => setConfig((prev) => ({ ...prev, autoAnnotatePrefetch: next }))}
                         />
                     </div>
-                    {config.autoAnnotatePrefetch && (
+                    <div className="reading-settings-toggle-row">
+                        <span className="reading-settings-toggle-label">
+                            PDF 预批注
+                        </span>
+                        <Toggle
+                            checked={config.autoAnnotatePrefetchPdf === true}
+                            onChange={(next) => setConfig((prev) => ({ ...prev, autoAnnotatePrefetchPdf: next }))}
+                        />
+                    </div>
+                    {(config.autoAnnotatePrefetch || config.autoAnnotatePrefetchPdf) && (
                         <>
-                            <p className="reading-settings-inline-note">
-                                <span>读到上一批批注的多少时开始生成下一批：</span>
-                            </p>
-                            <div className="reading-option-grid reading-option-grid--three">
-                                {PREFETCH_THRESHOLD_OPTIONS.map((opt) => (
-                                    <button
-                                        key={opt.value}
-                                        type="button"
-                                        className={`reading-option-card ${prefetchThresholdMatches(config.annotationPrefetchThreshold ?? 2 / 3, opt.value) ? "is-active" : ""}`}
-                                        onClick={() => setConfig((prev) => ({ ...prev, annotationPrefetchThreshold: opt.value }))}
-                                    >
-                                        <span className="reading-option-card-label">{opt.label}</span>
-                                        <span className="reading-option-card-desc">{opt.desc}</span>
-                                    </button>
-                                ))}
+                            <div className="reading-settings-inline-note">
+                                <span>读到当前批的多少时预生成下一批</span>
+                                <span>{Math.round((config.annotationPrefetchThreshold ?? 2 / 3) * 100)}%</span>
                             </div>
+                            <input
+                                type="range"
+                                className="w-full my-1"
+                                min={0.05}
+                                max={0.95}
+                                step={0.05}
+                                value={config.annotationPrefetchThreshold ?? 2 / 3}
+                                onChange={(e) => setConfig((prev) => ({ ...prev, annotationPrefetchThreshold: Number(e.target.value) }))}
+                            />
+                            <p className="reading-settings-inline-note">
+                                <span>百分比越低，越早开始预生成下一批——设得很低（如 5%）时，刚开始读当前批，下一批批注就已经在生成/已生成，阅读不等待。默认 2/3。</span>
+                            </p>
                         </>
                     )}
                     <p className="reading-settings-inline-note">
-                        <span>利用读上一批批注的时间生成下一批，避免你读到时批注还没生成完。不会重复批注。</span>
+                        <span>TXT 预批注按段落分批，PDF 预批注按页分批，批次大小与自动批注一致（可在批注对话框里调整）。利用读上一批批注的时间生成下一批，不会重复批注。</span>
                     </p>
                 </section>
 
@@ -226,6 +256,52 @@ export function ReadingInteractionDialog({ onClose }: Props) {
                         <RotateCcw size={15} strokeWidth={2} />
                         重置悬浮球位置
                     </button>
+                </section>
+
+                <section className="reading-settings-group">
+                    <div className="reading-settings-heading">
+                        <Settings size={15} />
+                        <span>PDF 渲染</span>
+                    </div>
+                    <div className="reading-settings-toggle-row">
+                        <span className="reading-settings-toggle-label">预加载后续页</span>
+                        <Toggle
+                            checked={config.pdfPreloadEnabled !== false}
+                            onChange={(next) => setConfig((prev) => ({ ...prev, pdfPreloadEnabled: next }))}
+                        />
+                    </div>
+                    <p className="reading-settings-inline-note">
+                        <span>开启后阅读 PDF 时会提前渲染当前页之后的页面，滚动更平滑；关闭则只渲染屏幕内的页。</span>
+                    </p>
+                    <div className="reading-settings-inline-note">
+                        <span>页面缩放率</span>
+                        <span>{Math.round((config.pdfZoom ?? 1) * 100)}%</span>
+                    </div>
+                    <input
+                        type="range"
+                        className="w-full my-1"
+                        min={0.5}
+                        max={2}
+                        step={0.05}
+                        value={config.pdfZoom ?? 1}
+                        onChange={(e) => setConfig((prev) => ({ ...prev, pdfZoom: Number(e.target.value) }))}
+                    />
+                    <div className="reading-settings-inline-note">
+                        <span>一次渲染页数（当前页前后各几页）</span>
+                        <span>{config.pdfPreloadRadius ?? 3} 页</span>
+                    </div>
+                    <input
+                        type="range"
+                        className="w-full my-1"
+                        min={1}
+                        max={8}
+                        step={1}
+                        value={config.pdfPreloadRadius ?? 3}
+                        onChange={(e) => setConfig((prev) => ({ ...prev, pdfPreloadRadius: Number(e.target.value) }))}
+                    />
+                    <p className="reading-settings-inline-note">
+                        <span>提示：一次渲染页数过少时，滑动到未渲染的页会反复渲染，造成闪烁卡顿；调大并开启预加载可缓解。缩放率调大后一页更接近一屏。</span>
+                    </p>
                 </section>
             </div>
         </ContentDialog>

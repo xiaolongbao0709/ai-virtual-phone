@@ -72,11 +72,26 @@ export function normalizePartCondition(value: unknown): PartCondition | undefine
 /**
  * 机括是唯一一类「下载下来会在别人设备上按轮执行、还能改写对话」的材料，
  * 所以除了通用的 payload 体积上限，再单独卡一道：代码写不了那么长，
- * 停靠位必须是认识的那四个。卡紧一点也让混淆塞大段东西变得更难。
+ * 界面摆放必须是一份认得出的数据。卡紧一点也让混淆塞大段东西变得更难。
  */
 const MAX_MECHANISM_SCRIPT = 40_000;
 const MAX_MECHANISM_PANEL = 200_000;
 const MECHANISM_DOCKS: readonly string[] = ["left", "right", "bottom", "float"];
+
+/**
+ * 界面摆放：只看形状，不夹边界。数值越界交给下载方的 normalizeMixPanelLayout
+ * 去夹——这一段刻意不 import 应用侧模块，好脱离运行时单测。
+ */
+function isPanelLayout(value: unknown): boolean {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    for (const key of ["x", "y", "w", "h"]) {
+        if (!Number.isFinite(Number(record[key]))) return false;
+    }
+    if (record.chrome !== undefined && record.chrome !== "bar" && record.chrome !== "none") return false;
+    if (record.z !== undefined && !Number.isFinite(Number(record.z))) return false;
+    return true;
+}
 
 export function validateMechanismPayload(payload: unknown): string | null {
     if (!payload || typeof payload !== "object") return "missing_payload";
@@ -89,8 +104,14 @@ export function validateMechanismPayload(payload: unknown): string | null {
     if (record.dock !== undefined && record.dock !== null && !MECHANISM_DOCKS.includes(String(record.dock))) {
         return "invalid_dock";
     }
-    // 有界面就必须有停靠位，否则下载方不知道该把它挂在哪
-    if (panel.trim() && !record.dock) return "配了界面就要选一个停靠位。";
+    // 摆放是纯数据（百分比坐标与几个开关），下载方拿到后还会自己夹一遍边界；
+    // 这里只挡住"根本不是一份摆放"的东西。
+    if (record.layout !== undefined && record.layout !== null && !isPanelLayout(record.layout)) {
+        return "invalid_layout";
+    }
+    // 不再要求"配了界面就得声明画在哪"。摆放已经收进界面代码里（mix.move / mix.size /
+    // mix.chrome …），新材料本来就没有 layout 与 dock 字段；下载方拿到后给一个中性起始值，
+    // 第一帧之后由界面代码自己挪走。这里再拦一道，等于把新写法全挡在门外。
     return null;
 }
 

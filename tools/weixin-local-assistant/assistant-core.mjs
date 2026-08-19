@@ -418,7 +418,12 @@ async function generateReply(env, runtime, cloudMessages, pendingMessages) {
     .sort((a, b) => messageTime(a).localeCompare(messageTime(b)));
 
   const imageAttachments = await loadVisionImageAttachments(env, runtime, [...cloudHistory, ...pendingMessages]);
-  const messages = normalizeLlmMessages(buildRuntimePromptMessages(runtime, cloudHistory, pendingMessages, imageAttachments));
+  // 小手机组装完会合并相邻同 role 的块（llm-prompt-assembler 收尾那一步），于是
+  // 「一轮」= user 一条 + assistant 一条。不合并的话微信每条消息都是独立的一条
+  // LLM 消息，模型看到的轮次粒度就从「轮」退化成「条」。
+  const messages = mergeAdjacentSameRoleMessages(
+    normalizeLlmMessages(buildRuntimePromptMessages(runtime, cloudHistory, pendingMessages, imageAttachments)),
+  );
 
   const request = buildChatCompletionRequest(apiConfig, preset, messages);
   // LLM 调用必须有超时：预留 ~30s 给后续的媒体生成与发送。
@@ -485,72 +490,190 @@ function clampVisionImagePromptLimit(value) {
   return Math.min(10, n);
 }
 
-function buildRuntimePromptMessages(runtime, cloudHistory, pendingMessages, imageAttachments = new Map()) {
+export function buildRuntimePromptMessages(runtime, cloudHistory, pendingMessages, imageAttachments = new Map()) {
   const template = runtime.promptContext?.promptTemplate;
   if (!template || !Array.isArray(template.beforeMessages) || !Array.isArray(template.afterMessages)) {
     throw new Error("runtime_missing_prompt_template: 运行包缺少轻量提示词模板，请先在小手机内重新同步运行包。");
   }
 
-  const historyMessages = [];
+  const collected = [];
   const seenExternalIds = new Set();
-  for (const message of cloudHistory) {
+  for (const message of [...cloudHistory, ...pendingMessages]) {
     if (!message?.externalId || seenExternalIds.has(message.externalId)) continue;
     seenExternalIds.add(message.externalId);
     const promptMessage = cloudStoredMessageToPromptMessage(runtime, message, imageAttachments);
-    if (promptMessage) historyMessages.push(promptMessage);
+    if (promptMessage) collected.push(promptMessage);
   }
 
-  for (const message of pendingMessages) {
-    if (!message?.externalId || seenExternalIds.has(message.externalId)) continue;
-    seenExternalIds.add(message.externalId);
-    const promptMessage = cloudStoredMessageToPromptMessage(runtime, message, imageAttachments);
-    if (promptMessage) historyMessages.push(promptMessage);
-  }
-
-  historyMessages.sort((a, b) => {
+  collected.sort((a, b) => {
     const at = a._createdAt || "";
     const bt = b._createdAt || "";
     if (at !== bt) return at.localeCompare(bt);
     return String(a._externalId || "").localeCompare(String(b._externalId || ""));
   });
 
+  const historyMessages = renderHistoryPromptMessages(collected);
+
+  // v2 运行包：深度注入（世界书 position=4 / 预设 injection_position≠0）不再钉死在
+  // 模板顶部，而是按「已烘焙历史 + 新微信消息」这条完整历史重新定位到「倒数第 depth
+  // 条」之前——与小手机每次生成都重算深度的行为一致。
+  // 必须把 bakedHistoryMessages 一起算进去：只拿新消息定位的话，新消息条数少于 depth
+  // 时注入块插不回旧历史内部，只能贴在它下面。
+  // 老运行包（v1，以及没有 bakedHistoryMessages 的过渡版本）自动退回旧拼接。
+  const usesDepthTemplate = Array.isArray(template.structuralMessages)
+    && Array.isArray(template.bakedHistoryMessages)
+    && Array.isArray(template.depthSegments);
+  if (!usesDepthTemplate) {
+    return [...template.beforeMessages, ...historyMessages, ...template.afterMessages];
+  }
+  const fullHistory = [...template.bakedHistoryMessages, ...historyMessages];
   return [
-    ...template.beforeMessages,
-    ...historyMessages.map(({ _createdAt, _externalId, ...message }) => message),
+    ...template.structuralMessages,
+    ...interleaveDepthSegments(template.depthSegments, fullHistory),
     ...template.afterMessages,
   ];
 }
 
+/**
+ * 把 depth 段插回历史：depth = d 表示「距离底部第 d 条」，即插在下标 total - d 之前。
+ * d 超过历史长度时贴到历史最上方（能给到的最接近位置）。
+ * 与小手机 lib/weixin-cloud-sync.ts 的同名函数是同一套规则，改一处要一起改。
+ */
+export function interleaveDepthSegments(segments, history) {
+  const total = history.length;
+  const buckets = new Map();
+  const ordered = (Array.isArray(segments) ? segments : [])
+    .filter(segment => Array.isArray(segment?.messages) && segment.messages.length > 0)
+    .sort((a, b) => (Number(b.depth) || 0) - (Number(a.depth) || 0));
+
+  for (const segment of ordered) {
+    const depth = Number(segment.depth) || 0;
+    const index = depth <= 0 ? total : (depth >= total ? 0 : total - depth);
+    const bucket = buckets.get(index) || [];
+    bucket.push(...segment.messages);
+    buckets.set(index, bucket);
+  }
+
+  const out = [];
+  for (let i = 0; i <= total; i += 1) {
+    const bucket = buckets.get(i);
+    if (bucket) out.push(...bucket);
+    if (i < total) out.push(history[i]);
+  }
+  return out;
+}
+
+/** 与小手机 llm-prompt-assembler 收尾的合并规则对齐：相邻同 role 的纯文本消息并成一条 */
+export function mergeAdjacentSameRoleMessages(messages) {
+  const out = [];
+  for (const message of messages) {
+    const prev = out[out.length - 1];
+    if (
+      prev
+      && prev.role === message.role
+      && prev.role !== "tool"
+      && typeof prev.content === "string"
+      && typeof message.content === "string"
+      && !prev.toolCalls?.length
+      && !message.toolCalls?.length
+    ) {
+      const merged = [prev.content, message.content].map(part => part.trim()).filter(Boolean).join("\n\n");
+      out[out.length - 1] = { ...prev, content: merged };
+      continue;
+    }
+    out.push(message);
+  }
+  return out;
+}
+
+/**
+ * 渲染历史消息：时间戳挂在正文前面，但相邻同 role 且时间戳相同的不再重复标注
+ * （对齐小手机 pushChronologicalShortTermBlocks 的 showTs 规则）——不然合并之后
+ * 一段里会连着出现好几行一模一样的时间。
+ */
+export function renderHistoryPromptMessages(collected) {
+  const out = [];
+  let prevTimestamp = "";
+  let prevRole = "";
+  for (const item of collected) {
+    const showTimestamp = Boolean(item._timestamp) && !(item._timestamp === prevTimestamp && item.role === prevRole);
+    prevTimestamp = item._timestamp;
+    prevRole = item.role;
+
+    const text = showTimestamp && item._text ? `${item._timestamp}\n${item._text}`
+      : showTimestamp ? item._timestamp
+      : item._text;
+    if (!text.trim() && !item._imageDataUrl) continue;
+
+    out.push({
+      role: item.role,
+      content: item._imageDataUrl
+        ? [
+          ...(text.trim() ? [{ type: "text", text }] : []),
+          { type: "image_url", image_url: { url: item._imageDataUrl, detail: "low" } },
+        ]
+        : text,
+    });
+  }
+  return out;
+}
+
 function cloudStoredMessageToPromptMessage(runtime, message, imageAttachments = new Map()) {
   const role = message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user";
-  const content = formatCloudPromptMessageContent(runtime, message);
+  const text = String(message.content || "");
   const imageDataUrl = message.externalId ? imageAttachments.get(message.externalId) : undefined;
-  if (!content.trim() && !imageDataUrl) return null;
+  if (!text.trim() && !imageDataUrl) return null;
   return {
     role,
-    content: imageDataUrl
-      ? [
-        ...(content.trim() ? [{ type: "text", text: content }] : []),
-        { type: "image_url", image_url: { url: imageDataUrl, detail: "low" } },
-      ]
-      : content,
+    _text: text,
+    _timestamp: runtime.promptContext?.timeAware === true
+      ? formatPromptTimestamp(messageTime(message), runtime.promptContext)
+      : "",
+    _imageDataUrl: imageDataUrl,
     _createdAt: messageTime(message) || new Date().toISOString(),
     _externalId: message.externalId || "",
   };
 }
 
-function formatCloudPromptMessageContent(runtime, message) {
-  const content = String(message.content || "");
-  if (runtime.promptContext?.timeAware !== true) return content;
-  const ts = formatPromptTimestamp(messageTime(message));
-  return ts ? `${ts}\n${content}` : content;
-}
-
-function formatPromptTimestamp(value) {
+// 与小手机 lib/prompt-time.ts · formatPromptTimestamp 对齐。
+// 云函数跑在 UTC，必须按运行包下发的 promptTimeZone（用户设备时区）格式化，
+// 否则新微信消息的时间戳会和运行包里烘焙的历史时间戳差几个时区。
+// 老运行包没有该字段时退回运行环境本地时区，行为与改动前一致。
+export function formatPromptTimestamp(value, promptContext) {
   const date = new Date(value || "");
   if (Number.isNaN(date.getTime())) return "";
+  const timeZone = typeof promptContext?.promptTimeZone === "string" ? promptContext.promptTimeZone.trim() : "";
+  const zoneSuffix = timeZone && promptContext?.promptTimestampIncludeZone === true ? ` ${timeZone}` : "";
+  const parts = zonedDateParts(date, timeZone);
+  if (!parts) return "";
+  return `(${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}${zoneSuffix})`;
+}
+
+function zonedDateParts(date, timeZone) {
   const pad = n => n < 10 ? `0${n}` : `${n}`;
-  return `(${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())})`;
+  if (timeZone) {
+    try {
+      const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+      });
+      const out = {};
+      for (const part of formatter.formatToParts(date)) {
+        if (["year", "month", "day", "hour", "minute"].includes(part.type)) out[part.type] = part.value;
+      }
+      if (out.year && out.month && out.day && out.hour && out.minute) return out;
+    } catch {
+      // 时区名无效（老数据/手输）→ 落回运行环境本地时区
+    }
+  }
+  return {
+    year: `${date.getFullYear()}`,
+    month: pad(date.getMonth() + 1),
+    day: pad(date.getDate()),
+    hour: pad(date.getHours()),
+    minute: pad(date.getMinutes()),
+  };
 }
 
 function buildChatCompletionRequest(apiConfig, preset, messages) {
@@ -612,7 +735,7 @@ function buildChatCompletionsUrl(baseUrl) {
   return baseUrl.endsWith("/chat/completions") ? baseUrl : `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
 }
 
-function normalizeLlmMessages(messages) {
+export function normalizeLlmMessages(messages) {
   return messages
     .map(message => {
       const role = message?.role === "assistant" ? "assistant" : message?.role === "system" ? "system" : "user";
@@ -657,10 +780,14 @@ function extractOpenAiCompatibleText(data) {
   return "";
 }
 
-function cleanReplyText(text) {
+// 时间戳剥离必须与小手机同款（lib/api-helpers.ts · stripHallucinatedTimestamps）：
+// 括号内以完整日期时间开头的一律剥掉，兼容带秒、带时区/星期尾巴与全角括号。
+// 旧版只认半角、不带尾巴的 (YYYY-MM-DD HH:MM)，而运行包烘焙的历史时间戳在
+// 角色时区与系统时区不同时带时区名，模型照抄后一条都拦不住。
+export function cleanReplyText(text) {
   return String(text || "")
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/\(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\)\s*/g, "")
+    .replace(/[（(]\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?(?:\s+[^)）]*)?[)）]\s*/g, "")
     .replace(/\(system\s*time\s*[:：][^)]*\)\s*/gi, "")
     .trim();
 }

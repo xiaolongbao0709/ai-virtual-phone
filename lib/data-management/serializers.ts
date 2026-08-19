@@ -1,3 +1,5 @@
+import { sha256BlobHex } from "../sha256-stream";
+
 const BLOB_MARKER = "__aiPhoneBlob";          // legacy: media inlined as base64 dataUrl (read-only compat)
 const MEDIA_REF_MARKER = "__aiPhoneMediaRef"; // new: media stored as a separate binary object, referenced by content hash
 
@@ -16,8 +18,9 @@ type SerializedMediaRef = {
 
 /** Collects media out-of-band during serialization, returns a content-hash ref (dedupes). */
 export type MediaCollector = { add(blob: Blob): Promise<string> };
-/** Resolves a media ref back to its raw bytes during deserialization (null if missing). */
-export type MediaResolver = (ref: string) => Promise<Uint8Array | null>;
+/** Resolves a media ref during deserialization. Blob keeps large browser-owned
+ * media out of the JS heap; Uint8Array remains accepted for older callers. */
+export type MediaResolver = (ref: string) => Promise<Blob | Uint8Array | null>;
 
 // Only extract sizeable base64 data-URLs; tiny strings stay inline (not worth a separate object).
 const MEDIA_DATAURL_RE = /^data:([^;,]*);base64,/i;
@@ -42,21 +45,23 @@ function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
 }
 
 function dataUrlToBlob(dataUrl: string, mimeType: string): Blob {
-  return bytesToBlob(base64ToBytes(extractBase64(dataUrl)), mimeType);
+  const base64 = extractBase64(dataUrl);
+  const parts: BlobPart[] = [];
+  // atob() returns a second full-size binary string. Decode bounded chunks
+  // instead so a large legacy inline image cannot triple peak JS heap usage.
+  const chunkChars = 256 * 1024; // divisible by 4
+  for (let offset = 0; offset < base64.length; offset += chunkChars) {
+    const binary = atob(base64.slice(offset, offset + chunkChars));
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    parts.push(bytes as unknown as BlobPart);
+  }
+  return new Blob(parts, { type: mimeType || "application/octet-stream" });
 }
 
 function extractBase64(dataUrl: string): string {
   const comma = dataUrl.indexOf(",");
   return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-}
-
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
 }
 
 // Chunked to avoid blowing the call-stack / arg limit on large media.
@@ -69,27 +74,31 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-async function sha256Hex(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer();
-  const hash = await crypto.subtle.digest("SHA-256", buffer);
-  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 /** Content-addressed media collector (sha256 → dedupes identical media across the backup). */
 export function createMediaCollector(): MediaCollector & { media: Map<string, Blob> } {
   const media = new Map<string, Blob>();
   return {
     media,
     async add(blob: Blob): Promise<string> {
-      const ref = await sha256Hex(blob);
+      const ref = await sha256BlobHex(blob);
       if (!media.has(ref)) media.set(ref, blob);
       return ref;
     },
   };
 }
 
-export async function serializeValue(value: unknown, collector?: MediaCollector): Promise<unknown> {
+export async function serializeValue(
+  value: unknown,
+  collector?: MediaCollector,
+  options: { excludeMedia?: boolean } = {},
+): Promise<unknown> {
   if (value instanceof Blob) {
+    // Never turn a blob into base64 merely to discard it later. On mobile that
+    // temporary string is ~33% larger than the file and was enough to kill the
+    // page before the light-backup stripping pass could run.
+    if (options.excludeMedia) {
+      return { [BLOB_MARKER]: true, mimeType: value.type, dataUrl: "" } satisfies SerializedBlob;
+    }
     if (collector) {
       const ref = await collector.add(value);
       return { [MEDIA_REF_MARKER]: true, mimeType: value.type, ref, encoding: "blob" } satisfies SerializedMediaRef;
@@ -99,13 +108,16 @@ export async function serializeValue(value: unknown, collector?: MediaCollector)
   }
 
   if (typeof value === "string") {
+    if (options.excludeMedia && value.length >= MEDIA_MIN_LENGTH && MEDIA_DATAURL_RE.test(value)) {
+      return "";
+    }
     // Big base64 data-URLs (images/audio stored as strings, e.g. theme assets) → extract to binary.
     if (collector && value.length >= MEDIA_MIN_LENGTH) {
       const match = MEDIA_DATAURL_RE.exec(value);
       if (match) {
         // Preserve the exact mime (even empty) so the restored data-URL is byte-identical.
         const mimeType = match[1] ?? "";
-        const blob = bytesToBlob(base64ToBytes(extractBase64(value)), mimeType || "application/octet-stream");
+        const blob = dataUrlToBlob(value, mimeType || "application/octet-stream");
         const ref = await collector.add(blob);
         return { [MEDIA_REF_MARKER]: true, mimeType, ref, encoding: "dataurl" } satisfies SerializedMediaRef;
       }
@@ -114,14 +126,19 @@ export async function serializeValue(value: unknown, collector?: MediaCollector)
   }
 
   if (Array.isArray(value)) {
-    return Promise.all(value.map((item) => serializeValue(item, collector)));
+    const out: unknown[] = [];
+    for (const item of value) out.push(await serializeValue(item, collector, options));
+    return out;
   }
 
   if (isPlainObject(value)) {
-    const entries = await Promise.all(
-      Object.entries(value).map(async ([key, child]) => [key, await serializeValue(child, collector)] as const)
-    );
-    return Object.fromEntries(entries);
+    const out: Record<string, unknown> = {};
+    // Sequential traversal deliberately bounds simultaneous media hashing and
+    // FileReader work for records containing many images/files.
+    for (const [key, child] of Object.entries(value)) {
+      out[key] = await serializeValue(child, collector, options);
+    }
+    return out;
   }
 
   return value;
@@ -133,14 +150,26 @@ export async function deserializeValue(value: unknown, resolver?: MediaResolver)
     const ref = typeof value.ref === "string" ? value.ref : "";
     const mimeType = typeof value.mimeType === "string" ? value.mimeType : "application/octet-stream";
     const encoding = value.encoding === "dataurl" ? "dataurl" : "blob";
-    const bytes = resolver ? await resolver(ref) : null;
-    if (!bytes) {
+    const resolved = resolver ? await resolver(ref) : null;
+    if (!resolved) {
       // Media object missing → return an empty placeholder so the rest of the record still restores.
       return encoding === "dataurl" ? "" : new Blob([], { type: mimeType });
     }
-    return encoding === "dataurl"
-      ? `data:${mimeType};base64,${bytesToBase64(bytes)}`
-      : bytesToBlob(bytes, mimeType);
+    if (encoding === "blob") {
+      return resolved instanceof Blob
+        ? resolved.slice(0, resolved.size, mimeType || resolved.type || "application/octet-stream")
+        : bytesToBlob(resolved, mimeType);
+    }
+    if (resolved instanceof Blob) {
+      // FileReader lets the browser encode its own Blob without first copying
+      // the whole media file into a JS-owned Uint8Array.
+      if (typeof FileReader !== "undefined") {
+        const encoded = await blobToDataUrl(resolved);
+        return `data:${mimeType};base64,${extractBase64(encoded)}`;
+      }
+      return `data:${mimeType};base64,${bytesToBase64(new Uint8Array(await resolved.arrayBuffer()))}`;
+    }
+    return `data:${mimeType};base64,${bytesToBase64(resolved)}`;
   }
 
   // Legacy inline-base64 marker (old backups) → rebuild Blob directly.
@@ -151,17 +180,48 @@ export async function deserializeValue(value: unknown, resolver?: MediaResolver)
   }
 
   if (Array.isArray(value)) {
-    return Promise.all(value.map((item) => deserializeValue(item, resolver)));
+    const out: unknown[] = [];
+    for (const item of value) out.push(await deserializeValue(item, resolver));
+    return out;
   }
 
   if (isPlainObject(value)) {
-    const entries = await Promise.all(
-      Object.entries(value).map(async ([key, child]) => [key, await deserializeValue(child, resolver)] as const)
-    );
-    return Object.fromEntries(entries);
+    const out: Record<string, unknown> = {};
+    // Avoid downloading every media ref in a large record concurrently.
+    for (const [key, child] of Object.entries(value)) {
+      out[key] = await deserializeValue(child, resolver);
+    }
+    return out;
   }
 
   return value;
+}
+
+/** Extract media nested inside a KV/localStorage JSON string without changing
+ * the storage layer's string contract. Direct data URLs are wrapped as a marker;
+ * JSON values are parsed, recursively serialized, then encoded back to JSON. */
+export async function serializeStorageString(value: string, collector?: MediaCollector): Promise<string> {
+  if (!collector || value.length < MEDIA_MIN_LENGTH) return value;
+  const isDirectDataUrl = MEDIA_DATAURL_RE.test(value);
+  if (!isDirectDataUrl && !/"data:[^"\\]*;base64,/i.test(value)) return value;
+  try {
+    const parsed = isDirectDataUrl ? value : JSON.parse(value);
+    return JSON.stringify(await serializeValue(parsed, collector));
+  } catch {
+    return value;
+  }
+}
+
+/** Reverse serializeStorageString() during import. Values without a media marker
+ * are returned byte-for-byte so ordinary settings JSON is never reformatted. */
+export async function deserializeStorageString(value: string, resolver?: MediaResolver): Promise<string> {
+  if (!resolver || !/"__aiPhoneMediaRef"\s*:/.test(value)) return value;
+  try {
+    const restored = await deserializeValue(JSON.parse(value), resolver);
+    return typeof restored === "string" ? restored : JSON.stringify(restored);
+  } catch {
+    return value;
+  }
 }
 
 // 纯算术估算 UTF-8 字节数：逐字符累加，零内存分配。

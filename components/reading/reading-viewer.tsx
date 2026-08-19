@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from "react";
-import { Bot, ChevronDown, ChevronRight, Languages, Menu, Minus, PenLine, SendHorizontal, X } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, Languages, Menu, Minus, PenLine, Rocket, SendHorizontal, X, ZoomIn } from "lucide-react";
 import {
     loadChapters,
     loadProgress,
@@ -59,6 +59,7 @@ const DISCUSS_TARGET_CHARS = 1000;
 const DISCUSS_MIN_CHARS = 700;
 const DISCUSS_MAX_CHARS = 1600;
 const DISCUSS_MAX_PARAGRAPHS = 16;
+const MAX_MANUAL_PDF_PREFETCH_PAGES = 30;
 
 /** 聊天悬浮球/悬浮条/悬浮窗的位置记忆键 */
 const CHAT_FLOAT_POS_KEY = "reading-chat-float-pos-v1";
@@ -279,8 +280,17 @@ export function ReadingViewer({ book, onBack }: Props) {
     const [annotationBatchInput, setAnnotationBatchInput] = useState(String(isPdf ? 5 : 50));
     const [annotationDialogMode, setAnnotationDialogMode] = useState<AnnotationDialogMode | null>(null);
     const [showReadingSettings, setShowReadingSettings] = useState(false);
+    const [pdfRenderDraft, setPdfRenderDraft] = useState(() => ({
+        pdfZoom: readingConfig.pdfZoom ?? 1,
+        pdfPreloadRadius: readingConfig.pdfPreloadRadius ?? 3,
+        pdfPreloadEnabled: readingConfig.pdfPreloadEnabled !== false,
+    }));
     const [showNavigationDialog, setShowNavigationDialog] = useState(false);
     const [pdfJumpPage, setPdfJumpPage] = useState<number | undefined>(undefined);
+    /** PDF 手动预批注对话框：自定义起始页/结束页，确认后立即预解析并预生成该范围批注 */
+    const [pdfPrefetchDialogOpen, setPdfPrefetchDialogOpen] = useState(false);
+    const [pdfPrefetchStartInput, setPdfPrefetchStartInput] = useState("");
+    const [pdfPrefetchEndInput, setPdfPrefetchEndInput] = useState("");
     const [chaptersLoaded, setChaptersLoaded] = useState(false);
     const touchStartRef = useRef({ x: 0, y: 0 });
     const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
@@ -544,7 +554,7 @@ export function ReadingViewer({ book, onBack }: Props) {
                 if (rawFile && rawFile.size > 0) {
                     try {
                         const parsed = book.format === "txt"
-                            ? parseTxtContent(decodeTxtArrayBuffer(await rawFile.arrayBuffer()).text, book.title)
+                            ? parseTxtContent(decodeTxtArrayBuffer(await rawFile.arrayBuffer(), loadReadingInteractionConfig().txtEncoding).text, book.title)
                             : await parseEpubFile(await rawFile.arrayBuffer(), book.title);
                         const rebuiltChapters: BookChapter[] = parsed.chapters.map((chapter, index) => ({
                             id: `${book.id}_ch${index}`,
@@ -576,13 +586,18 @@ export function ReadingViewer({ book, onBack }: Props) {
                     : 0;
                 setChapterIndex(safeChapterIndex);
                 setCompanionId(progress.companionCharacterId || null);
-                if (!isPdf) {
-                    if (progress.readingMode === "scroll") {
-                        // 滚动模式：scrollPosition 存的是章节内滚动比例(0-1)
-                        initialScrollFractionRef.current = Math.max(0, Math.min(1, progress.scrollPosition || 0));
-                    } else {
-                        setTxtPage(Math.max(0, progress.scrollPosition || 0));
-                    }
+                if (isPdf) {
+                    // PDF 恢复：scrollPosition 存的是「当前页 - 1」。
+                    // 同时设置 pdfCurrentPage（避免跳转前保存逻辑把它覆盖回第 1 页）
+                    // 与 pdfJumpPage（让 PdfPageRenderer 渲染完成后滚到该页）。
+                    const restoredPage = Math.max(1, Math.round((progress.scrollPosition ?? 0) + 1));
+                    setPdfCurrentPage(restoredPage);
+                    setPdfJumpPage(restoredPage);
+                } else if (progress.readingMode === "scroll") {
+                    // 滚动模式：scrollPosition 存的是章节内滚动比例(0-1)
+                    initialScrollFractionRef.current = Math.max(0, Math.min(1, progress.scrollPosition || 0));
+                } else {
+                    setTxtPage(Math.max(0, progress.scrollPosition || 0));
                 }
             }
             // Default companion: first contact
@@ -915,6 +930,54 @@ export function ReadingViewer({ book, onBack }: Props) {
         await executeBatchAnnotation(request, { force: true });
     };
 
+    /** 打开手动预批注对话框：默认预生成「当前页起一个批次」的范围 */
+    const openPdfPrefetchDialog = () => {
+        const start = Math.max(1, pdfCurrentPage || 1);
+        const batch = Math.max(1, annotationBatchSize || 5);
+        const end = Math.min(pdfTotalPages || (start + batch - 1), start + batch - 1);
+        setAnnotationError(null);
+        setPdfPrefetchStartInput(String(start));
+        setPdfPrefetchEndInput(String(end));
+        setPdfPrefetchDialogOpen(true);
+    };
+
+    /** 手动预批注：按用户自定义的页码范围，预解析文本层并立即生成批注 */
+    const handlePdfManualPrefetch = async () => {
+        if (!companionId) {
+            setAnnotationError("请先选择共读角色");
+            return;
+        }
+        const total = Math.max(1, pdfTotalPages || 1);
+        const start = Math.max(1, Math.min(total, Math.round(Number(pdfPrefetchStartInput) || 1)));
+        const end = Math.max(start, Math.min(total, Math.round(Number(pdfPrefetchEndInput) || start)));
+        if (end - start + 1 > MAX_MANUAL_PDF_PREFETCH_PAGES) {
+            setAnnotationError(`一次最多预批注 ${MAX_MANUAL_PDF_PREFETCH_PAGES} 页，请缩小页码范围`);
+            return;
+        }
+        setAnnotationError(null);
+        setPdfPrefetchDialogOpen(false);
+        try {
+            // 预解析指定范围的文本层（渲染已解耦，不会重建页面）
+            const merged = await ensurePdfPageRangeParsed(start, end);
+            const refs = buildParagraphRefsFromChapters(merged);
+            const items = refs.filter((item) => (item.pageNum || 0) >= start && (item.pageNum || 0) <= end && item.text.trim());
+            if (items.length === 0) {
+                setAnnotationError("所选范围没有可批注的文本");
+                return;
+            }
+            const request: AnnotationBatchRequest = {
+                key: `pdf:${start}:${end}:manual`,
+                title: `第${start}-${end}页`,
+                size: end - start + 1,
+                items,
+            };
+            await executeBatchAnnotation(request, { force: true });
+        } catch (err) {
+            console.error("[Reading] PDF manual prefetch error:", err);
+            setAnnotationError(`预批注失败: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    };
+
     const openNavigationDialog = () => {
         setShowNavigationDialog(true);
     };
@@ -1040,6 +1103,10 @@ export function ReadingViewer({ book, onBack }: Props) {
         setActiveAnnotationId(null);
     }, []);
 
+    const handlePdfJumpComplete = useCallback(() => {
+        setPdfJumpPage(undefined);
+    }, []);
+
     const handleNavChapterClick = (index: number) => {
         if (isPdf) {
             const chapter = chapters[index];
@@ -1115,15 +1182,59 @@ export function ReadingViewer({ book, onBack }: Props) {
 
     // 批注预生成：当前批注批读到用户设置的阈值时，提前生成下一批，
     // 把生成时间差放在用户读上一批批注的时间里，避免用户读到下一批时批注还没生成完。不会重复批注（批次按 key 去重）。
+    // TXT 按「段落」分批次（autoAnnotatePrefetch 控制）；PDF 按「页数」分批次（autoAnnotatePrefetchPdf 控制），
+    // 两者各自独立开关，批次大小统一跟随自动批注的 annotationBatchSize。
     const prefetchedBatchStartRef = useRef(-1);
     useEffect(() => {
         if (!autoAnnotate) { prefetchedBatchStartRef.current = -1; return; }
-        if (!readingConfig.autoAnnotatePrefetch || isPdf || !companionId || generating) return;
-        if (paragraphRefs.length === 0) return;
-        const size = Math.max(1, annotationBatchSize || 50);
+        if (!companionId || generating) return;
+        const size = Math.max(1, annotationBatchSize || (isPdf ? 5 : 50));
         const threshold = Math.max(0, Math.min(1, readingConfig.annotationPrefetchThreshold ?? 2 / 3));
 
-        // 当前阅读位置 → 全书记绝对段落索引
+        if (isPdf) {
+            // PDF 预批注开关：关闭时不预生成
+            if (!readingConfig.autoAnnotatePrefetchPdf) { prefetchedBatchStartRef.current = -1; return; }
+            // PDF：按页分批次。当前页所在批次读到阈值时，预解析并预生成下一批批注。
+            if (pdfTotalPages <= 0) return;
+            const batchStartPage = Math.floor((pdfCurrentPage - 1) / size) * size + 1;
+            const offsetInBatch = pdfCurrentPage - batchStartPage; // 0-based
+            if ((offsetInBatch + 1) / size < threshold) return; // 本批还没读到阈值
+            if (prefetchedBatchStartRef.current === batchStartPage) return;
+            prefetchedBatchStartRef.current = batchStartPage;
+
+            const nextStartPage = batchStartPage + size;
+            if (nextStartPage > pdfTotalPages) return;
+            const nextEndPage = Math.min(nextStartPage + size - 1, pdfTotalPages);
+            void (async () => {
+                try {
+                    // 预解析下一批文本层（解析后 setChapters，但渲染已与文本层解耦，不会重建页面）
+                    const merged = await ensurePdfPageRangeParsed(nextStartPage, nextEndPage);
+                    const refs = buildParagraphRefsFromChapters(merged);
+                    const items = refs.filter((item) => (item.pageNum || 0) >= nextStartPage && (item.pageNum || 0) <= nextEndPage && item.text.trim());
+                    if (items.length === 0) { prefetchedBatchStartRef.current = -1; return; }
+                    const request: AnnotationBatchRequest = {
+                        key: `pdf:${nextStartPage}:${size}`,
+                        title: `第${nextStartPage}-${nextEndPage}页`,
+                        size,
+                        items,
+                    };
+                    // 若被跳过，重置标记让下一轮滚动再试，避免预生成丢失
+                    void executeBatchAnnotation(request).then((started) => {
+                        if (!started) prefetchedBatchStartRef.current = -1;
+                    });
+                } catch (err) {
+                    console.error("[Reading] PDF prefetch error:", err);
+                    prefetchedBatchStartRef.current = -1;
+                }
+            })();
+            return;
+        }
+
+        // TXT 预批注开关：关闭时不预生成
+        if (!readingConfig.autoAnnotatePrefetch) { prefetchedBatchStartRef.current = -1; return; }
+
+        // TXT：当前阅读位置 → 全书记绝对段落索引
+        if (paragraphRefs.length === 0) return;
         let currentAbs = -1;
         if (isScrollMode) {
             const chapterRefs = paragraphRefs.filter((item) => item.chapterIndex === chapterIndex && item.text.trim());
@@ -1142,7 +1253,7 @@ export function ReadingViewer({ book, onBack }: Props) {
         if (currentAbs < 0) return;
 
         const batchStart = Math.floor(currentAbs / size) * size;
-        if (currentAbs - batchStart < Math.ceil(size * threshold)) return; // 本批还没读到用户设置的阈值
+        if ((currentAbs - batchStart + 1) / size < threshold) return; // 本批还没读到用户设置的阈值
         if (prefetchedBatchStartRef.current === batchStart) return;       // 本批已触发过预生成
         prefetchedBatchStartRef.current = batchStart;
 
@@ -1161,16 +1272,19 @@ export function ReadingViewer({ book, onBack }: Props) {
         void executeBatchAnnotation(request).then((started) => {
             if (!started) prefetchedBatchStartRef.current = -1;
         });
-    }, [annotationBatchSize, autoAnnotate, chapterIndex, companionId, executeBatchAnnotation, generating, isPdf, isScrollMode, paragraphRefs, readingConfig.autoAnnotatePrefetch, readingConfig.annotationPrefetchThreshold, scrollFraction, txtPage, txtPages]);
+    }, [annotationBatchSize, autoAnnotate, chapterIndex, companionId, ensurePdfPageRangeParsed, executeBatchAnnotation, generating, isPdf, isScrollMode, paragraphRefs, pdfCurrentPage, pdfTotalPages, readingConfig.autoAnnotatePrefetch, readingConfig.autoAnnotatePrefetchPdf, readingConfig.annotationPrefetchThreshold, scrollFraction, txtPage, txtPages]);
 
     useEffect(() => {
-        if (!isPdf || pdfCurrentPage <= 0 || chapters.length === 0) return;
+        // 自动批注开启时，随滚动把当前 5 页的文本层预先解析好，让批注生成请求不用临时等待解析。
+        // 手动写批注 / 共读讨论内部会自行 ensurePdfPageRangeParsed，关闭自动批注时纯阅读不预解析。
+        // 渲染已与文本层解耦：此处 setChapters 只会触发批注钉局部更新，不会重建页面，无闪烁。
+        if (!isPdf || !autoAnnotate || pdfCurrentPage <= 0 || chapters.length === 0) return;
         const chunkStart = Math.floor((pdfCurrentPage - 1) / PDF_PAGES_PER_CHAPTER) * PDF_PAGES_PER_CHAPTER + 1;
         const chunkEnd = Math.min(chunkStart + PDF_PAGES_PER_CHAPTER - 1, pdfTotalPages || chunkStart + PDF_PAGES_PER_CHAPTER - 1);
         void ensurePdfPageRangeParsed(chunkStart, chunkEnd).catch((err) => {
             console.error("[Reading] PDF lazy parse error:", err);
         });
-    }, [chapters.length, ensurePdfPageRangeParsed, isPdf, pdfCurrentPage, pdfTotalPages]);
+    }, [autoAnnotate, chapters.length, ensurePdfPageRangeParsed, isPdf, pdfCurrentPage, pdfTotalPages]);
 
     // Chapter navigation
     const goToChapter = (idx: number, startFromEnd = false) => {
@@ -1763,7 +1877,7 @@ export function ReadingViewer({ book, onBack }: Props) {
     }, [chapterIndex, isPdf, isScrollMode, txtPagesChapterIndex, txtTotalPages]);
 
     useEffect(() => {
-        if (chapters.length === 0) return;
+        if (!chaptersLoaded || chapters.length === 0) return;
 
         let scrollPosition: number;
         let progressFraction: number;
@@ -1806,7 +1920,7 @@ export function ReadingViewer({ book, onBack }: Props) {
             lastReadAt: new Date().toISOString(),
         };
         saveProgress(progress);
-    }, [book.id, chapterIndex, chapters.length, companionId, isPdf, isScrollMode, pdfCurrentPage, pdfTotalPages, scrollFraction, txtPage, txtTotalPages]);
+    }, [book.id, chapterIndex, chapters.length, chaptersLoaded, companionId, isPdf, isScrollMode, pdfCurrentPage, pdfTotalPages, scrollFraction, txtPage, txtTotalPages]);
 
     useEffect(() => {
         setTxtPage((prev) => Math.min(prev, Math.max(0, txtTotalPages - 1)));
@@ -1947,6 +2061,27 @@ export function ReadingViewer({ book, onBack }: Props) {
         ? chatMessages.find((msg) => msg.id === readingMessageMenu.messageId) || null
         : null;
 
+    /** PDF 渲染设置先在弹窗内暂存，确认时只重建一次，避免拖动滑块期间连续重渲染整本 PDF。 */
+    const openReadingSettings = () => {
+        setPdfRenderDraft({
+            pdfZoom: readingConfig.pdfZoom ?? 1,
+            pdfPreloadRadius: readingConfig.pdfPreloadRadius ?? 3,
+            pdfPreloadEnabled: readingConfig.pdfPreloadEnabled !== false,
+        });
+        setShowReadingSettings(true);
+    };
+
+    const handleReadingSettingsConfirm = () => {
+        if (isPdf) {
+            setReadingConfig((prev) => {
+                const next = { ...prev, ...pdfRenderDraft };
+                saveReadingInteractionConfig(next);
+                return next;
+            });
+        }
+        setShowReadingSettings(false);
+    };
+
     return (
         <div className="reading-app-surface absolute inset-0 z-[100] flex flex-col bg-[var(--c-page-body-bg)]" data-immersive={immersive} style={{ paddingTop: "var(--page-header-safe-top, 48px)" }}>
             {/* Page flip overlay */}
@@ -2044,8 +2179,12 @@ export function ReadingViewer({ book, onBack }: Props) {
                             onTotalPages={setPdfTotalPages}
                             onCurrentPage={setPdfCurrentPage}
                             jumpToPage={pdfJumpPage}
+                            onJumpComplete={handlePdfJumpComplete}
                             onCopyAnnotation={copyToClipboard}
-                            onDeleteAnnotation={(annotationId) => { void handleDeleteReadingAnnotation(annotationId); }}
+                            onDeleteAnnotation={handleDeleteReadingAnnotation}
+                            zoom={readingConfig.pdfZoom ?? 1}
+                            preloadRadius={readingConfig.pdfPreloadRadius ?? 3}
+                            preloadEnabled={readingConfig.pdfPreloadEnabled !== false}
                         />
                     </>
                 ) : !chaptersLoaded ? (
@@ -2187,10 +2326,21 @@ export function ReadingViewer({ book, onBack }: Props) {
                             <PenLine size={22} strokeWidth={1.7} />
                             <span>写批注</span>
                         </button>
+                        {isPdf && (
+                            <button
+                                type="button"
+                                className="reading-footer-icon-btn"
+                                onClick={openPdfPrefetchDialog}
+                                disabled={generating || !companionId}
+                            >
+                                <Rocket size={22} strokeWidth={1.7} />
+                                <span>预批注</span>
+                            </button>
+                        )}
                         <button
                             type="button"
                             className="reading-footer-icon-btn"
-                            onClick={() => setShowReadingSettings(true)}
+                            onClick={openReadingSettings}
                         >
                             <Languages size={22} strokeWidth={1.7} />
                             <span>设置</span>
@@ -2438,12 +2588,53 @@ export function ReadingViewer({ book, onBack }: Props) {
                     </div>
                 </ContentDialog>
             )}
+            {pdfPrefetchDialogOpen && (
+                <ContentDialog
+                    title="PDF 预批注"
+                    confirmLabel="开始预批注"
+                    cancelLabel="取消"
+                    onConfirm={() => { void handlePdfManualPrefetch(); }}
+                    onCancel={() => setPdfPrefetchDialogOpen(false)}
+                >
+                    <div className="reading-settings-grid">
+                        <p className="reading-settings-inline-note">
+                            <span>为指定页码范围提前生成批注（先解析文本层再生成，翻到那里就是现成的）。</span>
+                        </p>
+                        <div className="reading-settings-inline-note">
+                            <span>起始页</span>
+                            <input
+                                value={pdfPrefetchStartInput}
+                                onChange={(e) => setPdfPrefetchStartInput(e.target.value.replace(/[^\d]/g, ""))}
+                                className="ui-input"
+                                inputMode="numeric"
+                            />
+                        </div>
+                        <div className="reading-settings-inline-note">
+                            <span>结束页</span>
+                            <input
+                                value={pdfPrefetchEndInput}
+                                onChange={(e) => setPdfPrefetchEndInput(e.target.value.replace(/[^\d]/g, ""))}
+                                className="ui-input"
+                                inputMode="numeric"
+                            />
+                        </div>
+                        <p className="reading-settings-inline-note">
+                            <span>当前第 {Math.max(1, pdfCurrentPage)} / {Math.max(1, pdfTotalPages)} 页。一次最多 {MAX_MANUAL_PDF_PREFETCH_PAGES} 页。</span>
+                        </p>
+                        {annotationError && (
+                            <p className="reading-settings-inline-note" style={{ color: "var(--c-danger)" }}>
+                                <span>{annotationError}</span>
+                            </p>
+                        )}
+                    </div>
+                </ContentDialog>
+            )}
             {showReadingSettings && (
                 <ContentDialog
-                    title="阅读双语翻译"
+                    title="阅读设置"
                     confirmLabel="完成"
                     cancelLabel="关闭"
-                    onConfirm={() => setShowReadingSettings(false)}
+                    onConfirm={handleReadingSettingsConfirm}
                     onCancel={() => setShowReadingSettings(false)}
                 >
                     <div className="reading-settings-grid">
@@ -2502,6 +2693,54 @@ export function ReadingViewer({ book, onBack }: Props) {
                                     }}
                                 />
                             </div>
+                        )}
+
+                        {isPdf && (
+                            <section className="reading-settings-group">
+                                <div className="reading-settings-heading">
+                                    <ZoomIn size={15} />
+                                    <span>PDF 渲染</span>
+                                </div>
+                                <div className="reading-settings-toggle-row">
+                                    <span className="reading-settings-toggle-label">预加载后续页</span>
+                                    <Toggle
+                                        checked={pdfRenderDraft.pdfPreloadEnabled}
+                                        onChange={(next) => setPdfRenderDraft((prev) => ({ ...prev, pdfPreloadEnabled: next }))}
+                                    />
+                                </div>
+                                <p className="reading-settings-inline-note">
+                                    <span>开启后阅读时会提前渲染当前页之后的页面，滚动更平滑；关闭则只渲染屏幕内的页。</span>
+                                </p>
+                                <div className="reading-settings-inline-note">
+                                    <span>页面缩放率</span>
+                                    <span>{Math.round(pdfRenderDraft.pdfZoom * 100)}%</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    className="w-full my-1"
+                                    min={0.5}
+                                    max={2}
+                                    step={0.05}
+                                    value={pdfRenderDraft.pdfZoom}
+                                    onChange={(e) => setPdfRenderDraft((prev) => ({ ...prev, pdfZoom: Number(e.target.value) }))}
+                                />
+                                <div className="reading-settings-inline-note">
+                                    <span>一次渲染页数（当前页前后各几页）</span>
+                                    <span>{pdfRenderDraft.pdfPreloadRadius} 页</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    className="w-full my-1"
+                                    min={1}
+                                    max={8}
+                                    step={1}
+                                    value={pdfRenderDraft.pdfPreloadRadius}
+                                    onChange={(e) => setPdfRenderDraft((prev) => ({ ...prev, pdfPreloadRadius: Number(e.target.value) }))}
+                                />
+                                <p className="reading-settings-inline-note">
+                                    <span>提示：一次渲染页数过少时，滑动到未渲染的页会反复渲染，造成闪烁卡顿；调大并开启预加载可缓解。缩放率调大后一页更接近一屏。</span>
+                                </p>
+                            </section>
                         )}
                     </div>
                 </ContentDialog>

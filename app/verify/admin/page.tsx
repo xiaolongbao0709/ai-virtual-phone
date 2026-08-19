@@ -154,7 +154,7 @@ export default function VerifyAdminPage() {
   return (
     <main className="vr-root">
       <div className="vr-brand">Float</div>
-      <div className="vr-brand-sub">内测审核台 · Admin</div>
+      <div className="vr-brand-sub">资格审核台 · Admin</div>
 
       <section className="vr-card" style={{ maxWidth: 560 }}>
         {!unlocked ? (

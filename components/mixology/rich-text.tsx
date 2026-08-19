@@ -22,15 +22,12 @@ const FRAME_MIN_HEIGHT = 24;
  */
 const FRAME_MAX_HEIGHT = 12000;
 
-function RichFrame({ html, inert, onHeight }: { html: string; inert?: boolean; onHeight?: (height: number) => void }) {
+function RichFrame({ html, inert }: { html: string; inert?: boolean }) {
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const [frameId] = useState(() => `mrf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
     const [height, setHeight] = useState(FRAME_MIN_HEIGHT);
     const trackerRef = useRef(createMixFrameHeightTracker(FRAME_MIN_HEIGHT));
     const heightRef = useRef(FRAME_MIN_HEIGHT);
-    // 回调放进 ref：量高的监听只挂一次，不因为父组件换了个新函数就重挂
-    const onHeightRef = useRef(onHeight);
-    useEffect(() => { onHeightRef.current = onHeight; }, [onHeight]);
 
     const srcDoc = useMemo(() => {
         // 默认浅色字 + 透明底：内容浮在深色封面蒙版上直接可读，作者可全量覆盖
@@ -60,12 +57,10 @@ function RichFrame({ html, inert, onHeight }: { html: string; inert?: boolean; o
                 min: FRAME_MIN_HEIGHT,
                 max: FRAME_MAX_HEIGHT,
             });
-            // 只在高度真的变了才通知外面。画布里的动效会让 MutationObserver 一直重报，
-            // 每次都回调的话，外面的「保持滚动落点」会被反复触发，用户手动翻页会被拽回去。
+            // 高度没变就别重渲染：画布里的动效会让 MutationObserver 一直重报
             if (applied === null || applied === heightRef.current) return;
             heightRef.current = applied;
             setHeight(applied);
-            onHeightRef.current?.(applied);
         };
         window.addEventListener("message", handleMessage);
         return () => window.removeEventListener("message", handleMessage);
@@ -92,10 +87,10 @@ function RichFrame({ html, inert, onHeight }: { html: string; inert?: boolean; o
 
 /**
  * inert：放在按钮里当预览用（开场白选择），让点击穿给外层。
- * onHeight：画布量好高度、宿主撑开 iframe 之后回调一次（高度真变了才回调）。
- * 开场画布是异步撑高的，外面若要维持滚动落点，必须等这一下再落一次。
+ * 画布是异步撑高的：高度量好后由 iframe 里的桥 postMessage 上来，需要维持滚动落点的
+ * 宿主（对局界面）直接监听那条消息，见 components/mixology/mixology-game.tsx。
  */
-export function MixRichText({ text, inert, onHeight }: { text: string; inert?: boolean; onHeight?: (height: number) => void }) {
-    if (mixTextHasHtml(text)) return <RichFrame html={text} inert={inert} onHeight={onHeight} />;
+export function MixRichText({ text, inert }: { text: string; inert?: boolean }) {
+    if (mixTextHasHtml(text)) return <RichFrame html={text} inert={inert} />;
     return <div className="mix-detail-value">{text}</div>;
 }

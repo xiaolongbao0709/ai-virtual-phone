@@ -18,7 +18,7 @@ import {
     UserRound,
 } from "lucide-react";
 import type { MixCharacterCard, MixMaterial, MixMaterialKind } from "@/lib/mixology/types";
-import { MIX_DOCK_LABELS, MIX_KIND_LABELS, mixEncoreRenderHtml, mixKindHasCover, mixKindRunsActiveCode, normalizeMixTags } from "@/lib/mixology/types";
+import { MIX_KIND_LABELS, mixEncoreRenderHtml, mixKindHasCover, mixKindRunsActiveCode, mixPanelLayoutOf, mixPanelLayoutSummary, normalizeMixTags } from "@/lib/mixology/types";
 import { applyMixMacros, MIX_DEFAULT_USER_NAME } from "@/lib/mixology/assembler";
 import { MixRichText } from "./rich-text";
 
@@ -205,7 +205,7 @@ export function isSealedMaterial(material: { kind: string; imported?: boolean })
  */
 export function SealedNote({ hook, canvas, charName }: { hook?: string; canvas?: string; charName?: string }) {
     if (canvas?.trim()) {
-        // 详情页没有对局，{{user}} 没有代入名可用，退回默认的「你」
+        // 详情页没有对局，{{user}} 没有名字可用，退回默认的「你」
         const filled = applyMixMacros(canvas, charName ?? "", MIX_DEFAULT_USER_NAME, undefined, { escapeHtml: true });
         return <div className="mix-canvas-block"><MixRichText text={filled} /></div>;
     }
@@ -245,7 +245,7 @@ export function MaterialDetail({ material }: { material: MixMaterial }) {
         return (
             <>
                 <DetailField label="一句话介绍" value={material.hook} />
-                <DetailField label="代入名" value={material.userName} />
+                <DetailField label="你的名字" value={material.userName} />
                 <DetailField label="用户人设" value={material.content} />
             </>
         );
@@ -291,11 +291,12 @@ export function MaterialDetail({ material }: { material: MixMaterial }) {
         );
     }
     if (material.kind === "mechanism") {
+        const layout = mixPanelLayoutOf(material);
         return (
             <>
                 <DetailField label="一句话介绍" value={material.hook} />
                 <DetailField label="钩子逻辑" value={material.script} code />
-                {material.dock ? <DetailField label="常驻界面" value={`停靠在${MIX_DOCK_LABELS[material.dock]}`} /> : null}
+                {layout ? <DetailField label="界面摆放" value={mixPanelLayoutSummary(layout)} /> : null}
                 <DetailField label="界面代码" value={material.panelHtml} code />
             </>
         );

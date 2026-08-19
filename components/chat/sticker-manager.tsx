@@ -13,6 +13,9 @@ import {
     addStickersToPack,
     addStickerByUrlToPack,
     checkStickerBlob,
+    updateStickerPackInfo,
+    STICKER_PACK_NAME_MAX,
+    STICKER_PACK_NOTE_MAX,
     renameStickerInPack,
     removeStickerFromPack,
     getPackAssignments,
@@ -85,6 +88,9 @@ export function StickerManager({ onBack }: { onBack: () => void }) {
                                 <div className="flex flex-col w-full gap-0.5">
                                     <span className="ts-16 text-[var(--c-text-title)] font-bold truncate max-w-full leading-tight">{pack.name}</span>
                                     <span className="ts-12 text-[var(--c-text)] opacity-70">{pack.stickers.length === 0 ? "空相册" : `${pack.stickers.length} 个表情`}</span>
+                                    {pack.note?.trim() && (
+                                        <span className="ts-11 text-[var(--c-text)] opacity-50 truncate mt-1">{pack.note.trim()}</span>
+                                    )}
                                 </div>
 
                                 {assignedNames.length > 0 && (
@@ -161,6 +167,7 @@ function CreatePackDialog({
     onCancel: () => void;
 }) {
     const [name, setName] = useState("");
+    const [note, setNote] = useState("");
     const [selectedCharIds, setSelectedCharIds] = useState<string[]>([]);
 
     const handleToggle = (charId: string) => {
@@ -172,7 +179,7 @@ function CreatePackDialog({
     const handleCreate = () => {
         const trimmed = name.trim();
         if (!trimmed) return;
-        const pack = createStickerPack(trimmed);
+        const pack = createStickerPack(trimmed, note.trim());
         for (const charId of selectedCharIds) {
             togglePackAssignment(pack.id, charId);
         }
@@ -196,6 +203,18 @@ function CreatePackDialog({
                                 onChange={e => setName(e.target.value)}
                                 placeholder="例如：可爱猫猫"
                                 className="ui-input"
+                            />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">备注（可选）</label>
+                            <textarea
+                                value={note}
+                                onChange={e => setNote(e.target.value)}
+                                placeholder="例如：由某某老师整理分享，目前还差 20 个表情待整理"
+                                className="ui-input min-h-[88px] resize-y"
+                                maxLength={STICKER_PACK_NOTE_MAX}
+                                rows={3}
                             />
                         </div>
 
@@ -329,6 +348,8 @@ function PackEditor({ pack, onBack }: { pack: StickerPack; onBack: () => void })
     const [assignedCharIds, setAssignedCharIds] = useState<string[]>([]);
     const [showAddDialog, setShowAddDialog] = useState(false);
     const [showBatchDialog, setShowBatchDialog] = useState(false);
+    const [packNameDraft, setPackNameDraft] = useState(pack.name);
+    const [packNoteDraft, setPackNoteDraft] = useState(pack.note ?? "");
 
     const refreshPack = useCallback(() => {
         const fresh = loadStickerPacks().find(p => p.id === pack.id);
@@ -399,11 +420,53 @@ function PackEditor({ pack, onBack }: { pack: StickerPack; onBack: () => void })
         refreshAssignments();
     };
 
+    const handleSavePackInfo = () => {
+        const trimmedName = packNameDraft.trim();
+        if (!trimmedName) return;
+        const trimmedNote = packNoteDraft.trim();
+        updateStickerPackInfo(pack.id, { name: trimmedName, note: trimmedNote });
+        setPackNameDraft(trimmedName);
+        setPackNoteDraft(trimmedNote);
+        refreshPack();
+    };
+
+    const packInfoChanged = packNameDraft.trim() !== currentPack.name
+        || packNoteDraft.trim() !== (currentPack.note ?? "");
+
     return (
         <PageShell title={currentPack.name} onBack={onBack} className="absolute inset-0 z-[100]">
             <div className="flex flex-col h-full bg-[var(--c-page-body-bg)]">
-                {/* Character assignment section */}
+                {/* Pack metadata section */}
                 <div className="px-6 pt-5 pb-2 shrink-0">
+                    <div className="text-[calc(12px*var(--app-text-scale,1))] font-bold text-[var(--c-text)] opacity-60 uppercase mb-3 px-1 tracking-[0.1em]">图集信息</div>
+                    <div className="flex flex-col gap-3">
+                        <input
+                            type="text"
+                            value={packNameDraft}
+                            onChange={e => setPackNameDraft(e.target.value)}
+                            placeholder="图集名称"
+                            className="ui-input"
+                            maxLength={STICKER_PACK_NAME_MAX}
+                        />
+                        <textarea
+                            value={packNoteDraft}
+                            onChange={e => setPackNoteDraft(e.target.value)}
+                            placeholder="备注这套表情包的来源、整理进度等（可选）"
+                            className="ui-input min-h-[72px] resize-y"
+                            maxLength={STICKER_PACK_NOTE_MAX}
+                            rows={2}
+                        />
+                        <button
+                            type="button"
+                            onClick={handleSavePackInfo}
+                            disabled={!packNameDraft.trim() || !packInfoChanged}
+                            className="ui-btn ui-btn-primary self-end"
+                        >保存图集信息</button>
+                    </div>
+                </div>
+
+                {/* Character assignment section */}
+                <div className="px-6 pt-4 pb-2 shrink-0">
                     <div className="text-[calc(12px*var(--app-text-scale,1))] font-bold text-[var(--c-text)] opacity-60 uppercase mb-3 px-1 tracking-[0.1em]">智能角色绑定</div>
                     <div className="flex flex-wrap gap-2.5 px-1">
                         {characters.map(c => {

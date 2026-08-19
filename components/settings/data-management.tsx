@@ -46,7 +46,7 @@ import {
   formatBytes,
   importBackupBlob,
   inspectData,
-  readBackupBlob,
+  readBackupManifest,
 } from "@/lib/data-management/backup";
 import {
   cleanupOrphanThemeAssets,
@@ -60,11 +60,11 @@ import {
   type MediaMaintenanceState,
 } from "@/lib/media-maintenance";
 import { isAndroidBrowser, isIOSBrowser } from "@/lib/download-utils";
-import type { BackupEnvelope, BackupManifest, DataModuleId, DataSnapshot, ImportResult, ModuleStats } from "@/lib/data-management/types";
+import type { BackupManifest, DataModuleId, DataSnapshot, ImportResult, ModuleStats } from "@/lib/data-management/types";
 
 type PendingImport = {
   file: File;
-  envelope: BackupEnvelope;
+  manifest: BackupManifest;
 };
 
 type PendingExport = {
@@ -74,7 +74,6 @@ type PendingExport = {
 
 type PendingCloudRestore = {
   item: CloudBackupListItem;
-  overwrite: boolean;
 };
 
 type ConfirmRequest =
@@ -302,7 +301,6 @@ export function DataManagement({ onNotice }: DataManagementProps) {
   const [showRestore, setShowRestore] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [restoreList, setRestoreList] = useState<CloudBackupListItem[]>([]);
-  const [restoreOverwrite, setRestoreOverwrite] = useState(false);
   const [restorePending, setRestorePending] = useState<PendingCloudRestore | null>(null);
   const [mediaConfig, setMediaConfig] = useState<MediaMaintenanceConfig>(DEFAULT_MEDIA_MAINTENANCE_CONFIG);
   const [mediaState, setMediaState] = useState<MediaMaintenanceState>({});
@@ -372,11 +370,17 @@ export function DataManagement({ onNotice }: DataManagementProps) {
       if (result.errors.length > 0) {
         console.warn("[DataManagement] cloud restore errors:", result.errors);
       }
+      const restoredCount = result.added + result.overwritten;
+      if (restoredCount === 0 && result.errors.length > 0) {
+        throw new Error(`云端恢复失败：${result.errors[0]}`);
+      }
       const errorNote = result.errors.length > 0 ? `，${result.errors.length} 项出错` : "";
-      const firstError = result.errors[0] ? `\n首个错误：${result.errors[0]}` : "";
+      const errorDetails = result.errors.length > 0
+        ? `\n错误详情：${result.errors.slice(0, 3).join("；")}`
+        : "";
       setRestartNotice({
-        title: "恢复完成，请彻底重启应用",
-        summary: `已从云端恢复：新增 ${result.added}，覆盖 ${result.overwritten}，跳过 ${result.skipped}${errorNote}。${firstError}`,
+        title: result.errors.length > 0 ? "恢复部分完成，请彻底重启应用" : "恢复完成，请彻底重启应用",
+        summary: `已从云端恢复：新增 ${result.added}，覆盖 ${result.overwritten}，跳过 ${result.skipped}${errorNote}。${errorDetails}`,
       });
     } finally {
       setCloudProgress(null);
@@ -419,7 +423,7 @@ export function DataManagement({ onNotice }: DataManagementProps) {
     [],
   );
   const pendingImportItems = useMemo<ModuleChipItem[]>(
-    () => pendingImport?.envelope.manifest.modules.map((module) => ({
+    () => pendingImport?.manifest.modules.map((module) => ({
       id: module.id,
       label: module.label,
       meta: `${module.records} 项 · ${formatBytes(module.bytes)}`,
@@ -495,10 +499,10 @@ export function DataManagement({ onNotice }: DataManagementProps) {
   const handleFileSelected = async (file: File | undefined) => {
     if (!file) return;
     await runAction("读取备份", async () => {
-      const envelope = await readBackupBlob(file);
-      setPendingImport({ file, envelope });
-      setSelectedImportModules(envelope.manifest.modules.map((module) => module.id));
-      return `已读取备份：${envelope.manifest.modules.map((module) => module.label).join("、")}`;
+      const manifest = await readBackupManifest(file);
+      setPendingImport({ file, manifest });
+      setSelectedImportModules(manifest.modules.map((module) => module.id));
+      return `已读取备份：${manifest.modules.map((module) => module.label).join("、")}`;
     });
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -519,6 +523,10 @@ export function DataManagement({ onNotice }: DataManagementProps) {
   const executeImport = (moduleIds: DataModuleId[], overwrite = false) => runAction("导入中", async () => {
     if (!pendingImport) return "请先选择备份文件。";
     const result: ImportResult = await importBackupBlob(pendingImport.file, moduleIds, { overwrite });
+    const importedCount = result.added + result.overwritten;
+    if (importedCount === 0 && result.errors.length > 0) {
+      throw new Error(`导入失败：${result.errors[0]}`);
+    }
     setPendingImport(null);
     const summary = `导入完成：新增 ${result.added}，跳过 ${result.skipped}，覆盖 ${result.overwritten}`;
     const errorNote = result.errors.length > 0
@@ -809,13 +817,15 @@ export function DataManagement({ onNotice }: DataManagementProps) {
                 {cloudState.lastResult === "skipped" ? " · 无变化已跳过" : ""}
               </div>
             )}
+            {cloudState.lastResult === "error" && cloudState.lastError && (
+              <div className="data-cloud-result is-err" role="status">
+                最近一次云备份失败：{cloudState.lastError}
+              </div>
+            )}
 
             {showRestore && (
               <div className="data-cloud-restore">
-                <label className="data-cloud-restore-overwrite">
-                  <input type="checkbox" checked={restoreOverwrite} onChange={(e) => setRestoreOverwrite(e.target.checked)} />
-                  <span>覆盖恢复提醒（不勾选则合并；同 ID 仍以云端为准）</span>
-                </label>
+                <div className="data-cloud-status">恢复会合并写入：同 ID 以云端为准，本机额外数据会保留。</div>
                 {busy === "恢复中" ? (
                   <div className="data-cloud-progress" role="status">
                     <div className="data-cloud-progress-track">
@@ -834,14 +844,18 @@ export function DataManagement({ onNotice }: DataManagementProps) {
                     {restoreList.map((item) => (
                       <li key={item.name} className="data-cloud-restore-item">
                         <div className="menu-label-group">
-                          <span className="menu-label">{formatTime(item.createdAt)}{item.quarantine ? " · 待复核" : ""}</span>
-                          <span className="menu-desc">{formatBytes(item.totalBytes)} · {item.totalRecords} 项</span>
+                          <span className="menu-label">
+                            {formatTime(item.createdAt)}{item.error ? " · 清单损坏" : item.quarantine ? " · 待复核" : ""}
+                          </span>
+                          <span className="menu-desc">
+                            {item.error ?? `${formatBytes(item.totalBytes)} · ${item.totalRecords} 项`}
+                          </span>
                         </div>
                         <button
                           type="button"
                           className="ui-btn ui-btn-outline py-1 px-3 ts-12"
-                          onClick={() => setRestorePending({ item, overwrite: restoreOverwrite })}
-                          disabled={Boolean(busy)}
+                          onClick={() => setRestorePending({ item })}
+                          disabled={Boolean(busy) || Boolean(item.error)}
                         >
                           恢复
                         </button>
@@ -936,8 +950,8 @@ export function DataManagement({ onNotice }: DataManagementProps) {
             </div>
             <div className="modal-body" data-ui="modal-body" style={{ textAlign: "left", width: "100%" }}>
               <p className="menu-desc" style={{ marginBottom: 12 }}>
-                {formatTime(pendingImport.envelope.manifest.createdAt)} · {formatBytes(pendingImport.envelope.manifest.totalBytes)}
-                {pendingImport.envelope.manifest.mediaExcluded ? " · 不含图片" : ""}
+                {formatTime(pendingImport.manifest.createdAt)} · {formatBytes(pendingImport.manifest.totalBytes)}
+                {pendingImport.manifest.mediaExcluded ? " · 不含图片" : ""}
               </p>
               <div className="data-inline-actions" style={{ marginBottom: 10 }}>
                 <span className="menu-desc" style={{ marginRight: "auto" }}>选择要导入的模块（{selectedImportModules.length} / {pendingImportItems.length}）</span>
@@ -1050,15 +1064,11 @@ export function DataManagement({ onNotice }: DataManagementProps) {
 
       {restorePending && (
         <ConfirmDialog
-          title={restorePending.overwrite ? "确认覆盖恢复？" : "确认合并恢复？"}
-          message={
-            restorePending.overwrite
-              ? `将用 ${formatTime(restorePending.item.createdAt)} 这份云端备份覆盖本机同 ID 数据。建议先「立即备份」当前数据。是否继续？`
-              : `将把 ${formatTime(restorePending.item.createdAt)} 这份云端备份合并到本机数据；本机没有的数据会新增，同 ID 数据以备份为准。是否继续？`
-          }
+          title="确认从云端恢复？"
+          message={`将把 ${formatTime(restorePending.item.createdAt)} 这份云端备份合并到本机数据；本机没有的数据会新增，同 ID 数据以云端为准，本机额外数据会保留。建议先「立即备份」当前数据。是否继续？`}
           icon={CloudDownload}
-          variant={restorePending.overwrite ? "danger" : "action"}
-          confirmLabel={restorePending.overwrite ? "确认覆盖" : "确认合并"}
+          variant="action"
+          confirmLabel="确认恢复"
           onConfirm={() => { const pending = restorePending; setRestorePending(null); if (pending) void confirmRestore(pending); }}
           onCancel={() => setRestorePending(null)}
         />
@@ -1083,14 +1093,6 @@ export function DataManagement({ onNotice }: DataManagementProps) {
                 onClick={() => window.location.reload()}
               >
                 <RotateCcw size={16} /> 立即重启
-              </button>
-              <button
-                type="button"
-                className="ui-btn ui-btn-outline"
-                style={{ width: "100%", whiteSpace: "nowrap" }}
-                onClick={() => setRestartNotice(null)}
-              >
-                稍后自己重启
               </button>
             </div>
           </div>

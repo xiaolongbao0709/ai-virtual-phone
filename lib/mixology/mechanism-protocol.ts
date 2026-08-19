@@ -13,11 +13,12 @@ import type { MixState, MixStateValue } from "./types";
 /** 钩子点：流水线上开的四个口子（第五个「上桌时」属于常驻界面，不走这条通道） */
 export type MixHook = "sessionStart" | "beforeSend" | "afterReply" | "sessionEnd";
 
+/** 界面上就写这四个词，不玩调酒行话——创作者要一眼知道钩子在什么时候被叫起来 */
 export const MIX_HOOK_LABELS: Record<MixHook, string> = {
-    sessionStart: "开局",
-    beforeSend: "落杯前",
-    afterReply: "出杯后",
-    sessionEnd: "收摊",
+    sessionStart: "开局时",
+    beforeSend: "发送前",
+    afterReply: "回复后",
+    sessionEnd: "退出时",
 };
 
 /** 机括自己的存储桶：一件机括 × 一个对局一份，退出再进来还在 */
@@ -32,7 +33,7 @@ export type MixHookPayload = {
     state: MixState;
     /** 这件机括自己的存储 */
     store: MixMechanismStore;
-    /** 角色名与玩家代入名 */
+    /** 角色名与用户的名字 */
     charName: string;
     userName: string;
     /** 落杯前：玩家这一句；出杯后：模型这一段正文 */

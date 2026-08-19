@@ -56,12 +56,14 @@ function applyReasoningVisibility(wrapper: HTMLElement, hidden: boolean): void {
     return;
   }
 
+  // 普通消息：隐藏整条思维链入口；纯思维链轮次连外层一起隐藏，避免残留 gap。
   wrapper
     .querySelectorAll<HTMLElement>(
       ".chat-reasoning-trigger, [data-reasoning-row], [data-reasoning-only], [data-reasoning-empty]",
     )
     .forEach(forceHide);
 
+  // 若用户在弹窗打开时切换设置，也一并强制隐藏整个思维链弹层。
   wrapper.querySelectorAll<HTMLElement>(".chat-reasoning-sheet").forEach((sheet) => {
     const overlay = sheet.closest<HTMLElement>(".modal-overlay");
     forceHide(overlay ?? sheet);
@@ -166,6 +168,7 @@ function syncAll(): void {
     applyReasoningVisibility(wrapper, readHidden(sessionId));
   });
 
+  // 聊天信息页通过 portal 挂在 session wrapper 外面；用 data-settings-open 找到它对应的会话。
   const activeWrapper = wrappers.find((wrapper) => wrapper.hasAttribute("data-settings-open"));
   if (!activeWrapper) return;
   const sessionId = getSessionId(activeWrapper);

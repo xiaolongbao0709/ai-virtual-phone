@@ -487,7 +487,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
         }
         setDetail(null);
         refresh();
-        showToast(`「${material.name}」已出柜。`);
+        showToast(`「${material.name}」已移出酒柜。`);
     };
 
     // ── 对局画面全屏接管 ──

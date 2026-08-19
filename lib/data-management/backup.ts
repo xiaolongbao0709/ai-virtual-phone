@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { downloadFile, type DownloadFileOptions } from "../download-utils";
+import { sha256BlobHex } from "../sha256-stream";
 import { DATA_MODULES } from "./modules";
 import { clearSource, exportSource, importSource, inspectSource } from "./idb";
 import { createMediaCollector, estimateValueBytes, utf8Bytes, type MediaCollector, type MediaResolver } from "./serializers";
@@ -18,6 +19,65 @@ import type {
 
 const BACKUP_FILE_VERSION = 2;                       // new backups: media stored as binary entries
 const SUPPORTED_BACKUP_VERSIONS = new Set<number>([1, 2]); // still restore old base64 (v1) backups
+
+function isFiniteNonNegative(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isBackupManifest(value: unknown): value is BackupManifest {
+  if (!value || typeof value !== "object") return false;
+  const manifest = value as Partial<BackupManifest>;
+  return manifest.format === "ai-phone-backup"
+    && SUPPORTED_BACKUP_VERSIONS.has(Number(manifest.version))
+    && typeof manifest.createdAt === "string"
+    && Number.isFinite(Date.parse(manifest.createdAt))
+    && isFiniteNonNegative(manifest.totalBytes)
+    && isFiniteNonNegative(manifest.totalRecords)
+    && Array.isArray(manifest.modules)
+    && manifest.modules.every((item) => (
+      item
+      && typeof item.id === "string"
+      && typeof item.label === "string"
+      && isFiniteNonNegative(item.records)
+      && isFiniteNonNegative(item.bytes)
+    ));
+}
+
+function isSourceBackup(value: unknown): value is SourceBackup {
+  if (!value || typeof value !== "object") return false;
+  const source = value as Partial<SourceBackup>;
+  if (source.type === "kv" || source.type === "localStorage") {
+    return Array.isArray(source.records) && source.records.every((record) => (
+      record && typeof record.key === "string" && typeof record.value === "string"
+    ));
+  }
+  if (source.type !== "indexeddb" || typeof source.dbName !== "string" || !Array.isArray(source.stores)) return false;
+  return source.stores.every((store) => (
+    store
+    && typeof store.name === "string"
+    && Array.isArray(store.records)
+  ));
+}
+
+function isModulePayload(value: unknown): value is ModulePayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Partial<ModulePayload>;
+  return typeof payload.moduleId === "string"
+    && Array.isArray(payload.sources)
+    && payload.sources.length > 0
+    && payload.sources.every(isSourceBackup);
+}
+
+async function parseManifestFile(file: JSZip.JSZipObject): Promise<BackupManifest> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await file.async("string"));
+  } catch {
+    throw new Error("备份文件的 manifest.json 无法解析");
+  }
+  if (!isBackupManifest(value)) throw new Error("备份文件格式不受支持或清单已损坏");
+  return value;
+}
 
 function getSelectedModules(moduleIds?: DataModuleId[]) {
   if (!moduleIds || moduleIds.length === 0) return DATA_MODULES;
@@ -139,18 +199,36 @@ function stripMediaFromSource(payload: SourceBackup): SourceBackup {
 }
 
 
-/** 从模块 payload 收集告警：数据源导出失败、关键模块 0 记录（很可能是坏备份） */
-function collectModuleWarnings(dataModule: ReturnType<typeof getSelectedModules>[number], payload: ModulePayload, records: number): string[] {
-  const warnings: string[] = [];
-  for (const sourcePayload of payload.sources) {
-    if (sourcePayload.type === "indexeddb" && sourcePayload.error) {
-      warnings.push(`「${dataModule.label}」${sourcePayload.error}`);
-    }
+function countSourceRecords(sourcePayload: SourceBackup): number {
+  if (sourcePayload.type === "indexeddb") {
+    return sourcePayload.stores.reduce((sum, store) => sum + store.records.length, 0);
   }
-  if (dataModule.critical && records === 0) {
-    warnings.push(`「${dataModule.label}」导出了 0 条记录——如果这台设备上有过这类数据，说明备份不完整，请勿依赖。`);
-  }
-  return warnings;
+  return sourcePayload.records.length;
+}
+
+/**
+ * Build one source instead of one whole UI module. Large modules such as
+ * “内容应用” group several unrelated databases; treating that group as the
+ * streaming unit still lets all of them pile up in memory at once.
+ */
+export async function buildSingleSourcePayload(
+  dataModule: ReturnType<typeof getSelectedModules>[number],
+  sourceIndex: number,
+  options: BackupOptions = {},
+  collector?: MediaCollector,
+): Promise<{ payload: ModulePayload; records: number; warnings: string[] }> {
+  const source = dataModule.sources[sourceIndex];
+  if (!source) throw new Error(`找不到 ${dataModule.label} 的第 ${sourceIndex + 1} 个数据源`);
+  const stripping = Boolean(options.excludeMedia) && !MEDIA_KEEP_MODULE_IDS.has(dataModule.id);
+  const moduleCollector = stripping ? undefined : collector;
+  let sourcePayload = await exportSource(source, moduleCollector, stripping);
+  if (stripping) sourcePayload = stripMediaFromSource(sourcePayload);
+  const records = countSourceRecords(sourcePayload);
+  const payload: ModulePayload = { moduleId: dataModule.id, sources: [sourcePayload] };
+  const warnings = sourcePayload.type === "indexeddb" && sourcePayload.error
+    ? [`「${dataModule.label}」${sourcePayload.error}`]
+    : [];
+  return { payload, records, warnings };
 }
 
 export async function buildBackupEnvelope(moduleIds?: DataModuleId[], options: BackupOptions = {}): Promise<BackupEnvelope> {
@@ -174,27 +252,20 @@ export async function buildSingleModulePayload(
   options: BackupOptions = {},
   collector?: MediaCollector,
 ): Promise<{ payload: ModulePayload; records: number; warnings: string[] }> {
-  const stripping = Boolean(options.excludeMedia) && !MEDIA_KEEP_MODULE_IDS.has(dataModule.id);
-  // Stripped modules export media as dataURL strings so stripMediaFromSource can
-  // remove it; extracting to media-refs first would make "exclude media" a no-op.
-  const moduleCollector = stripping ? undefined : collector;
-  let sources: SourceBackup[] = [];
-  for (const source of dataModule.sources) {
-    sources.push(await exportSource(source, moduleCollector));
-  }
-  if (stripping) {
-    sources = sources.map(stripMediaFromSource);
-  }
+  const sources: SourceBackup[] = [];
+  const warnings: string[] = [];
   let records = 0;
-  for (const sourcePayload of sources) {
-    if (sourcePayload.type === "indexeddb") {
-      for (const store of sourcePayload.stores) records += store.records.length;
-    } else {
-      records += sourcePayload.records.length;
-    }
+  for (let sourceIndex = 0; sourceIndex < dataModule.sources.length; sourceIndex += 1) {
+    const built = await buildSingleSourcePayload(dataModule, sourceIndex, options, collector);
+    sources.push(built.payload.sources[0]);
+    records += built.records;
+    warnings.push(...built.warnings);
   }
   const payload: ModulePayload = { moduleId: dataModule.id, sources };
-  return { payload, records, warnings: collectModuleWarnings(dataModule, payload, records) };
+  if (dataModule.critical && records === 0) {
+    warnings.push(`「${dataModule.label}」导出了 0 条记录——如果这台设备上有过这类数据，说明备份不完整，请勿依赖。`);
+  }
+  return { payload, records, warnings };
 }
 
 async function buildEnvelope(moduleIds?: DataModuleId[], options: BackupOptions = {}, collector?: MediaCollector): Promise<BackupEnvelope> {
@@ -252,38 +323,46 @@ export async function createBackupBlob(moduleIds?: DataModuleId[], options: Back
   let totalBytes = 0;
 
   for (const dataModule of selectedModules) {
-    // 每模块一个 collector。媒体是按内容哈希寻址的，跨模块的同一张图仍然算出同一个
-    // ref，靠 writtenMedia 去重，不会因为拆开收集而在包里重复一份。
-    const collector = createMediaCollector();
-    const built = await buildSingleModulePayload(dataModule, options, collector);
-    warnings.push(...built.warnings);
-    totalRecords += built.records;
+    let moduleRecords = 0;
+    let moduleBytes = 0;
+    for (let sourceIndex = 0; sourceIndex < dataModule.sources.length; sourceIndex += 1) {
+      // One collector per source. writtenMedia still dedupes identical objects
+      // across the complete archive.
+      const collector = createMediaCollector();
+      const built = await buildSingleSourcePayload(dataModule, sourceIndex, options, collector);
+      warnings.push(...built.warnings);
+      moduleRecords += built.records;
 
-    let json: string | null = JSON.stringify(built.payload);
-    built.payload = null as unknown as ModulePayload; // 释放对象树
-    const jsonBytes = utf8Bytes(json);
-    const moduleBlob = new Blob([json], { type: "application/json" });
-    json = null;                                      // 释放 JSON 字符串
-    zip.file(`modules/${dataModule.id}.json`, moduleBlob);
+      let json: string | null = JSON.stringify(built.payload);
+      built.payload = null as unknown as ModulePayload;
+      const jsonBytes = utf8Bytes(json);
+      const sourceBlob = new Blob([json], { type: "application/json" });
+      json = null;
+      zip.file(`modules/${dataModule.id}/${String(sourceIndex).padStart(3, "0")}.json`, sourceBlob);
 
-    // 媒体单独存二进制条目，一个内容哈希一条。STORE：图片/音频本来就压过了，
-    // 再 DEFLATE 只烧 CPU 不省体积。
-    let mediaBytes = 0;
-    for (const [ref, mediaBlob] of collector.media) {
-      mediaBytes += mediaBlob.size;
-      if (writtenMedia.has(ref)) continue;
-      writtenMedia.add(ref);
-      zip.file(`media/${ref}.bin`, mediaBlob, { compression: "STORE" });
+      let mediaBytes = 0;
+      for (const [ref, mediaBlob] of collector.media) {
+        mediaBytes += mediaBlob.size;
+        if (writtenMedia.has(ref)) continue;
+        writtenMedia.add(ref);
+        zip.file(`media/${ref}.bin`, mediaBlob, { compression: "STORE" });
+      }
+      collector.media.clear();
+      moduleBytes += jsonBytes + mediaBytes;
     }
-    collector.media.clear();                          // zip 已持有引用，这里松手
+
+    if (dataModule.critical && moduleRecords === 0) {
+      warnings.push(`「${dataModule.label}」导出了 0 条记录——如果这台设备上有过这类数据，说明备份不完整，请勿依赖。`);
+    }
 
     manifestModules.push({
       id: dataModule.id,
       label: dataModule.label,
-      records: built.records,
-      bytes: jsonBytes + mediaBytes,
+      records: moduleRecords,
+      bytes: moduleBytes,
     });
-    totalBytes += jsonBytes + mediaBytes;
+    totalRecords += moduleRecords;
+    totalBytes += moduleBytes;
   }
 
   const manifest: BackupManifest = {
@@ -352,10 +431,7 @@ export async function readBackupBlob(blob: Blob): Promise<BackupEnvelope> {
   const zip = await JSZip.loadAsync(blob);
   const manifestFile = zip.file("manifest.json");
   if (!manifestFile) throw new Error("备份文件缺少 manifest.json");
-  const manifest = JSON.parse(await manifestFile.async("string")) as BackupManifest;
-  if (manifest.format !== "ai-phone-backup" || !SUPPORTED_BACKUP_VERSIONS.has(manifest.version)) {
-    throw new Error("备份文件格式不受支持");
-  }
+  const manifest = await parseManifestFile(manifestFile);
 
   const modules: ModulePayload[] = [];
   const moduleFolder = zip.folder("modules");
@@ -365,10 +441,20 @@ export async function readBackupBlob(blob: Blob): Promise<BackupEnvelope> {
   for (const fileName of fileNames) {
     const file = zip.file(fileName);
     if (!file) continue;
-    modules.push(JSON.parse(await file.async("string")) as ModulePayload);
+    const payload = JSON.parse(await file.async("string")) as unknown;
+    if (!isModulePayload(payload)) throw new Error(`${fileName}: 数据结构损坏`);
+    modules.push(payload);
   }
 
   return { manifest, modules };
+}
+
+/** Read only the tiny manifest for the import preview; module JSON stays compressed. */
+export async function readBackupManifest(blob: Blob): Promise<BackupManifest> {
+  const zip = await JSZip.loadAsync(blob);
+  const manifestFile = zip.file("manifest.json");
+  if (!manifestFile) throw new Error("备份文件缺少 manifest.json");
+  return parseManifestFile(manifestFile);
 }
 
 export async function downloadBackupBlob(blob: Blob, manifest: BackupManifest, options: DownloadFileOptions = {}): Promise<void> {
@@ -385,21 +471,23 @@ export async function importBackupBlob(blob: Blob, moduleIds?: DataModuleId[], o
   const zip = await JSZip.loadAsync(blob);
   const manifestFile = zip.file("manifest.json");
   if (!manifestFile) throw new Error("备份文件缺少 manifest.json");
-  const manifest = JSON.parse(await manifestFile.async("string")) as BackupManifest;
-  if (manifest.format !== "ai-phone-backup" || !SUPPORTED_BACKUP_VERSIONS.has(manifest.version)) {
-    throw new Error("备份文件格式不受支持");
-  }
+  await parseManifestFile(manifestFile);
 
   const selected = moduleIds && moduleIds.length > 0 ? new Set(moduleIds) : null;
   const total: ImportResult = { added: 0, skipped: 0, overwritten: 0, errors: [] };
 
   // Pull each media binary straight from the zip, one at a time (low peak memory).
   // v1 backups have no media/ entries — markers there are inline base64, resolver is never hit.
-  const missingMedia = new Set<string>();
+  const invalidMedia = new Set<string>();
   const resolver: MediaResolver = async (ref) => {
     const file = zip.file(`media/${ref}.bin`);
-    if (!file) { missingMedia.add(ref); return null; }
-    return await file.async("uint8array");
+    if (!file) { invalidMedia.add(ref); return null; }
+    const media = await file.async("blob");
+    if (await sha256BlobHex(media) !== ref) {
+      invalidMedia.add(ref);
+      return null;
+    }
+    return media;
   };
 
   // Process modules one at a time — never hold every module's parsed JSON at once
@@ -410,7 +498,9 @@ export async function importBackupBlob(blob: Blob, moduleIds?: DataModuleId[], o
     if (!file) continue;
     let modulePayload: ModulePayload;
     try {
-      modulePayload = JSON.parse(await file.async("string")) as ModulePayload;
+      const parsed = JSON.parse(await file.async("string")) as unknown;
+      if (!isModulePayload(parsed)) throw new Error("数据结构损坏");
+      modulePayload = parsed;
     } catch {
       total.errors.push(`${fileName}: 解析失败`);
       continue;
@@ -425,8 +515,8 @@ export async function importBackupBlob(blob: Blob, moduleIds?: DataModuleId[], o
     }
   }
 
-  if (missingMedia.size > 0) {
-    total.errors.push(`缺少 ${missingMedia.size} 个媒体对象，部分图片/文件可能丢失`);
+  if (invalidMedia.size > 0) {
+    total.errors.push(`${invalidMedia.size} 个媒体对象缺失或损坏，部分图片/文件可能丢失`);
   }
 
   return total;

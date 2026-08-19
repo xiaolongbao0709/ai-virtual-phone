@@ -1458,3 +1458,132 @@
   display: block;
   background: #ffffff;
 }
+
+/* ========================= */
+/* CUSTOM APP FAILURE PANEL  */
+/* ========================= */
+
+/* 应用首屏空白 / 宿主 runner 崩溃时盖在 iframe 之上，给出错误摘要与出口。 */
+.custom-app-failure {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px;
+  background: var(--c-bg, #f5f5f7);
+  overflow-y: auto;
+}
+
+.custom-app-failure-dismiss {
+  position: absolute;
+  top: calc(var(--page-header-safe-top, 48px) + 4px);
+  left: 12px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-icon, rgba(20, 20, 25, 0.55));
+  background: rgba(120, 120, 130, 0.12);
+}
+
+.custom-app-failure-card {
+  width: 100%;
+  max-width: 320px;
+  padding: 22px 20px;
+  border-radius: 18px;
+  background: var(--c-card, #ffffff);
+  box-shadow: 0 6px 24px rgba(20, 30, 60, 0.08);
+  text-align: center;
+}
+
+.custom-app-failure-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 12px;
+  border-radius: 999px;
+  color: #c2410c;
+  background: rgba(249, 115, 22, 0.12);
+}
+
+.custom-app-failure-card strong {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--c-text-title, #16161a);
+}
+
+.custom-app-failure-app {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--c-icon, rgba(20, 20, 25, 0.5));
+}
+
+.custom-app-failure-hint {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--c-text-body, rgba(20, 20, 25, 0.75));
+}
+
+.custom-app-failure-errors {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  list-style: none;
+  text-align: left;
+  background: rgba(120, 120, 130, 0.1);
+}
+
+.custom-app-failure-errors li {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--c-text-body, rgba(20, 20, 25, 0.8));
+  word-break: break-word;
+}
+
+.custom-app-failure-errors li + li {
+  margin-top: 6px;
+}
+
+.custom-app-failure-actions {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.custom-app-failure-actions button {
+  height: 40px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: opacity 0.15s;
+}
+
+.custom-app-failure-actions button:active {
+  opacity: 0.6;
+}
+
+.custom-app-failure-primary {
+  color: #ffffff;
+  background: var(--c-accent, #2f6bff);
+}
+
+.custom-app-failure-secondary {
+  color: var(--c-text-body, rgba(20, 20, 25, 0.78));
+  background: rgba(120, 120, 130, 0.12);
+}

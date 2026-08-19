@@ -8,7 +8,10 @@ import { commitQaFiles, revertQaCommit, type QaCommitResult } from "./qa-github-
 // 独立 DB，多会话。
 
 const QA_DB_NAME = "AiPhoneQaDB";
-const QA_DB_VERSION = 1;
+// A restore into a fresh browser creates the missing store in DB version 2.
+// Keep the owner at least that high so reopening the restored DB cannot fail
+// with VersionError (opening a lower version than the one on disk).
+const QA_DB_VERSION = 2;
 const QA_STORE = "qa";
 const QA_STATE_KEY = "state";
 const MAX_SESSIONS = 30;

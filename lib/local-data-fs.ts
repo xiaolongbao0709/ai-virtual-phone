@@ -107,7 +107,15 @@ function keyFromJsonFileName(fileName: string): string {
     return fileName.endsWith(".json") ? fileName.slice(0, -5) : fileName;
 }
 
-function matchesKey(key: string, source: { keys?: string[]; prefixes?: string[]; includeAll?: boolean }): boolean {
+function matchesKey(key: string, source: {
+    keys?: string[];
+    prefixes?: string[];
+    includeAll?: boolean;
+    excludeKeys?: string[];
+    excludePrefixes?: string[];
+}): boolean {
+    if (source.excludeKeys?.includes(key)) return false;
+    if (source.excludePrefixes?.some(prefix => key.startsWith(prefix))) return false;
     if (source.includeAll) return true;
     if (source.keys?.includes(key)) return true;
     return source.prefixes?.some(prefix => key.startsWith(prefix)) ?? false;

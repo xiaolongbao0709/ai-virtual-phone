@@ -201,8 +201,9 @@ export function ReadingShelf({ onOpenBook, onClose, appearance, backgroundUrl, o
                     format: "txt",
                     updatedAt: new Date().toISOString(),
                 });
-                const { text } = decodeTxtArrayBuffer(await file.arrayBuffer());
-                parsed = parseTxtContent(text, file.name, loadReadingInteractionConfig().paragraphMode);
+                const readingConfig = loadReadingInteractionConfig();
+                const { text } = decodeTxtArrayBuffer(await file.arrayBuffer(), readingConfig.txtEncoding);
+                parsed = parseTxtContent(text, file.name, readingConfig.paragraphMode);
                 format = "txt";
             } else if (ext === "epub") {
                 importStage = "读取 EPUB 文件";

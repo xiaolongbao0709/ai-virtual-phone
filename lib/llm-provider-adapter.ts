@@ -6,6 +6,7 @@ import {
     determineBaseUrl,
     isNativeAnthropicApi,
     isNativeGoogleApi,
+    stripHallucinatedTimestamps,
 } from "./api-helpers";
 
 export type LlmProviderKind = "openai-compatible" | "anthropic" | "gemini";
@@ -263,13 +264,9 @@ export function buildProviderRequest(
     return buildOpenAICompatibleRequest(config, preset, baseUrl, providerMessages, options);
 }
 
-export function stripHallucinatedTimestamps(text: string): string {
-    // 括号内以完整日期时间开头的一律剥掉：兼容带秒、时区（Europe/Madrid、UTC+2）、
-    // 星期等尾巴与全角括号——prompt 给历史消息标注的时间带时区时，AI 会照格式模仿
-    return text
-        .replace(/[（(]\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?(?:\s+[^)）]*)?[)）]\s*/g, "")
-        .replace(/\(system\s*time\s*[:：][^)]*\)\s*/gi, "");
-}
+// 剥离逻辑收敛到 api-helpers（更底层，微信助手运行时也照抄同一份正则）；
+// 这里保留同名再导出，调用方无需改动。
+export { stripHallucinatedTimestamps };
 
 export function buildProviderDebugMessages(
     config: ApiConfig,

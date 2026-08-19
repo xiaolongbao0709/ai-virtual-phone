@@ -82,6 +82,25 @@ function pullFamily(text: string, tags: TagFamily): { text: string; raw?: string
 }
 
 /** 从 AI 原文剥离状态栏与小剧场块；漏写闭合（生成截断）时走行首开标签兜底 */
+/**
+ * 流式过程中能安全显示的那一段正文。
+ * 状态栏 / 小剧场块交给 extractMixBlocks 兜住——它认得"只开没关"的块，
+ * 半张状态栏不会漏到正文里。机括的标记行（〔记〕这类）要等出杯后才被摘掉，
+ * 流式里会先闪一下再消失，所以末尾那一行只要以 〔 或 [ 开头就先不显示：
+ * 它要么是块的开头，要么是标记行，两种最终都不属于正文。
+ */
+export function mixStreamText(partial: string): string {
+    const lines = extractMixBlocks(String(partial ?? "")).text.split("\n");
+    // 从末尾往回剥：空行、以 〔 或 [ 开头的行都先不显示。
+    // 写完整的块已经被 extractMixBlocks 摘走了，还留在这儿的一定是没写完的。
+    while (lines.length) {
+        const tail = lines[lines.length - 1].trim();
+        if (tail === "" || /^[〔[]/.test(tail)) { lines.pop(); continue; }
+        break;
+    }
+    return lines.join("\n");
+}
+
 export function extractMixBlocks(rawInput: string): { text: string; ticketRaw?: string; encoreRaw?: string } {
     const afterEncore = pullFamily(rawInput, ENCORE_TAGS);
     const afterTicket = pullFamily(afterEncore.text, TICKET_TAGS);

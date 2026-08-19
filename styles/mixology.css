@@ -1649,6 +1649,15 @@
     color: var(--mix-dim);
 }
 
+.mix-guide-level {
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px dashed rgba(141, 123, 245, 0.22);
+    font-size: 10.5px;
+    line-height: 1.7;
+    color: var(--mix-faint);
+}
+
 .mix-guide-link {
     margin-top: 9px;
     /*
@@ -2582,7 +2591,7 @@
     font-variant-numeric: tabular-nums;
 }
 
-/* 机括：停靠位选择 */
+/* 机括：起手式与开关的小胶囊 */
 .mix-dock-row {
     display: flex;
     flex-wrap: wrap;
@@ -2619,33 +2628,58 @@
     z-index: 6;
 }
 
+/*
+ * 面板的位置与尺寸全部由内联样式给（百分比，来自材料自己写的摆放），
+ * 这里只管长相。宿主不再规定"能摆在哪"——那是创作者的事。
+ */
 .mix-panel {
     position: absolute;
     display: flex;
     flex-direction: column;
+    min-width: 0;
     pointer-events: auto;
-    border-radius: 14px;
     overflow: hidden;
+}
+
+/* 底板：应用画的圆角暗底。作者自己画背景时把 plate 关掉，这一层就整个消失 */
+.mix-panel:not([data-plate="false"]) {
+    border-radius: 14px;
     background: rgba(10, 9, 16, 0.72);
     backdrop-filter: blur(8px);
     border: 1px solid var(--mix-line);
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
 }
 
-/* 收起时只剩一条把手 */
-.mix-panel-tab {
+/*
+ * 位置与尺寸走过渡：界面自己调 mix.move / mix.size 时是滑过去的，不是跳过去的。
+ * 正在拖的时候必须关掉，否则面板会跟着手指一路追尾。
+ */
+.mix-panel {
+    transition: left 0.26s cubic-bezier(0.32, 0.72, 0, 1), top 0.26s cubic-bezier(0.32, 0.72, 0, 1),
+        width 0.26s cubic-bezier(0.32, 0.72, 0, 1), height 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.mix-panel[data-grabbing] {
+    user-select: none;
+    transition: none;
+}
+
+/* 把手条：带名字与收起箭头，按住整条可拖 */
+.mix-panel-bar {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 6px;
-    padding: 6px 10px;
-    border: none;
-    background: transparent;
+    padding: 5px 9px;
     color: var(--mix-violet);
-    font-family: inherit;
     font-size: 11px;
-    cursor: pointer;
-    flex: 0 0 auto;
+    cursor: grab;
+    touch-action: none;
+}
+
+.mix-panel[data-grabbing="move"] .mix-panel-bar {
+    cursor: grabbing;
 }
 
 .mix-panel-tab-name {
@@ -2654,65 +2688,165 @@
     white-space: nowrap;
 }
 
-.mix-panel-frame {
+.mix-panel-fold {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+/*
+ * 界面所在的那一块。iframe 绝对定位铺满它——作者填了「按多宽排版」时，
+ * iframe 会先按那个宽度铺开再整体缩回来，得有个固定的框把它裁住。
+ */
+.mix-panel-stage {
+    position: relative;
     flex: 1;
+    min-height: 0;
     width: 100%;
+    overflow: hidden;
+}
+
+.mix-panel-frame {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
     border: 0;
     background: transparent;
-    min-height: 0;
 }
 
-/* ── 左右侧栏：竖条，顶到状态条下方，留出输入栏 ── */
-.mix-panel[data-dock="left"],
-.mix-panel[data-dock="right"] {
-    top: 12%;
-    width: 148px;
-    max-width: 42%;
-    max-height: 52%;
+/* 右下角的缩放把手，只有摆放里开了 resize 才画 */
+.mix-panel-grip {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 18px;
+    height: 18px;
+    cursor: nwse-resize;
+    touch-action: none;
+    background: linear-gradient(
+        135deg,
+        transparent 52%,
+        rgba(242, 240, 247, 0.3) 52%,
+        rgba(242, 240, 247, 0.3) 62%,
+        transparent 62%,
+        transparent 74%,
+        rgba(242, 240, 247, 0.3) 74%,
+        rgba(242, 240, 247, 0.3) 84%,
+        transparent 84%
+    );
 }
 
-.mix-panel[data-dock="left"] { left: 8px; }
-.mix-panel[data-dock="right"] { right: 8px; }
-
-.mix-panel[data-dock="left"]:not([data-open]),
-.mix-panel[data-dock="right"]:not([data-open]) {
-    max-height: none;
+/*
+ * 拖动期间盖住整屏。不这么做的话指针一进 iframe，pointermove 就被沙盒吃掉，
+ * 拖起来走走停停。挂在 body 上（见组件里的 portal），不能挂在面板里。
+ */
+.mix-panel-catch {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
 }
 
-/* ── 底部条：压在输入栏上方 ── */
-.mix-panel[data-dock="bottom"] {
-    left: 10px;
-    right: 10px;
-    bottom: 68px;
-    max-height: 34%;
+.mix-panel-catch[data-mode="move"] { cursor: grabbing; }
+.mix-panel-catch[data-mode="size"] { cursor: nwse-resize; }
+
+/* 对局里的逃生口：一键收起全部机括界面 / 把拖乱的位置归位 */
+.mix-panel-ops {
+    display: flex;
+    gap: 8px;
+    margin: 8px 0 2px;
 }
 
-.mix-panel[data-dock="bottom"][data-open="true"] .mix-panel-frame {
-    min-height: 96px;
+/* 正在写的那一段：与落库后的正文同一套排版，只在末尾加一个光标示意还没写完 */
+.mix-live-turn .mix-prose > :last-child::after {
+    content: "";
+    display: inline-block;
+    width: 2px;
+    height: 0.95em;
+    margin-left: 3px;
+    vertical-align: -0.12em;
+    background: var(--mix-violet);
+    animation: mixCaret 1s steps(1, end) infinite;
 }
 
-/* ── 悬浮球：默认收起成一颗，展开是一块中等面板 ── */
-.mix-panel[data-dock="float"] {
-    right: 8px;
-    bottom: 128px;
-    width: 176px;
-    max-height: 44%;
+@keyframes mixCaret {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
 }
 
-.mix-panel[data-dock="float"]:not([data-open]) {
-    width: auto;
-    max-width: 132px;
+/* ── 编辑器里的机括试摆：一块按对局画面比例画的舞台，面板真的落在上面 ── */
+.mix-mech-stage {
+    position: relative;
+    margin-top: 8px;
+    width: 100%;
+    /* 长宽比在组件里按对局画面实测后写进内联样式，这里只兜个底 */
+    aspect-ratio: 9 / 19.5;
+    border-radius: 14px;
+    border: 1px solid var(--mix-line);
+    background: linear-gradient(160deg, #231d33, #100e18 55%, #0a0910);
+    overflow: hidden;
 }
 
-.mix-panel[data-dock="float"][data-open="true"] .mix-panel-frame {
-    min-height: 140px;
+.mix-mech-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--mix-text);
+    background: rgba(11, 11, 16, 0.4);
+    border-bottom: 1px solid var(--mix-line);
 }
 
-/* 两件同侧时错开，别叠在一起 */
-.mix-panel[data-dock="left"] ~ .mix-panel[data-dock="left"] { top: 40%; }
-.mix-panel[data-dock="right"] ~ .mix-panel[data-dock="right"] { top: 40%; }
-.mix-panel[data-dock="bottom"] ~ .mix-panel[data-dock="bottom"] { bottom: 152px; }
-.mix-panel[data-dock="float"] ~ .mix-panel[data-dock="float"] { bottom: 196px; }
+.mix-mech-prose {
+    position: absolute;
+    top: 50px;
+    left: 14px;
+    right: 14px;
+    font-size: 12px;
+    opacity: 0.8;
+    pointer-events: none;
+}
+
+.mix-mech-input {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 48px;
+    background: rgba(11, 11, 16, 0.5);
+    border-top: 1px solid var(--mix-line);
+}
+
+.mix-mech-hint {
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--mix-faint);
+}
+
+.mix-mech-reset {
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--mix-violet);
+    font-family: inherit;
+    font-size: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
 
 /* 带可执行逻辑的材料（机括）：列表与详情里都要显眼一点 */
 .mix-mat-badge[data-tone="code"] {

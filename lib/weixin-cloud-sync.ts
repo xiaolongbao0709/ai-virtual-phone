@@ -3,6 +3,7 @@ import {
   createOrGetSession,
   CHAT_MESSAGES_DELETED_EVENT,
   CHAT_MESSAGE_PUSHED_EVENT,
+  CHAT_RESPONSE_BATCH_REPLACED_EVENT,
   getLatestCharacterStateValues,
   hydrateChatStorage,
   loadChatAppSettings,
@@ -50,11 +51,13 @@ import {
   buildOfflineBilingualInstruction,
 } from "./chat-engine";
 import { nativeToolProtocolForConfig } from "./llm-provider-adapter";
+import { stripHallucinatedTimestamps } from "./api-helpers";
 import { getEnabledTools } from "./tool-storage";
 import { getCustomStickerExample, getCustomStickerNames, resolveCustomStickerMap } from "./custom-sticker-storage";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import { buildCalendarScheduleMarker, getCurrentCalendarScheduleForPrompt } from "./calendar-storage";
 import { getWeekStartIso } from "./calendar-utils";
+import { buildCharacterTimeContext } from "./character-time";
 import { isNeteaseConfigured } from "./music-service";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import {
@@ -73,6 +76,12 @@ const WEIXIN_CLOUD_CONFIG_KEY = "weixin_cloud_sync_config_v1";
 const WEIXIN_CLOUD_PREFIX = "weixin-cloud";
 const WEIXIN_CLOUD_INDEX_PATH = `${WEIXIN_CLOUD_PREFIX}/index.json`;
 const WEIXIN_CLOUD_HISTORY_SLOT_TOKEN = "__AI_PHONE_WEIXIN_CLOUD_HISTORY_SLOT_V1__";
+/** v2 深度哨兵：__AI_PHONE_WX_SLOT_D<d>__ 标记「距离历史底部 d 条」的位置 */
+const WEIXIN_CLOUD_DEPTH_SLOT_PREFIX = "__AI_PHONE_WX_SLOT_D";
+/** 历史起点哨兵：把「同步时已烘焙的历史」从结构块里切出来，深度注入才能插回它内部 */
+const WEIXIN_CLOUD_HISTORY_HEAD_TOKEN = "__AI_PHONE_WX_SLOT_HEAD__";
+/** 哨兵条数上限：深度再大也没有实际意义，且每个哨兵都会占一条历史位 */
+const WEIXIN_CLOUD_MAX_DEPTH_SLOTS = 48;
 const WEIXIN_CLOUD_CHAT_APP_TAGS = ["chat", "text"];
 const DEFAULT_MESSAGE_LIMIT = 80;
 const REALTIME_PULL_INTERVAL_MS = 8000;
@@ -152,6 +161,14 @@ export type WeixinCloudPromptContext = {
   /** 云端助手是否发送媒体回复（生图/表情包/语音卡）；核心模块按此开关执行 */
   mediaReply?: boolean;
   timeAware: boolean;
+  /**
+   * 用户设备时区（IANA）。云函数跑在 UTC，不下发这个字段的话它给微信消息打的
+   * 时间戳会比运行包里烘焙的小手机历史时间戳整整差几个时区，同一段提示词里出现
+   * 两套钟——既让模型看到时间跳变，也更容易照着编时间戳。
+   */
+  promptTimeZone?: string;
+  /** 与小手机 getPromptTimestampOptionsForTimeContext 对齐：角色时区与系统时区有差异时才带时区名 */
+  promptTimestampIncludeZone?: boolean;
   nativeToolHistory: boolean;
 };
 
@@ -168,13 +185,36 @@ export type WeixinCloudImageGenerationContext = {
   referenceUpdatedAt?: number;
 };
 
+/**
+ * 轻量提示词模板：助手拿它 + 新微信消息拼出完整提示词，不需要在云端跑一遍组装器。
+ *
+ * v1 只有 before/after 两段，切分点是历史末尾的单个 slot——深度注入（世界书
+ * position=4、预设 injection_position≠0）在同步那一刻就被算好位置钉进 beforeMessages，
+ * 之后微信每来一条消息，这些条目距离底部就远一条，越聊越飘。
+ *
+ * v2 在历史末尾插 maxDepth+1 个哨兵 slot，把「距离底部 d 条」这个位置切出来，
+ * 助手按当前的新消息条数重新定位。beforeMessages / afterMessages 仍按 v1 语义填好，
+ * 老助手（未更新的本地包）读到 v2 模板也能照常工作，只是恢复成 v1 的漂移行为。
+ */
 export type WeixinCloudPromptTemplate = {
-  version: 1;
+  version: 1 | 2;
   slotToken: string;
   beforeMessages: LLMMessage[];
   afterMessages: LLMMessage[];
   baseHistoryLength: number;
   createdAt: string;
+  /** v2：历史之上的固定部分（角色卡、预设前置块等） */
+  structuralMessages?: LLMMessage[];
+  /**
+   * v2：同步那一刻已经烘焙好的历史消息，单独成段。
+   * 助手把它和新微信消息接成一条完整历史再算深度——否则新消息条数少于 depth 时，
+   * 注入块没法插回旧历史内部，只能贴在它下面（与小手机不一致）。
+   */
+  bakedHistoryMessages?: LLMMessage[];
+  /** v2：depth 段，助手把 messages 放到「完整历史倒数第 depth 条」之前 */
+  depthSegments?: Array<{ depth: number; messages: LLMMessage[] }>;
+  /** v2：本次烘焙覆盖到的最大深度，超过它的注入仍留在 structuralMessages 里 */
+  maxDepth?: number;
 };
 
 export type WeixinCloudRuntimeIndexItem = {
@@ -648,67 +688,192 @@ export function buildWeixinCloudPromptMessages(
   return messages;
 }
 
-function buildWeixinCloudPromptTemplate(snapshot: WeixinCloudRuntimeSnapshot): WeixinCloudPromptTemplate {
+export function buildWeixinCloudPromptTemplate(snapshot: WeixinCloudRuntimeSnapshot): WeixinCloudPromptTemplate {
   const context = snapshot.promptContext;
-  const slotMessage: ChatMessage = {
-    id: "weixin-cloud-history-slot",
+  // maxDepth + 1 个哨兵：depth=d 的注入块（order < 历史块的 999）会落在 slot_{d+1}
+  // 和 slot_d 之间，多插一个才能把最大深度那一档也单独切出来。
+  const maxDepth = resolveWeixinCloudMaxInjectionDepth(snapshot);
+  const slotCount = Math.min(WEIXIN_CLOUD_MAX_DEPTH_SLOTS, Math.max(2, maxDepth + 1));
+  // 由深到浅追加，最后一条哨兵位于历史最底部（depth 1）
+  const slotDepths = Array.from({ length: slotCount }, (_, i) => slotCount - i);
+  const slotMessage = (id: string, content: string, createdAt: string): ChatMessage => ({
+    id,
     sessionId: snapshot.session.id,
     role: "system",
-    content: WEIXIN_CLOUD_HISTORY_SLOT_TOKEN,
+    content,
     status: "sent",
-    createdAt: snapshot.createdAt,
+    createdAt,
+  });
+  // 短期时间线是按时间戳排序的，哨兵的时间必须压过整条线的两端，否则一条时间戳比
+  // 同步时刻还晚的历史消息（时钟偏差、导入的旧数据）就能把哨兵挤到历史中间，
+  // 切出来的段全错。ISO 字符串按字典序即时间序；并列时按加入顺序决胜，
+  // 头哨兵排在最前、深度哨兵追加在最后，所以取闭区间端点就够。
+  const timeline = [
+    ...context.promptHistory.map(message => message.createdAt),
+    ...context.unifiedRecentItems.map(item => item.timestamp),
+    snapshot.createdAt,
+  ].filter(Boolean).sort();
+  const headCreatedAt = timeline[0] ?? snapshot.createdAt;
+  const slotCreatedAt = timeline[timeline.length - 1] ?? snapshot.createdAt;
+
+  const slotMessages = slotDepths.map(depth =>
+    slotMessage(`weixin-cloud-history-slot-d${depth}`, depthSlotToken(depth), slotCreatedAt));
+
+  // 历史起点哨兵插在最前：它上面是结构块，下面到第一个深度哨兵之间就是已烘焙的历史。
+  const headMessage = slotMessage("weixin-cloud-history-head", WEIXIN_CLOUD_HISTORY_HEAD_TOKEN, headCreatedAt);
+
+  // 前插会把 unifiedRecentItems 里的 historyIndex 全体错位一位，必须同步右移，
+  // 否则历史项会指向错误的消息，烘焙出来的历史顺序整个乱掉。
+  const headHistory = [headMessage, ...context.promptHistory];
+  const headSnapshot: WeixinCloudRuntimeSnapshot = {
+    ...snapshot,
+    promptContext: {
+      ...context,
+      promptHistory: headHistory,
+      unifiedRecentItems: [
+        { kind: "history", timestamp: headCreatedAt, historyIndex: 0 },
+        ...context.unifiedRecentItems.map(item =>
+          item.kind === "history" ? { ...item, historyIndex: item.historyIndex + 1 } : { ...item }),
+      ],
+    },
   };
-  const templateMessages = buildWeixinCloudPromptMessages(snapshot, {
-    history: [...context.promptHistory, slotMessage],
+
+  const templateMessages = buildWeixinCloudPromptMessages(headSnapshot, {
+    history: [...headHistory, ...slotMessages],
     skipEmptyGenerateGuard: true,
   });
-  const split = splitPromptMessagesAtHistorySlot(templateMessages);
+
+  const segments = splitPromptMessagesByTokens(
+    templateMessages,
+    [WEIXIN_CLOUD_HISTORY_HEAD_TOKEN, ...slotDepths.map(depthSlotToken)],
+  );
+  const structuralMessages = segments[0];
+  const bakedHistoryMessages = segments[1];
+  const afterMessages = segments[segments.length - 1];
+  // segments[j]（2 ≤ j ≤ slotCount）= 位于 slot_{slotCount-j+2} 与 slot_{slotCount-j+1}
+  // 之间的内容，也就是 depth = slotCount - j + 1 的注入块。
+  const depthSegments = segments
+    .slice(2, segments.length - 1)
+    .map((messages, index) => ({ depth: slotCount - index - 1, messages }))
+    .filter(segment => segment.messages.length > 0);
+
   return {
-    version: 1,
+    version: 2,
     slotToken: WEIXIN_CLOUD_HISTORY_SLOT_TOKEN,
-    beforeMessages: split.beforeMessages,
-    afterMessages: split.afterMessages,
+    // v1 语义 = 深度注入按「零条新消息」时的位置嵌进已烘焙历史，正是老模板的排布，
+    // 未更新的老助手读到它得到与改动前一致的提示词。
+    beforeMessages: [...structuralMessages, ...interleaveDepthSegments(depthSegments, bakedHistoryMessages)],
+    afterMessages,
     baseHistoryLength: context.promptHistory.length,
     createdAt: snapshot.createdAt,
+    structuralMessages,
+    bakedHistoryMessages,
+    depthSegments,
+    maxDepth: slotCount - 1,
   };
 }
 
-function splitPromptMessagesAtHistorySlot(messages: LLMMessage[]): { beforeMessages: LLMMessage[]; afterMessages: LLMMessage[] } {
-  const beforeMessages: LLMMessage[] = [];
-  const afterMessages: LLMMessage[] = [];
-  let found = false;
+/**
+ * 把 depth 段插回历史：depth = d 表示「距离底部第 d 条」，即插在下标 total - d 之前。
+ * 与助手侧 assistant-core.mjs 的同名函数是同一套规则，改一处要一起改。
+ */
+function interleaveDepthSegments(
+  segments: Array<{ depth: number; messages: LLMMessage[] }>,
+  history: LLMMessage[],
+): LLMMessage[] {
+  const total = history.length;
+  const buckets = new Map<number, LLMMessage[]>();
+  const ordered = [...segments]
+    .filter(segment => segment.messages.length > 0)
+    .sort((a, b) => b.depth - a.depth);
 
-  for (const message of messages) {
-    if (found) {
-      afterMessages.push(stripPromptMessageForCloud(message));
-      continue;
-    }
-
-    if (typeof message.content !== "string" || !message.content.includes(WEIXIN_CLOUD_HISTORY_SLOT_TOKEN)) {
-      beforeMessages.push(stripPromptMessageForCloud(message));
-      continue;
-    }
-
-    const [beforeText, afterText] = splitTextAtFirstToken(message.content, WEIXIN_CLOUD_HISTORY_SLOT_TOKEN);
-    if (beforeText.trim()) {
-      beforeMessages.push(stripPromptMessageForCloud({ ...message, content: beforeText }));
-    }
-    if (afterText.trim()) {
-      afterMessages.push(stripPromptMessageForCloud({ ...message, content: afterText }));
-    }
-    found = true;
+  for (const segment of ordered) {
+    const index = segment.depth <= 0 ? total : (segment.depth >= total ? 0 : total - segment.depth);
+    buckets.set(index, [...(buckets.get(index) ?? []), ...segment.messages]);
   }
 
-  if (!found) {
-    throw new Error("生成微信本地助手运行包失败：未找到微信消息插入点。");
+  const out: LLMMessage[] = [];
+  for (let i = 0; i <= total; i += 1) {
+    const bucket = buckets.get(i);
+    if (bucket) out.push(...bucket);
+    if (i < total) out.push(history[i]);
   }
-  return { beforeMessages, afterMessages };
+  return out;
 }
 
-function splitTextAtFirstToken(text: string, token: string): [string, string] {
-  const index = text.indexOf(token);
-  if (index < 0) return [text, ""];
-  return [text.slice(0, index), text.slice(index + token.length)];
+/** 预设 ABSOLUTE 条目（injection_position ≠ 0）与世界书 position=4 条目里的最大注入深度 */
+function resolveWeixinCloudMaxInjectionDepth(snapshot: WeixinCloudRuntimeSnapshot): number {
+  let maxDepth = 0;
+  for (const prompt of snapshot.preset?.prompts ?? []) {
+    if ((prompt.injection_position ?? 0) === 0) continue;
+    maxDepth = Math.max(maxDepth, Math.floor(prompt.injection_depth ?? 0));
+  }
+  for (const worldBook of snapshot.worldBooks) {
+    for (const entry of worldBook.entries ?? []) {
+      if (entry.disable) continue;
+      if (entry.position !== 4) continue;
+      maxDepth = Math.max(maxDepth, Math.floor(entry.depth ?? 4));
+    }
+  }
+  return Number.isFinite(maxDepth) && maxDepth > 0 ? maxDepth : 0;
+}
+
+function isWeixinCloudDepthSlotMessage(message: ChatMessage): boolean {
+  return typeof message.content === "string"
+    && (message.content.includes(WEIXIN_CLOUD_DEPTH_SLOT_PREFIX)
+      || message.content.includes(WEIXIN_CLOUD_HISTORY_HEAD_TOKEN)
+      || message.content.includes(WEIXIN_CLOUD_HISTORY_SLOT_TOKEN));
+}
+
+function depthSlotToken(depth: number): string {
+  return `${WEIXIN_CLOUD_DEPTH_SLOT_PREFIX}${depth}__`;
+}
+
+/** 组装后的历史块可能把时间戳和哨兵合进同一条消息，切分时把这行时间戳一起丢掉 */
+const WEIXIN_CLOUD_TIMESTAMP_ONLY_LINE = /^\s*[（(]\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?(?:\s+[^)）]*)?[)）]\s*$/;
+
+/**
+ * 按哨兵 token 逐行切分组装结果，返回 tokens.length + 1 段。
+ * 逐行而非按下标切：组装器会把相邻同 role 的块合并成一条消息，一条消息里可能
+ * 同时含多个哨兵，而且开了时间感知时哨兵上面还会多一行时间戳。
+ */
+function splitPromptMessagesByTokens(messages: LLMMessage[], tokens: string[]): LLMMessage[][] {
+  const segments: LLMMessage[][] = [[]];
+  let tokenIndex = 0;
+
+  for (const message of messages) {
+    const current = () => segments[segments.length - 1];
+    if (typeof message.content !== "string") {
+      current().push(stripPromptMessageForCloud(message));
+      continue;
+    }
+
+    let buffer: string[] = [];
+    const flush = () => {
+      const text = buffer.join("\n").trim();
+      buffer = [];
+      if (text) current().push(stripPromptMessageForCloud({ ...message, content: text }));
+    };
+
+    for (const line of message.content.split("\n")) {
+      if (tokenIndex < tokens.length && line.includes(tokens[tokenIndex])) {
+        while (buffer.length > 0 && (!buffer[buffer.length - 1].trim() || WEIXIN_CLOUD_TIMESTAMP_ONLY_LINE.test(buffer[buffer.length - 1]))) {
+          buffer.pop();
+        }
+        flush();
+        segments.push([]);
+        tokenIndex += 1;
+        continue;
+      }
+      buffer.push(line);
+    }
+    flush();
+  }
+
+  if (tokenIndex !== tokens.length) {
+    throw new Error("生成微信本地助手运行包失败：未找到微信消息插入点。");
+  }
+  return segments;
 }
 
 function stripPromptMessageForCloud(message: LLMMessage): LLMMessage {
@@ -775,6 +940,9 @@ function buildWeixinCloudWorldBookActivationContext(
   history: ChatMessage[],
 ): string {
   const recentHistory = history
+    // 烘焙模板时历史末尾挂着一串深度哨兵，不能让它们顶掉真正的近期对话，
+    // 否则世界书关键词激活会在最关键的最近 10 条上什么都匹配不到。
+    .filter(message => !isWeixinCloudDepthSlotMessage(message))
     .slice(-10)
     .map(message => message.content)
     .filter(Boolean)
@@ -862,6 +1030,7 @@ async function buildWeixinCloudPromptContext(params: {
   ]);
 
   const now = new Date();
+  const promptTimeContext = buildCharacterTimeContext(params.character.timeZone, now);
   // 微信链路没有工具执行引擎（原生 tool_calls 不解析、文本指令会被清理），
   // 不下发工具清单/动作横幅，改为明确声明不可用；历史中的工具调用回合
   // 保留在上下文里（承载剧情连续性），靠声明约束模型不去模仿。
@@ -908,6 +1077,8 @@ async function buildWeixinCloudPromptContext(params: {
     enableVision: params.apiConfig.enableImageRecognition === true,
     mediaReply: true,
     timeAware: params.chatAppSettings.timeAware !== false,
+    promptTimeZone: promptTimeContext.systemTimeZone,
+    promptTimestampIncludeZone: promptTimeContext.hasDifference,
     nativeToolHistory: usesNativeActions,
   };
   const shellCreatedAt = new Date().toISOString();
@@ -1188,6 +1359,26 @@ export function startWeixinCloudRealtimeSync(): () => void {
     scheduleUploadFlush();
   };
 
+  const onResponseBatchReplaced = (event: Event) => {
+    const detail = (event as CustomEvent).detail as
+      { messages?: ChatMessage[]; rawResponseText?: string } | undefined;
+    if (!Array.isArray(detail?.messages) || typeof detail?.rawResponseText !== "string") return;
+    if (!shouldRun()) return;
+    if (!findWeixinCloudOutboundAnchor(detail.messages)) return;
+
+    // 编辑后的分段沿用原 cloudSync，拉取侧的去重照旧命中；这里把编辑结果回写云端，
+    // 否则助手下一轮从云消息目录读到的仍是编辑前的原文。
+    void syncEditedWeixinCloudMessageToCloud(detail.messages, detail.rawResponseText).catch((err) => {
+      console.warn("[WeixinCloudSync] edited reply write-back failed:", err);
+    });
+
+    // 只回写云消息还不够：这条回复若已经烘焙进当前运行包，助手会因为它的时间戳
+    // 早于运行包生成时刻而在历史过滤阶段把云对象排除，只看到模板里的旧版本。
+    // 重新同步一次运行包才能真正让编辑生效——顺带也是回写失败时的兜底，
+    // 因为本地消息已经是编辑后的内容，重新烘焙同样会带上。
+    scheduleRuntimeSync();
+  };
+
   const onMessagesDeleted = (event: Event) => {
     const messages = (event as CustomEvent).detail?.messages as ChatMessage[] | undefined;
     if (!Array.isArray(messages) || messages.length === 0) return;
@@ -1248,6 +1439,7 @@ export function startWeixinCloudRealtimeSync(): () => void {
   };
 
   window.addEventListener(CHAT_MESSAGE_PUSHED_EVENT, onMessagePushed);
+  window.addEventListener(CHAT_RESPONSE_BATCH_REPLACED_EVENT, onResponseBatchReplaced);
   window.addEventListener(CHAT_MESSAGES_DELETED_EVENT, onMessagesDeleted);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("focus", onFocus);
@@ -1265,6 +1457,7 @@ export function startWeixinCloudRealtimeSync(): () => void {
     if (uploadFlushTimer) window.clearTimeout(uploadFlushTimer);
     if (runtimeSyncTimer) window.clearTimeout(runtimeSyncTimer);
     window.removeEventListener(CHAT_MESSAGE_PUSHED_EVENT, onMessagePushed);
+    window.removeEventListener(CHAT_RESPONSE_BATCH_REPLACED_EVENT, onResponseBatchReplaced);
     window.removeEventListener(CHAT_MESSAGES_DELETED_EVENT, onMessagesDeleted);
     document.removeEventListener("visibilitychange", onVisibility);
     window.removeEventListener("focus", onFocus);
@@ -1306,6 +1499,59 @@ export async function syncLocalWeixinCloudMessageToCloud(message: ChatMessage): 
     cloudConfig,
     weixinCloudMessagePath(target.bot.id, externalId),
     JSON.stringify(payload, null, 2),
+    "application/json",
+  );
+  return true;
+}
+
+/**
+ * 长按编辑一条从微信拉回来的回复后，把编辑结果就地覆盖回同一条云消息。
+ *
+ * 不能走 syncLocalWeixinCloudMessageToCloud：那条路会新建 `local_<msgId>` 对象，
+ * 云端就同时存在原文与编辑版，助手组提示词时两份都读得到。这里只改 content，
+ * 保留 externalId / raw / needsReply 等字段，云端对象数量不变。
+ */
+export function findWeixinCloudOutboundAnchor(messages: ChatMessage[]): ChatMessage | undefined {
+  return messages.find(message =>
+    message.cloudSync?.source === "weixin-cloud"
+    && message.cloudSync.direction === "outbound"
+    && Boolean(message.cloudSync.botId)
+    && Boolean(message.cloudSync.externalId),
+  );
+}
+
+export async function syncEditedWeixinCloudMessageToCloud(
+  messages: ChatMessage[],
+  rawResponseText: string,
+): Promise<boolean> {
+  const anchor = findWeixinCloudOutboundAnchor(messages);
+  if (!anchor?.cloudSync?.botId || !anchor.cloudSync.externalId) return false;
+  if (loadWeixinCloudSyncConfig().enabled !== true) return false;
+
+  const cloudConfig = loadCloudBackupConfig();
+  if (!isCloudBackupConfigured(cloudConfig)) return false;
+
+  const content = rawResponseText.trim();
+  if (!content) return false;
+
+  const path = weixinCloudMessagePath(anchor.cloudSync.botId, anchor.cloudSync.externalId);
+  const blob = await getObject(cloudConfig, path);
+  // 云端原件已被删掉（或还没落盘）就不补建：凭空造一条会让助手把它当新消息处理。
+  if (!blob) return false;
+
+  let stored: WeixinCloudStoredMessage;
+  try {
+    stored = JSON.parse(await blob.text()) as WeixinCloudStoredMessage;
+  } catch {
+    return false;
+  }
+  if (!isCloudStoredMessage(stored)) return false;
+  if (stored.content === content) return true;
+
+  await putObject(
+    cloudConfig,
+    path,
+    JSON.stringify({ ...stored, content, editedAt: new Date().toISOString() }, null, 2),
     "application/json",
   );
   return true;
@@ -1452,7 +1698,10 @@ async function loadCloudStoredMessageImage(
 }
 
 /** 导入前按角色绑定的正则脚本整形（编辑类、placement=2），与聊天室生成/编辑路径同一套处理。 */
-function normalizeCloudAssistantContentForImport(stored: WeixinCloudStoredMessage, characterName: string): string {
+function normalizeCloudAssistantContentForImport(
+  stored: Pick<WeixinCloudStoredMessage, "content" | "characterId">,
+  characterName: string,
+): string {
   const content = stored.content;
   try {
     const bindings = loadBindingConfig();
@@ -1482,9 +1731,16 @@ function importCloudAssistantMessage(
   if (existing) return { inserted: false, sessionId: session.id };
 
   const characterName = loadCharacters().find(item => item.id === stored.characterId)?.name || "对方";
+  // 兜底再剥一次幻觉时间戳：助手侧已经剥过，但旧运行包/旧云函数按老正则清洗，
+  // 桶里存量消息仍可能残留 (2026-08-19 13:54 Asia/Shanghai) 这类尾巴。
+  // 放在正则整形之前，长按编辑时看到的原文（rawResponseText）也是干净的。
+  const strippedContent = stripHallucinatedTimestamps(stored.content);
   // 与聊天室编辑/生成路径保持一致：先跑角色绑定的编辑类正则整形，再解析。
   // 否则状态栏等内容与正则美化脚本期望的格式对不上（导入的消息会显示成纯文本）。
-  const normalizedContent = normalizeCloudAssistantContentForImport(stored, characterName);
+  const normalizedContent = normalizeCloudAssistantContentForImport(
+    { content: strippedContent, characterId: stored.characterId },
+    characterName,
+  );
   const parsed = parseAIResponse(normalizedContent, getLatestCharacterStateValues(stored.characterId));
   const visibleParts = parsed.parts.filter(part =>
     part.mediaType !== "voice_call"
@@ -1507,7 +1763,7 @@ function importCloudAssistantMessage(
         content: `${pokeSender} 拍了拍 ${pokeTarget}`,
         mediaType: "poke",
         mediaData: { pokeSender, pokeTarget },
-      }));
+      }, strippedContent));
       return;
     }
     messages.push(makeCloudImportedMessage(stored, session.id, createdAt, index, {
@@ -1519,7 +1775,7 @@ function importCloudAssistantMessage(
       innerMonologue: index === 0 && parsed.innerMonologue ? parsed.innerMonologue : undefined,
       stateValues: index === 0 && parsed.stateValues.length > 0 ? parsed.stateValues : undefined,
       freshStateValues: index === 0 ? parsed.freshStateValues : undefined,
-    }));
+    }, strippedContent));
   });
 
   if (messages.length === 0 && (parsed.statusPanel || parsed.innerMonologue || parsed.stateValues.length > 0)) {
@@ -1530,13 +1786,13 @@ function importCloudAssistantMessage(
       innerMonologue: parsed.innerMonologue || undefined,
       stateValues: parsed.stateValues.length > 0 ? parsed.stateValues : undefined,
       freshStateValues: parsed.freshStateValues,
-    }));
+    }, strippedContent));
   }
   if (messages.length === 0) {
     messages.push(makeCloudImportedMessage(stored, session.id, createdAt, 0, {
       role: "assistant",
       content: normalizedContent,
-    }));
+    }, strippedContent));
   }
 
   let inserted = false;
@@ -1552,6 +1808,7 @@ function makeCloudImportedMessage(
   createdAt: string,
   index: number,
   patch: Partial<ChatMessage> & Pick<ChatMessage, "role" | "content">,
+  rawResponseText: string = stored.content,
 ): ChatMessage {
   const baseTime = new Date(createdAt).getTime();
   const safeTime = Number.isFinite(baseTime) ? baseTime : Date.now();
@@ -1563,7 +1820,7 @@ function makeCloudImportedMessage(
     // 同一条云端回复的所有分段共享批次：长按编辑时可以像普通消息一样
     // 编辑整个批次的原始输出（含状态栏），保存后重新分段。
     responseBatchId: `wxcloud_batch_${cloudMessageId(stored)}`,
-    rawResponseText: stored.content,
+    rawResponseText,
     ...patch,
     cloudSync: {
       source: "weixin-cloud",

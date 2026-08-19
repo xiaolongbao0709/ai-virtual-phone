@@ -4,7 +4,7 @@
 // 特调不走聊天预设/正则管线——一杯特调自带全部提示词，正文协议由 App 自有解析器处理。
 // API 走全局默认接口配置（与角色绑定无关，特调对局是独立世界）。
 
-import { ChatEngineError, sendLLMRequest } from "../chat-engine";
+import { ChatEngineError, sendLLMRequest, sendLLMStreamRequest } from "../chat-engine";
 import type { LLMMessage } from "../llm-prompt-assembler";
 import { loadApiConfigs, loadBindingConfig } from "../settings-storage";
 import type { ApiConfig } from "../settings-types";
@@ -142,7 +142,7 @@ export function startMixSession(
     if (!card || card.kind !== "character") {
         throw new ChatEngineError("特调里没有角色卡，装不满这一杯。");
     }
-    // 代入名：显式传入 > 面具材料的代入名（装配器同规则，这里快照进对局供界面用）
+    // 用户的名字：显式传入 > 面具材料里填的（装配器同规则，这里快照进对局供界面用）
     const personaId = mixSlotFirstId(recipe.slots, "persona");
     const personaMat = personaId ? getMixMaterial(personaId) : null;
     const personaUserName = personaMat?.kind === "persona" ? personaMat.userName?.trim() : undefined;
@@ -325,11 +325,17 @@ async function runBeforeSendHooks(session: MixSession, text?: string): Promise<{
     return { session: next, text: result.text, note: result.notes.join("\n") || undefined };
 }
 
+/**
+ * 一次生成。给了 onDelta 就走流式：模型吐一段就回调一段，界面能边写边看。
+ * 流式只影响"过程怎么看"，落库、拆块、滤网、机括都还是拿到完整正文之后才做——
+ * 半个状态栏块、写了一半的标记行都不该被当成结果。
+ */
 async function runMixGeneration(
     session: MixSession,
     nudge: string | undefined,
     signal?: AbortSignal,
     skipBeforeSend = false,
+    onDelta?: (text: string) => void,
 ): Promise<MixReplyResult> {
     const apiConfig = resolveMixApiConfig();
     if (!apiConfig) {
@@ -348,14 +354,25 @@ async function runMixGeneration(
     const combinedNudge = [nudge, extraNote].filter(Boolean).join("\n\n") || undefined;
     const { prompt: assembled, ticket, active } = assembleFromSession(working);
     const messages = buildMixMessages(working, assembled, combinedNudge);
-    const raw = await sendLLMRequest(
-        apiConfig,
-        null,
-        messages,
-        [],
-        { characterName: working.charName, userName: working.userName || "你" },
-        { appId: MIX_PROMPT_APP_ID, appTags: MIX_PROMPT_TAGS, skipOutputRegex: true, signal },
-    );
+    const meta = { characterName: working.charName, userName: working.userName || "你" };
+    const llmOptions = { appId: MIX_PROMPT_APP_ID, appTags: MIX_PROMPT_TAGS, skipOutputRegex: true, signal };
+    let raw: string;
+    if (onDelta) {
+        let got = false;
+        try {
+            const streamed = await sendLLMStreamRequest(apiConfig, null, messages, [], meta, llmOptions, {
+                onDelta: (chunk) => { got = true; onDelta(chunk); },
+            });
+            raw = streamed.content;
+        } catch (error) {
+            // 一个字都没来就报错：多半是这条接口不支持 SSE（或者中间有代理把它拆了），
+            // 退回一次性请求重试一遍；已经吐过字再断的话就是真出错了，照常抛出去
+            if (got || (error instanceof Error && signal?.aborted)) throw error;
+            raw = await sendLLMRequest(apiConfig, null, messages, [], meta, llmOptions);
+        }
+    } else {
+        raw = await sendLLMRequest(apiConfig, null, messages, [], meta, llmOptions);
+    }
     const extracted = extractMixBlocks(raw);
     const { encoreRaw } = extracted;
     let { ticketRaw } = extracted;
@@ -407,6 +424,7 @@ export async function generateMixReply(
     userText: string,
     signal?: AbortSignal,
     onUserTurn?: () => void,
+    onDelta?: (text: string) => void,
 ): Promise<MixReplyResult> {
     const current = getMixSession(sessionId);
     if (!current) throw new ChatEngineError("对局不存在。");
@@ -428,7 +446,7 @@ export async function generateMixReply(
     // 所以得主动喊一声：用户气泡要在模型回来之前就上屏
     onUserTurn?.();
     // 这条路径的落杯前已经跑过了，别在 runMixGeneration 里重复触发
-    return runMixGeneration(withUser, before.note, signal, true);
+    return runMixGeneration(withUser, before.note, signal, true, onDelta);
 }
 
 /** 本局小票材料（记住的值的声明来源）；一格叠了多张时以第一张为准 */
@@ -448,7 +466,7 @@ function withRolledBackState(session: MixSession, turns: MixTurn[]): MixSession 
 }
 
 /** 重说：丢弃最后一条 assistant 回复重新生成（开场白除外） */
-export async function rerollMixReply(sessionId: string, signal?: AbortSignal): Promise<MixReplyResult> {
+export async function rerollMixReply(sessionId: string, signal?: AbortSignal, onDelta?: (text: string) => void): Promise<MixReplyResult> {
     const current = getMixSession(sessionId);
     if (!current) throw new ChatEngineError("对局不存在。");
     const last = current.turns[current.turns.length - 1];
@@ -462,14 +480,14 @@ export async function rerollMixReply(sessionId: string, signal?: AbortSignal): P
     const nudge = beforeLast?.role === "assistant"
         ? "（请接着上文继续推进剧情，换一个写法，不要重复。）"
         : undefined;
-    return runMixGeneration(trimmedSession, nudge, signal);
+    return runMixGeneration(trimmedSession, nudge, signal, false, onDelta);
 }
 
 /** 继续：不发言，让角色接着写（推进指令不落库） */
-export async function continueMix(sessionId: string, signal?: AbortSignal): Promise<MixReplyResult> {
+export async function continueMix(sessionId: string, signal?: AbortSignal, onDelta?: (text: string) => void): Promise<MixReplyResult> {
     const current = getMixSession(sessionId);
     if (!current) throw new ChatEngineError("对局不存在。");
-    return runMixGeneration(current, "（请接着上文继续推进剧情，直接续写，不要重复已写过的内容。）", signal);
+    return runMixGeneration(current, "（请接着上文继续推进剧情，直接续写，不要重复已写过的内容。）", signal, false, onDelta);
 }
 
 /**
@@ -549,10 +567,10 @@ export function editMixTurn(sessionId: string, turnId: string, newText: string):
 }
 
 /** 对当前历史直接生成回复（编辑玩家发言后的重新生成） */
-export async function regenerateMixTail(sessionId: string, signal?: AbortSignal): Promise<MixReplyResult> {
+export async function regenerateMixTail(sessionId: string, signal?: AbortSignal, onDelta?: (text: string) => void): Promise<MixReplyResult> {
     const current = getMixSession(sessionId);
     if (!current) throw new ChatEngineError("对局不存在。");
-    return runMixGeneration(current, undefined, signal);
+    return runMixGeneration(current, undefined, signal, false, onDelta);
 }
 
 /** 撤回最后一轮：删掉最后一条玩家发言及其后的全部回复 */

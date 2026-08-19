@@ -31,6 +31,7 @@ import { loadCustomAppChatPlusActions, type RegisteredCustomAppChatPlusAction } 
 import { CUSTOM_APPS_UPDATED_EVENT, getInstalledCustomApp } from "@/lib/custom-app-storage";
 import { toCustomAppIconId, type InstalledCustomApp } from "@/lib/custom-app-types";
 import { CustomAppRunner } from "@/components/app-market/custom-app-runner";
+import { CustomAppForegroundBoundary } from "@/components/app-market/custom-app-failure";
 
 import { ChatSettingsPanel } from "./chat-settings-panel";
 import { VoiceCallScreen } from "./voice-call-screen";
@@ -6007,13 +6008,23 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
                             </button>
                         </div>
                         <div className="chat-custom-app-body">
-                            <CustomAppRunner
-                                app={activeCustomChatPlus.app}
-                                launchContext={activeCustomChatPlus.launchContext}
-                                embedded
+                            <CustomAppForegroundBoundary
+                                key={activeCustomChatPlus.app.id}
+                                appName={activeCustomChatPlus.app.name}
+                                appId={activeCustomChatPlus.app.id}
+                                appVersion={activeCustomChatPlus.app.version}
+                                manifestId={activeCustomChatPlus.app.manifest?.id}
+                                closeLabel="返回聊天"
                                 onClose={() => setActiveCustomChatPlus(null)}
-                                onNotice={showChatToast}
-                            />
+                            >
+                                <CustomAppRunner
+                                    app={activeCustomChatPlus.app}
+                                    launchContext={activeCustomChatPlus.launchContext}
+                                    embedded
+                                    onClose={() => setActiveCustomChatPlus(null)}
+                                    onNotice={showChatToast}
+                                />
+                            </CustomAppForegroundBoundary>
                         </div>
                     </div>
                 </div>
