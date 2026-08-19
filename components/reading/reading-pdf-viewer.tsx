@@ -16,6 +16,7 @@ type Props = {
     onTotalPages?: (n: number) => void;
     onCurrentPage?: (page: number) => void;
     jumpToPage?: number;
+    onJumpComplete?: () => void;
     onCopyAnnotation?: (text: string) => void;
     onDeleteAnnotation?: (annotationId: string) => void;
     /** 页面缩放率：1=按容器宽度原样，>1 放大（如 1.5 一页近似一屏） */
@@ -62,6 +63,7 @@ export function PdfPageRenderer({
     onTotalPages,
     onCurrentPage,
     jumpToPage,
+    onJumpComplete,
     onCopyAnnotation,
     onDeleteAnnotation,
     zoom = 1,
@@ -108,7 +110,7 @@ export function PdfPageRenderer({
         return { cssWidth, effectiveWidth, scrollParent, renderDpr };
     };
 
-    /** 渲染完成版本号：渲染 effect 每完成一轮全量渲染 +1，驱动批注钉同步 effect 重放 */
+    /** 渲染完成版本号：渲染 effect 每完成一轮全量渲染 +1，驱动待处理的跳页定位 */
     const [renderDone, setRenderDone] = useState(0);
 
     /**
@@ -233,6 +235,13 @@ export function PdfPageRenderer({
         }
         return elements;
     }, [annotations, bilingualTranslationEnabled, chapter, collapseBilingualTranslation, onCopyAnnotation, onDeleteAnnotation]);
+
+    // 懒加载页可能在批注同步 effect 之后才完成渲染；始终从 ref 读取最新的批注工厂，
+    // 避免 canvas 替换占位内容时把已经生成的批注钉永久丢掉。
+    const annotationPinFactoryRef = useRef(createAnnotationPin);
+    useEffect(() => {
+        annotationPinFactoryRef.current = createAnnotationPin;
+    }, [createAnnotationPin]);
 
     // Load PDF document once per book.
     useEffect(() => {
@@ -380,7 +389,7 @@ export function PdfPageRenderer({
 
                         renderedPagesRef.current.add(pageNum);
                         pageWrapper.style.height = `${cssHeight}px`;
-                        pageWrapper.replaceChildren(canvas);
+                        pageWrapper.replaceChildren(canvas, ...annotationPinFactoryRef.current(pageNum));
                         } finally {
                             activeRendersRef.current -= 1;
                         }
@@ -407,7 +416,7 @@ export function PdfPageRenderer({
                     const reused = reusableCanvases.get(i);
                     if (reused && Math.abs(parseFloat(reused.style.width || "0") - effectiveWidth) < 1) {
                         pageWrapper.style.height = reused.style.height || `${defaultCssHeight}px`;
-                        pageWrapper.replaceChildren(reused);
+                        pageWrapper.replaceChildren(reused, ...annotationPinFactoryRef.current(i));
                         renderedPagesRef.current.add(i);
                     } else {
                         const placeholder = document.createElement("div");
@@ -484,9 +493,12 @@ export function PdfPageRenderer({
                 preloadNeighborhood(initialPage);
                 // 恢复进度：渲染完目标页后把滚动容器滚到目标页，确保打开即停在上次读的页（而非开头）
                 if (jumpToPage) {
-                    const targetEl = pageWrappers.get(jumpToPage);
+                    const targetEl = pageWrappers.get(initialPage);
                     const sc = canvasContainerRef.current?.closest("[data-ui='body']") as HTMLElement | null;
-                    if (targetEl) scrollElementWithinContainer(sc || wrapperRef.current, targetEl, { block: "start" });
+                    if (targetEl) {
+                        scrollElementWithinContainer(sc || wrapperRef.current, targetEl, { block: "start" });
+                        onJumpComplete?.();
+                    }
                 }
                 scheduleCurrentPageReport();
 
@@ -526,7 +538,7 @@ export function PdfPageRenderer({
             cleanupRef.current = null;
         };
     // 渲染 effect 只依赖文档与渲染参数；chapter（文本层数据）/annotations（批注）变化不再触发整本重建。
-    }, [docVersion, onCurrentPage, preloadEnabled, preloadRadius, scale, zoom]);
+    }, [docVersion, onCurrentPage, onJumpComplete, preloadEnabled, preloadRadius, scale, zoom]);
 
     // 批注钉同步：文本层更新（chapter 变化）/批注增删/双语开关变化时，只重放批注钉，不重建页面。
     // 与渲染 effect 解耦——渲染 effect 不再依赖 chapter/annotations，开自动批注/生成批注也不闪烁。
@@ -535,12 +547,12 @@ export function PdfPageRenderer({
         if (!container) return;
         for (const child of Array.from(container.children)) {
             const pageNum = Number((child as HTMLElement).dataset.page);
-            if (!pageNum) continue;
+            if (!pageNum || !child.querySelector("canvas[data-page]")) continue;
             child.querySelectorAll(".reading-ann-pin").forEach((pin) => pin.remove());
             const pins = createAnnotationPin(pageNum);
             if (pins.length) child.append(...pins);
         }
-    }, [createAnnotationPin, renderDone]);
+    }, [createAnnotationPin]);
 
     useEffect(() => {
         if (!jumpToPage || !canvasContainerRef.current || !wrapperRef.current) return;
@@ -548,7 +560,8 @@ export function PdfPageRenderer({
         if (!target) return;
         const scrollParent = canvasContainerRef.current.closest("[data-ui='body']") as HTMLElement | null;
         scrollElementWithinContainer(scrollParent || wrapperRef.current, target, { block: "start", behavior: "smooth" });
-    }, [docVersion, jumpToPage, renderDone]);
+        onJumpComplete?.();
+    }, [docVersion, jumpToPage, onJumpComplete, renderDone]);
 
     // Pinch-to-zoom
     useEffect(() => {

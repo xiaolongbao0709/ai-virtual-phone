@@ -59,6 +59,7 @@ const DISCUSS_TARGET_CHARS = 1000;
 const DISCUSS_MIN_CHARS = 700;
 const DISCUSS_MAX_CHARS = 1600;
 const DISCUSS_MAX_PARAGRAPHS = 16;
+const MAX_MANUAL_PDF_PREFETCH_PAGES = 30;
 
 /** 聊天悬浮球/悬浮条/悬浮窗的位置记忆键 */
 const CHAT_FLOAT_POS_KEY = "reading-chat-float-pos-v1";
@@ -279,6 +280,11 @@ export function ReadingViewer({ book, onBack }: Props) {
     const [annotationBatchInput, setAnnotationBatchInput] = useState(String(isPdf ? 5 : 50));
     const [annotationDialogMode, setAnnotationDialogMode] = useState<AnnotationDialogMode | null>(null);
     const [showReadingSettings, setShowReadingSettings] = useState(false);
+    const [pdfRenderDraft, setPdfRenderDraft] = useState(() => ({
+        pdfZoom: readingConfig.pdfZoom ?? 1,
+        pdfPreloadRadius: readingConfig.pdfPreloadRadius ?? 3,
+        pdfPreloadEnabled: readingConfig.pdfPreloadEnabled !== false,
+    }));
     const [showNavigationDialog, setShowNavigationDialog] = useState(false);
     const [pdfJumpPage, setPdfJumpPage] = useState<number | undefined>(undefined);
     /** PDF 手动预批注对话框：自定义起始页/结束页，确认后立即预解析并预生成该范围批注 */
@@ -929,6 +935,7 @@ export function ReadingViewer({ book, onBack }: Props) {
         const start = Math.max(1, pdfCurrentPage || 1);
         const batch = Math.max(1, annotationBatchSize || 5);
         const end = Math.min(pdfTotalPages || (start + batch - 1), start + batch - 1);
+        setAnnotationError(null);
         setPdfPrefetchStartInput(String(start));
         setPdfPrefetchEndInput(String(end));
         setPdfPrefetchDialogOpen(true);
@@ -936,11 +943,19 @@ export function ReadingViewer({ book, onBack }: Props) {
 
     /** 手动预批注：按用户自定义的页码范围，预解析文本层并立即生成批注 */
     const handlePdfManualPrefetch = async () => {
-        setPdfPrefetchDialogOpen(false);
-        if (!companionId) return;
+        if (!companionId) {
+            setAnnotationError("请先选择共读角色");
+            return;
+        }
         const total = Math.max(1, pdfTotalPages || 1);
         const start = Math.max(1, Math.min(total, Math.round(Number(pdfPrefetchStartInput) || 1)));
         const end = Math.max(start, Math.min(total, Math.round(Number(pdfPrefetchEndInput) || start)));
+        if (end - start + 1 > MAX_MANUAL_PDF_PREFETCH_PAGES) {
+            setAnnotationError(`一次最多预批注 ${MAX_MANUAL_PDF_PREFETCH_PAGES} 页，请缩小页码范围`);
+            return;
+        }
+        setAnnotationError(null);
+        setPdfPrefetchDialogOpen(false);
         try {
             // 预解析指定范围的文本层（渲染已解耦，不会重建页面）
             const merged = await ensurePdfPageRangeParsed(start, end);
@@ -1088,6 +1103,10 @@ export function ReadingViewer({ book, onBack }: Props) {
         setActiveAnnotationId(null);
     }, []);
 
+    const handlePdfJumpComplete = useCallback(() => {
+        setPdfJumpPage(undefined);
+    }, []);
+
     const handleNavChapterClick = (index: number) => {
         if (isPdf) {
             const chapter = chapters[index];
@@ -1179,7 +1198,7 @@ export function ReadingViewer({ book, onBack }: Props) {
             if (pdfTotalPages <= 0) return;
             const batchStartPage = Math.floor((pdfCurrentPage - 1) / size) * size + 1;
             const offsetInBatch = pdfCurrentPage - batchStartPage; // 0-based
-            if (offsetInBatch < Math.ceil(size * threshold)) return; // 本批还没读到阈值
+            if ((offsetInBatch + 1) / size < threshold) return; // 本批还没读到阈值
             if (prefetchedBatchStartRef.current === batchStartPage) return;
             prefetchedBatchStartRef.current = batchStartPage;
 
@@ -1234,7 +1253,7 @@ export function ReadingViewer({ book, onBack }: Props) {
         if (currentAbs < 0) return;
 
         const batchStart = Math.floor(currentAbs / size) * size;
-        if (currentAbs - batchStart < Math.ceil(size * threshold)) return; // 本批还没读到用户设置的阈值
+        if ((currentAbs - batchStart + 1) / size < threshold) return; // 本批还没读到用户设置的阈值
         if (prefetchedBatchStartRef.current === batchStart) return;       // 本批已触发过预生成
         prefetchedBatchStartRef.current = batchStart;
 
@@ -1858,7 +1877,7 @@ export function ReadingViewer({ book, onBack }: Props) {
     }, [chapterIndex, isPdf, isScrollMode, txtPagesChapterIndex, txtTotalPages]);
 
     useEffect(() => {
-        if (chapters.length === 0) return;
+        if (!chaptersLoaded || chapters.length === 0) return;
 
         let scrollPosition: number;
         let progressFraction: number;
@@ -1901,7 +1920,7 @@ export function ReadingViewer({ book, onBack }: Props) {
             lastReadAt: new Date().toISOString(),
         };
         saveProgress(progress);
-    }, [book.id, chapterIndex, chapters.length, companionId, isPdf, isScrollMode, pdfCurrentPage, pdfTotalPages, scrollFraction, txtPage, txtTotalPages]);
+    }, [book.id, chapterIndex, chapters.length, chaptersLoaded, companionId, isPdf, isScrollMode, pdfCurrentPage, pdfTotalPages, scrollFraction, txtPage, txtTotalPages]);
 
     useEffect(() => {
         setTxtPage((prev) => Math.min(prev, Math.max(0, txtTotalPages - 1)));
@@ -2042,13 +2061,25 @@ export function ReadingViewer({ book, onBack }: Props) {
         ? chatMessages.find((msg) => msg.id === readingMessageMenu.messageId) || null
         : null;
 
-    /** 更新 PDF 渲染配置（缩放率/预渲染页数/预加载开关），改动即时生效并持久化 */
-    const updatePdfRenderConfig = (patch: { pdfZoom?: number; pdfPreloadRadius?: number; pdfPreloadEnabled?: boolean }) => {
-        setReadingConfig((prev) => {
-            const next = { ...prev, ...patch };
-            saveReadingInteractionConfig(next);
-            return next;
+    /** PDF 渲染设置先在弹窗内暂存，确认时只重建一次，避免拖动滑块期间连续重渲染整本 PDF。 */
+    const openReadingSettings = () => {
+        setPdfRenderDraft({
+            pdfZoom: readingConfig.pdfZoom ?? 1,
+            pdfPreloadRadius: readingConfig.pdfPreloadRadius ?? 3,
+            pdfPreloadEnabled: readingConfig.pdfPreloadEnabled !== false,
         });
+        setShowReadingSettings(true);
+    };
+
+    const handleReadingSettingsConfirm = () => {
+        if (isPdf) {
+            setReadingConfig((prev) => {
+                const next = { ...prev, ...pdfRenderDraft };
+                saveReadingInteractionConfig(next);
+                return next;
+            });
+        }
+        setShowReadingSettings(false);
     };
 
     return (
@@ -2148,8 +2179,9 @@ export function ReadingViewer({ book, onBack }: Props) {
                             onTotalPages={setPdfTotalPages}
                             onCurrentPage={setPdfCurrentPage}
                             jumpToPage={pdfJumpPage}
+                            onJumpComplete={handlePdfJumpComplete}
                             onCopyAnnotation={copyToClipboard}
-                            onDeleteAnnotation={(annotationId) => { void handleDeleteReadingAnnotation(annotationId); }}
+                            onDeleteAnnotation={handleDeleteReadingAnnotation}
                             zoom={readingConfig.pdfZoom ?? 1}
                             preloadRadius={readingConfig.pdfPreloadRadius ?? 3}
                             preloadEnabled={readingConfig.pdfPreloadEnabled !== false}
@@ -2308,7 +2340,7 @@ export function ReadingViewer({ book, onBack }: Props) {
                         <button
                             type="button"
                             className="reading-footer-icon-btn"
-                            onClick={() => setShowReadingSettings(true)}
+                            onClick={openReadingSettings}
                         >
                             <Languages size={22} strokeWidth={1.7} />
                             <span>设置</span>
@@ -2587,8 +2619,13 @@ export function ReadingViewer({ book, onBack }: Props) {
                             />
                         </div>
                         <p className="reading-settings-inline-note">
-                            <span>当前第 {Math.max(1, pdfCurrentPage)} / {Math.max(1, pdfTotalPages)} 页。页码范围越大，批注生成越久。</span>
+                            <span>当前第 {Math.max(1, pdfCurrentPage)} / {Math.max(1, pdfTotalPages)} 页。一次最多 {MAX_MANUAL_PDF_PREFETCH_PAGES} 页。</span>
                         </p>
+                        {annotationError && (
+                            <p className="reading-settings-inline-note" style={{ color: "var(--c-danger)" }}>
+                                <span>{annotationError}</span>
+                            </p>
+                        )}
                     </div>
                 </ContentDialog>
             )}
@@ -2597,7 +2634,7 @@ export function ReadingViewer({ book, onBack }: Props) {
                     title="阅读设置"
                     confirmLabel="完成"
                     cancelLabel="关闭"
-                    onConfirm={() => setShowReadingSettings(false)}
+                    onConfirm={handleReadingSettingsConfirm}
                     onCancel={() => setShowReadingSettings(false)}
                 >
                     <div className="reading-settings-grid">
@@ -2667,8 +2704,8 @@ export function ReadingViewer({ book, onBack }: Props) {
                                 <div className="reading-settings-toggle-row">
                                     <span className="reading-settings-toggle-label">预加载后续页</span>
                                     <Toggle
-                                        checked={readingConfig.pdfPreloadEnabled !== false}
-                                        onChange={(next) => updatePdfRenderConfig({ pdfPreloadEnabled: next })}
+                                        checked={pdfRenderDraft.pdfPreloadEnabled}
+                                        onChange={(next) => setPdfRenderDraft((prev) => ({ ...prev, pdfPreloadEnabled: next }))}
                                     />
                                 </div>
                                 <p className="reading-settings-inline-note">
@@ -2676,7 +2713,7 @@ export function ReadingViewer({ book, onBack }: Props) {
                                 </p>
                                 <div className="reading-settings-inline-note">
                                     <span>页面缩放率</span>
-                                    <span>{Math.round((readingConfig.pdfZoom ?? 1) * 100)}%</span>
+                                    <span>{Math.round(pdfRenderDraft.pdfZoom * 100)}%</span>
                                 </div>
                                 <input
                                     type="range"
@@ -2684,12 +2721,12 @@ export function ReadingViewer({ book, onBack }: Props) {
                                     min={0.5}
                                     max={2}
                                     step={0.05}
-                                    value={readingConfig.pdfZoom ?? 1}
-                                    onChange={(e) => updatePdfRenderConfig({ pdfZoom: Number(e.target.value) })}
+                                    value={pdfRenderDraft.pdfZoom}
+                                    onChange={(e) => setPdfRenderDraft((prev) => ({ ...prev, pdfZoom: Number(e.target.value) }))}
                                 />
                                 <div className="reading-settings-inline-note">
                                     <span>一次渲染页数（当前页前后各几页）</span>
-                                    <span>{readingConfig.pdfPreloadRadius ?? 3} 页</span>
+                                    <span>{pdfRenderDraft.pdfPreloadRadius} 页</span>
                                 </div>
                                 <input
                                     type="range"
@@ -2697,8 +2734,8 @@ export function ReadingViewer({ book, onBack }: Props) {
                                     min={1}
                                     max={8}
                                     step={1}
-                                    value={readingConfig.pdfPreloadRadius ?? 3}
-                                    onChange={(e) => updatePdfRenderConfig({ pdfPreloadRadius: Number(e.target.value) })}
+                                    value={pdfRenderDraft.pdfPreloadRadius}
+                                    onChange={(e) => setPdfRenderDraft((prev) => ({ ...prev, pdfPreloadRadius: Number(e.target.value) }))}
                                 />
                                 <p className="reading-settings-inline-note">
                                     <span>提示：一次渲染页数过少时，滑动到未渲染的页会反复渲染，造成闪烁卡顿；调大并开启预加载可缓解。缩放率调大后一页更接近一屏。</span>
