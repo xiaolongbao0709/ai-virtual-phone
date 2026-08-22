@@ -23,7 +23,10 @@ import { loadChatContacts } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { triggerImmediatePost } from "@/lib/moments-engine";
 import type { Character } from "@/lib/character-types";
-import { requestNotificationPermission } from "@/lib/browser-notification";
+import {
+    requestNotificationPermission,
+    registerPushSubscription,
+} from "@/lib/browser-notification";
 import { kvGet, kvSet, kvRemove } from "@/lib/kv-db";
 import { formatWalletAmount, getWalletBalance, loadWalletState, WALLET_UPDATED_EVENT } from "@/lib/wallet-storage";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
@@ -213,9 +216,14 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
             const granted = await requestNotificationPermission();
             const permissionHint = readBrowserNotificationPermissionHint();
             if (granted && isBrowserNotificationGranted()) {
-                setNotifEnabled(true);
-                saveChatAppSettings({ ...loadChatAppSettings(), browserNotificationsEnabled: true });
-                setNotifHint(permissionHint);
+    setNotifEnabled(true);
+    saveChatAppSettings({ ...loadChatAppSettings(), browserNotificationsEnabled: true });
+
+    const pushRegistered = await registerPushSubscription();
+    console.log("[Push] subscription registration:", pushRegistered);
+
+    setNotifHint(permissionHint);
+            
             } else {
                 setNotifEnabled(false);
                 saveChatAppSettings({ ...loadChatAppSettings(), browserNotificationsEnabled: false });
