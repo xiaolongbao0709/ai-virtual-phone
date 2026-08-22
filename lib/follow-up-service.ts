@@ -726,12 +726,7 @@ export async function parseAndSaveResponse(
                 });
             }, index * 1000);
         });
-        import("./browser-notification").then(({ sendBrowserNotification }) => {
-            const firstPart = filteredParts[0];
-            const body = bodyPrefix + (firstPart.content.trim()
-                || (firstPart.mediaType === "image" && firstPart.mediaData?.label ? `发了一张照片: ${firstPart.mediaData.label}` : "发来一条消息"));
-            sendBrowserNotification(charName, { body: body.slice(0, 50) });
-        });
+        
     }
 
     // Emit call trigger event for chat-room to pick up
