@@ -92,3 +92,50 @@ export function sendBrowserNotification(
     }
     constructNotification(title, payload);
 }
+
+/**
+ * Register this PWA for Web Push and send its subscription to the server.
+ */
+export async function registerPushSubscription(): Promise<boolean> {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
+        return false;
+    }
+
+    if (!("PushManager" in window)) {
+        return false;
+    }
+
+    if (Notification.permission !== "granted") {
+        return false;
+    }
+
+    try {
+        const registration = await navigator.serviceWorker.ready;
+
+        const response = await fetch("/api/push/public-key");
+        if (!response.ok) return false;
+
+        const { publicKey } = await response.json();
+        if (!publicKey) return false;
+
+        const existing = await registration.pushManager.getSubscription();
+
+        const subscription = existing || await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: publicKey,
+        });
+
+        const saveResponse = await fetch("/api/push/subscribe", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(subscription),
+        });
+
+        return saveResponse.ok;
+    } catch (error) {
+        console.error("[Push] Failed to register subscription:", error);
+        return false;
+    }
+}
