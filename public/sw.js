@@ -1,4 +1,4 @@
-const CACHE_VERSION = "ai-phone-pwa-v4";
+const CACHE_VERSION = "ai-phone-pwa-v5";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -8,7 +8,32 @@ const PRECACHE_URLS = [
   "/icon-192.png",
   "/icon-512.png",
 ];
+self.addEventListener("push", (event) => {
+  let data = {};
 
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {
+      body: event.data ? event.data.text() : "",
+    };
+  }
+
+  const title = data.title || "小手机";
+  const options = {
+    body: data.body || "你有一条新消息",
+    icon: data.icon || "/icon-192.png",
+    badge: data.badge || "/icon-192.png",
+    tag: data.tag || `ai-phone-push-${Date.now()}`,
+    data: {
+      url: data.url || "/",
+    },
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(title, options)
+  );
+});
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE)
