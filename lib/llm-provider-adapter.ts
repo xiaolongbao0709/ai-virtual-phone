@@ -539,6 +539,7 @@ function buildOpenAICompatibleRequest(
         body,
         providerKind: "openai-compatible",
         messagesForLog: messages.map(messageForLog),
+        serverProxy: true,
     };
 }
 
