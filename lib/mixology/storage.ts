@@ -129,6 +129,9 @@ export function saveMixMaterial(material: MixMaterial): void {
     const list = loadMixCabinet();
     const idx = list.findIndex((m) => m.id === material.id);
     const stamped = { ...material, updatedAt: Date.now() };
+    // 只有角色卡收封面：其余种类的列表海报由渲染缩样自动生成，
+    // 老材料/导入文件残留的 cover 在落库这道总闸口洗掉，不再跟着材料到处走
+    if (stamped.kind !== "character") delete (stamped as { cover?: string }).cover;
     if (idx >= 0) list[idx] = stamped;
     else list.push(stamped);
     writeJson(CABINET_KEY, list);

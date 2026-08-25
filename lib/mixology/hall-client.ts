@@ -8,7 +8,15 @@ import type { MixCondition, MixMaterial, MixMaterialKind } from "./types";
 
 function stripLocalOnly(material: MixMaterial): MixMaterial {
     const { publishedId: _publishedId, publishedAt: _publishedAt, ...rest } = material;
+    // 只有角色卡收封面：小票/装饰/尾调早改成渲染缩样当海报了，
+    // 老材料身上残留的 cover 字段不跟着上架（不清这里的话删掉重传都还带着旧图）
+    if (material.kind !== "character") delete (rest as { cover?: string }).cover;
     return rest as MixMaterial;
+}
+
+/** 上架条目的封面字段：非角色卡一律空串，压掉云端可能存着的旧封面 */
+function hallCover(material: MixMaterial): string {
+    return material.kind === "character" ? material.cover ?? "" : "";
 }
 
 function authorFields(): { authorName: string; authorAvatar: string } {
@@ -85,7 +93,7 @@ export async function fetchHallRecipe(id: string): Promise<MixHallRecipe> {
 export async function shareHallMaterial(material: MixMaterial): Promise<MixHallMaterial> {
     const data = await fetchJson<HallEntryResponse>("/api/mixology/hall", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "material", kind: material.kind, name: material.name, hook: material.hook ?? "", cover: material.cover ?? "", tags: material.tags ?? [], payload: stripLocalOnly(material), ...authorFields() }),
+        body: JSON.stringify({ type: "material", kind: material.kind, name: material.name, hook: material.hook ?? "", cover: hallCover(material), tags: material.tags ?? [], payload: stripLocalOnly(material), ...authorFields() }),
     });
     if (!data.entry) throw new Error("分享失败");
     return data.entry as MixHallMaterial;
@@ -126,7 +134,7 @@ async function putHall(body: Record<string, unknown>): Promise<unknown> {
 }
 
 export async function updateHallMaterial(publishedId: string, material: MixMaterial): Promise<MixHallMaterial> {
-    return await putHall({ type: "material", id: publishedId, kind: material.kind, name: material.name, hook: material.hook ?? "", cover: material.cover ?? "", tags: material.tags ?? [], payload: stripLocalOnly(material), ...authorFields() }) as MixHallMaterial;
+    return await putHall({ type: "material", id: publishedId, kind: material.kind, name: material.name, hook: material.hook ?? "", cover: hallCover(material), tags: material.tags ?? [], payload: stripLocalOnly(material), ...authorFields() }) as MixHallMaterial;
 }
 export async function updateHallRecipe(publishedId: string, input: MixHallRecipeShareInput): Promise<MixHallRecipe> {
     return await putHall({ type: "recipe", id: publishedId, ...input, ...authorFields() }) as MixHallRecipe;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, createContext, type CSSProperties, type ReactNode } from "react";
-import { Activity, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X } from "lucide-react";
+import { Activity, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X, CloudUpload } from "lucide-react";
 import { ConfirmDialog } from "./ui/modal";
 import { useAccount } from "@/lib/account-context";
 import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
@@ -17,6 +17,7 @@ import { UserIdentitySettings } from "./settings/user-identity";
 import { AboutDeclaration } from "./settings/about-declaration";
 import { BindingManager } from "./settings/binding-manager";
 import { WeixinSettings } from "./settings/weixin-settings";
+import { CloudServicesPage } from "./settings/cloud-services-setup";
 import { ToolboxSettings } from "./settings/toolbox-settings";
 import { ModerationCenter } from "./settings/moderation-center";
 import { AgentComputerSettings } from "./settings/agent-computer-settings";
@@ -51,6 +52,7 @@ type SubPage =
     | "data"
     | "binding"
     | "identity"
+    | "cloud"
     | "weixin"
     | "toolbox"
     | "agentComputer"
@@ -66,6 +68,7 @@ const SETTINGS_MENU = [
     { id: "regex", icon: Database, label: "正则规则", desc: "文本替换", iconColor: BINDING_ACCENTS.regex , glass: "regex" },
     { id: "data", icon: Layers, label: "数据管理", desc: "导入导出", iconColor: BINDING_ACCENTS.api , glass: "data" },
     { id: "binding", icon: Link2, label: "配置绑定", desc: "管理全局默认、角色与应用的配置绑定关系", iconColor: BINDING_ACCENTS.identity , glass: "binding" },
+    { id: "cloud", icon: CloudUpload, label: "云服务部署", desc: "备份 / 微信 / 推送一站配置", iconColor: BINDING_ACCENTS.api , glass: "" },
     { id: "weixin", icon: MessageSquare, label: "微信接入", desc: "iLink Bot", iconColor: CONTENT_APP_ACCENTS.chat , glass: "weixin" },
     { id: "toolbox", icon: Wrench, label: "聊天工具箱", desc: "外部工具调用", iconColor: BINDING_ACCENTS.voice , glass: "toolbox" },
     { id: "agentComputer", icon: Laptop, label: "角色电脑", desc: "云端小电脑（自部署）", iconColor: BINDING_ACCENTS.memory , glass: "agent-computer" },
@@ -253,6 +256,16 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         onClick: () => setCurrentPage("imageGeneration"),
     };
 
+    const cloudItem = SETTINGS_MENU.find(i => i.id === "cloud")!;
+    const cloudFeaturedItem: FeaturedCardItem = {
+        id: cloudItem.id,
+        icon: cloudItem.icon,
+        label: cloudItem.label,
+        desc: cloudItem.desc,
+        iconColor: cloudItem.iconColor,
+        onClick: () => setCurrentPage("cloud"),
+    };
+
     const agentComputerItem = SETTINGS_MENU.find(i => i.id === "agentComputer")!;
     const agentComputerFeaturedItem: FeaturedCardItem = {
         id: agentComputerItem.id,
@@ -293,8 +306,10 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                 return <DataManagement onNotice={onNotice} />;
             case "binding":
                 return <BindingManager />;
+            case "cloud":
+                return <CloudServicesPage />;
             case "weixin":
-                return <WeixinSettings onOpenDataManagement={() => setCurrentPage("data")} />;
+                return <WeixinSettings onOpenCloudServices={() => setCurrentPage("cloud")} />;
             case "toolbox":
                 return <ToolboxSettings />;
             case "agentComputer":
@@ -391,11 +406,15 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                             </div>
                         </div>
                         <div>
-                            <CardGrid
-                                label="Connections"
-                                labelClassName="settings-menu-section-title"
-                                items={SETTINGS_MENU.filter(item => ["weixin", "toolbox"].includes(item.id)).map(makeCardItem)}
-                            />
+                            <h3 className="settings-menu-section-title">Connections</h3>
+                            <div className="mt-[10px]">
+                                <FeaturedCard item={cloudFeaturedItem} />
+                            </div>
+                            <div className="mt-[10px]">
+                                <CardGrid
+                                    items={SETTINGS_MENU.filter(item => ["weixin", "toolbox"].includes(item.id)).map(makeCardItem)}
+                                />
+                            </div>
                             <div className="mt-[10px]">
                                 <FeaturedCard item={agentComputerFeaturedItem} />
                             </div>

@@ -23,7 +23,9 @@ import {
 } from "./tool-storage";
 import { executeCustomAppToolCall } from "./custom-app-tool-runtime";
 import { characterWorkspace, agentComputerRequest, isAgentComputerConfigured } from "./agent-computer";
-import { AGENT_COMPUTER_CAPABILITY_ID, CALENDAR_MANAGEMENT_CAPABILITY_ID, LOCAL_DATA_LIBRARY_CAPABILITY_ID, MEMORY_WRITE_CAPABILITY_ID, MUSIC_CONTROL_CAPABILITY_ID, NOTE_WALL_CAPABILITY_ID, SEND_FILE_CAPABILITY_ID, TIMED_WAKE_CAPABILITY_ID, TOOLBOX_MANAGEMENT_CAPABILITY_ID, getInternalCapability } from "./internal-capability-storage";
+import { AGENT_COMPUTER_CAPABILITY_ID, CALENDAR_MANAGEMENT_CAPABILITY_ID, LOCAL_DATA_LIBRARY_CAPABILITY_ID, MEMORY_WRITE_CAPABILITY_ID, MUSIC_CONTROL_CAPABILITY_ID, NOTE_WALL_CAPABILITY_ID, REALITY_BRIDGE_CAPABILITY_ID, SEND_FILE_CAPABILITY_ID, TIMED_WAKE_CAPABILITY_ID, TOOLBOX_MANAGEMENT_CAPABILITY_ID, getInternalCapability } from "./internal-capability-storage";
+import { bridgeConnection, loadBridgeDataItems, loadBridgeShortcutActions, readAllBridgeStateSnapshots, readBridgeStateSnapshot } from "./reality-bridge/storage";
+import { createShortcutCommand, deliverShortcutCommand, waitForShortcutCommand } from "./shortcut-command-client";
 import { loadMemoryEntriesByType, saveMemoryEntry } from "./memory-storage";
 import type { MemoryEntry } from "./memory-types";
 import { loadCharacters } from "./character-storage";
@@ -72,6 +74,10 @@ import {
 import { makeTimedWakeId, saveTimedWakeSchedule } from "./timed-wake-storage";
 import { resolveUserIdentity } from "./settings-storage";
 import { attachAbortSignal, isAbortError, throwIfAborted } from "./abort-utils";
+import {
+    deleteShortcutCommandMediaUrl,
+    registerShortcutCommandMediaCleanup,
+} from "./shortcut-command-media-client";
 
 // ── Types ─────────────────────────────────────
 
@@ -90,6 +96,12 @@ export type ToolExecutionContext = {
     characterId?: string;
     sourceEngine?: "chat" | "group_chat" | "custom_app";
     signal?: AbortSignal;
+    onShortcutCommandCreated?: (command: {
+        id: string;
+        actionName: string;
+        resultMode: "none" | "text" | "image";
+        expiresAt: string;
+    }) => Promise<boolean>;
 };
 
 function isSupportedChatToolContext(
@@ -778,6 +790,7 @@ async function executeInternalTool(call: ToolCall, context?: ToolExecutionContex
     if (isToolboxManagementToolName(call.name)) return executeToolboxManagementTool(call);
     if (call.name === "发送文件") return executeSendFileTool(call);
     if (call.name === "角色电脑") return executeAgentComputerTool(call, context);
+    if (isRealityBridgeToolName(call.name)) return executeRealityBridgeTool(call, context);
     if (call.name === "稍后主动联系" || call.name === "设置定时醒来") return executeTimedWakeTool(call, context);
 
     if (call.name !== "写入记忆") return null;
@@ -795,6 +808,202 @@ async function executeInternalTool(call: ToolCall, context?: ToolExecutionContex
     }
 
     return executeMemoryWriteTool(call.args, capability, context);
+}
+
+function isRealityBridgeToolName(name: string): boolean {
+    return name === "查看全部手机数据"
+        || loadBridgeShortcutActions().some(item => item.enabled && item.name === name)
+        || loadBridgeDataItems().some(item => item.name === name);
+}
+
+function formatSnapshotAge(iso?: string): string {
+    if (!iso) return "";
+    const ms = Date.now() - new Date(iso).getTime();
+    if (!Number.isFinite(ms) || ms < 0) return "";
+    const min = Math.round(ms / 60_000);
+    const label = min < 1 ? "刚刚"
+        : min < 60 ? `${min} 分钟前`
+        : min < 1440 ? `${Math.round(min / 60)} 小时前`
+        : `${Math.round(min / 1440)} 天前`;
+    return `（更新于${label}）`;
+}
+
+function shortcutResultText(value: unknown): string {
+    if (typeof value === "string") return value.trim();
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+        const record = value as Record<string, unknown>;
+        const text = record.text ?? record.message ?? record.value;
+        if (typeof text === "string" && text.trim()) return text.trim();
+    }
+    try {
+        return JSON.stringify(value ?? {});
+    } catch {
+        return String(value ?? "");
+    }
+}
+
+async function shortcutResultMedia(
+    value: unknown,
+    commandId: string,
+    retainRemote = false,
+): Promise<MediaAttachment[] | undefined> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    const rawUrl = record.mediaUrl ?? record.imageUrl ?? record.url;
+    const url = typeof rawUrl === "string" ? rawUrl.trim() : "";
+    if (!/^https?:\/\//i.test(url)) return undefined;
+    const rawType = String(record.mediaType ?? record.type ?? "image").toLowerCase();
+    const type: MediaAttachment["type"] = rawType === "audio" || rawType === "video" || rawType === "file" ? rawType : "image";
+    const managedImage = type === "image" && typeof record.storagePath === "string" && record.storagePath.length > 0;
+    let attachmentUrl = url;
+    try {
+        if (managedImage) {
+            const response = await fetch(url, { cache: "no-store" });
+            if (response.ok) {
+                const blob = await response.blob();
+                const mime = response.headers.get("content-type") || blob.type || "image/jpeg";
+                if (!mime.toLowerCase().startsWith("image/") || blob.size === 0) {
+                    throw new Error("图片响应内容无效。");
+                }
+                attachmentUrl = await storeMediaBlob(blob, mime, type);
+                if (retainRemote) registerShortcutCommandMediaCleanup(commandId, url);
+                else deleteShortcutCommandMediaUrl(url);
+            } else {
+                throw new Error(`图片下载返回 ${response.status}。`);
+            }
+        }
+    } catch (error) {
+        if (managedImage) {
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new Error(`快捷指令图片读取失败：${detail}`);
+        }
+    }
+    return [{ type, url: attachmentUrl, title: typeof record.title === "string" ? record.title.slice(0, 120) : undefined }];
+}
+
+async function executeRealityBridgeTool(call: ToolCall, context?: ToolExecutionContext): Promise<ToolResult> {
+    const capability = getInternalCapability(REALITY_BRIDGE_CAPABILITY_ID);
+    if (!capability || !capability.enabled || capability.mode === "off") {
+        return { name: call.name, success: false, error: "「现实桥」能力未启用（工具箱 → 内置能力）" };
+    }
+
+    const shortcutAction = loadBridgeShortcutActions().find(item => item.enabled && item.name === call.name);
+    if (shortcutAction) {
+        try {
+            const created = await createShortcutCommand(
+                shortcutAction,
+                call.args || {},
+                context?.signal,
+                { deferDelivery: shortcutAction.resultMode !== "none" && Boolean(context?.onShortcutCommandCreated) },
+            );
+            if (shortcutAction.resultMode === "none") {
+                if (!created.delivered) {
+                    return {
+                        name: call.name,
+                        success: false,
+                        error: shortcutAction.deliveryMode === "email"
+                            ? "快捷动作邮件未能送达。"
+                            : "当前账号没有可用的 Web Push 订阅，无法启动 iPhone 快捷指令。",
+                        userNotice: "快捷动作未送达 iPhone",
+                    };
+                }
+                return {
+                    name: call.name,
+                    success: true,
+                    data: shortcutAction.deliveryMode === "email"
+                        ? `已发送“${shortcutAction.shortcutName}”自动化触发邮件（命令 ${created.command.id}）。`
+                        : `已向 iPhone 发送“${shortcutAction.shortcutName}”运行通知，等待用户点击执行（命令 ${created.command.id}）。`,
+                    userNotice: shortcutAction.deliveryMode === "email"
+                        ? `已发送「${shortcutAction.name}」触发邮件`
+                        : `已发送「${shortcutAction.name}」到 iPhone`,
+                };
+            }
+
+            let continuationArmed = false;
+            try {
+                continuationArmed = await context?.onShortcutCommandCreated?.({
+                    id: created.command.id,
+                    actionName: shortcutAction.name,
+                    resultMode: shortcutAction.resultMode,
+                    expiresAt: created.command.expiresAt,
+                }) ?? false;
+            } catch (err) {
+                console.warn("[RealityBridge] shortcut continuation arm failed:", err);
+            }
+
+            const delivery = created.deferred
+                ? await deliverShortcutCommand(created.command.id, context?.signal)
+                : created;
+            if (!delivery.delivered) {
+                return {
+                    name: call.name,
+                    success: false,
+                    error: shortcutAction.deliveryMode === "email"
+                        ? "快捷动作邮件未能送达。"
+                        : "当前账号没有可用的 Web Push 订阅，无法启动 iPhone 快捷指令。",
+                    userNotice: "快捷动作未送达 iPhone",
+                };
+            }
+
+            const completed = await waitForShortcutCommand(created.command.id, created.command.expiresAt, context?.signal);
+            if (completed.status !== "succeeded") {
+                const reason = completed.error || (completed.status === "expired" ? "等待手机执行超时" : `命令状态：${completed.status}`);
+                return { name: call.name, success: false, error: reason, userNotice: `「${shortcutAction.name}」未完成` };
+            }
+            const text = shortcutResultText(completed.result) || "快捷指令已执行成功。";
+            return {
+                name: call.name,
+                success: true,
+                data: text.slice(0, 2000),
+                mediaAttachments: await shortcutResultMedia(completed.result, completed.id, continuationArmed),
+                userNotice: `「${shortcutAction.name}」已完成`,
+            };
+        } catch (err) {
+            if (isAbortError(err)) throw err;
+            return { name: call.name, success: false, error: err instanceof Error ? err.message : String(err) };
+        }
+    }
+
+    const { config, ready } = bridgeConnection();
+    if (!ready) {
+        return { name: call.name, success: false, error: "现实桥未连接（需要先在数据管理里配置云端备份的 Supabase）" };
+    }
+
+    if (call.name === "查看全部手机数据") {
+        try {
+            const snapshots = await readAllBridgeStateSnapshots(config);
+            if (snapshots.length === 0) {
+                return { name: call.name, success: true, data: "手机还没有上传过任何状态快照（需要先配置上传快捷指令）" };
+            }
+            const items = loadBridgeDataItems();
+            const lines = snapshots.map(snapshot => {
+                const item = items.find(entry => entry.key === snapshot.key);
+                return `【${item?.name || snapshot.key}】${snapshot.text}${formatSnapshotAge(snapshot.updatedAt)}`;
+            });
+            return { name: call.name, success: true, data: lines.join("\n") };
+        } catch (err) {
+            return { name: call.name, success: false, error: err instanceof Error ? err.message : String(err) };
+        }
+    }
+
+    // 用户自定义数据项：按工具名找到对应快照读取
+    const item = loadBridgeDataItems().find(entry => entry.name === call.name);
+    if (!item) {
+        return { name: call.name, success: false, error: "未找到该数据项（可能已被删除）" };
+    }
+    try {
+        const snapshot = await readBridgeStateSnapshot(config, item.key);
+        if (!snapshot) {
+            return {
+                name: call.name,
+                success: true,
+                data: `「${item.name}」还没有数据：手机尚未上传过 ${item.key}.json（请检查对应的上传快捷指令是否已配置并运行过）`,
+            };
+        }
+        return { name: call.name, success: true, data: `${snapshot.text}${formatSnapshotAge(snapshot.updatedAt)}` };
+    } catch (err) {
+        return { name: call.name, success: false, error: err instanceof Error ? err.message : String(err) };
+    }
 }
 
 function isNoteWallToolName(name: string): boolean {
@@ -2795,7 +3004,7 @@ async function executeTimedWakeTool(call: ToolCall, context?: ToolExecutionConte
 
     const delayMinutes = numberArg(call.args.delayMinutes ?? call.args.delay_minutes, 1, 10080, 15);
     const now = Date.now();
-    saveTimedWakeSchedule({
+    const schedule = {
         id: makeTimedWakeId(context.sessionId),
         sessionId: context.sessionId,
         characterId: context.characterId,
@@ -2803,7 +3012,10 @@ async function executeTimedWakeTool(call: ToolCall, context?: ToolExecutionConte
         fireAt: now + delayMinutes * 60 * 1000,
         delayMinutes,
         intent,
-    });
+    };
+    saveTimedWakeSchedule(schedule);
+    // 离线推送兜底：到点时 App 被杀也能由服务端接管生成（动态引入避免模块环）
+    void import("./push-bailout-client").then(m => m.armTimedWakeBailout(schedule)).catch(() => undefined);
 
     return {
         name: "稍后主动联系",

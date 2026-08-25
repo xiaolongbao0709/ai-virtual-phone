@@ -10,9 +10,10 @@
 import type { ToolResult } from "../tool-executor";
 import {
     MIX_KIND_LABELS,
-    MIX_SLOT_MAX,
     MIX_SLOT_ORDER,
     createMixId,
+    mixPanelLayoutSummary,
+    normalizeMixPanelLayout,
     normalizeMixTags,
     type MixCharacterCard,
     type MixCondition,
@@ -131,6 +132,7 @@ function describeMaterial(material: MixMaterial): string {
         case "ticket":
             field("输出契约", material.contract); field("渲染代码", material.renderHtml);
             field("预览示例数据", material.previewRaw);
+            field("历史回传", material.historyFeed === "all" ? "all（全部轮次回传）" : material.historyFeed === "none" ? "none（完全不回传）" : undefined);
             if (material.vars?.length) field("记住的变量", material.vars.map((v) => `${v.name}${v.initial ? `＝${v.initial}` : ""}`).join("、"));
             break;
         case "garnish":
@@ -139,12 +141,14 @@ function describeMaterial(material: MixMaterial): string {
         case "encore":
             field("输出契约", material.contract); field("渲染代码", material.renderHtml ?? material.html);
             field("预览示例数据", material.previewRaw);
+            field("历史回传", material.historyFeed === "all" ? "all（全部轮次回传）" : material.historyFeed === "none" ? "none（完全不回传）" : undefined);
             break;
         case "filter":
             field("清洗规则", material.rules.map((r, i) => `${i + 1}. /${r.find}/ → ${r.replace || "（删除）"}（${r.mode === "display" ? "仅显示" : "进上下文"}）`).join("\n"));
             break;
         case "mechanism":
             field("钩子逻辑", material.script); field("界面代码", material.panelHtml);
+            field("摆放", material.layout ? mixPanelLayoutSummary(material.layout) : undefined);
             break;
         default:
             field(`${MIX_KIND_LABELS[material.kind]}内容`, (material as { content?: string }).content);
@@ -196,11 +200,13 @@ const CONTENT_FIELDS: FieldSpec[] = [
     { key: "contract", kinds: ["ticket", "encore"] },
     { key: "renderHtml", kinds: ["ticket", "encore"] },
     { key: "previewRaw", kinds: ["ticket", "encore"] },
+    { key: "historyFeed", kinds: ["ticket", "encore"] },
     { key: "vars", kinds: ["ticket"] },
     { key: "css", kinds: ["garnish"] },
     { key: "rules", kinds: ["filter"] },
     { key: "script", kinds: ["mechanism"] },
     { key: "panelHtml", kinds: ["mechanism"] },
+    { key: "layout", kinds: ["mechanism"] },
 ];
 
 function normalizeOpenings(value: unknown): string[] | { err: string } {
@@ -284,6 +290,19 @@ function applyContentFields(target: Record<string, unknown>, kind: MixMaterialKi
                 const r = normalizeRules(args[spec.key]);
                 if (!Array.isArray(r)) return r.err;
                 target.rules = r;
+                break;
+            }
+            case "layout": {
+                const normalized = normalizeMixPanelLayout(args[spec.key]);
+                if (!normalized) return 'layout 必须是摆放对象，如 {"slot":"inputbar-left","icon":"🎲","autoHeight":true}。';
+                target.layout = normalized;
+                break;
+            }
+            case "historyFeed": {
+                const v = args[spec.key];
+                if (v !== "latest" && v !== "all" && v !== "none") return 'historyFeed 只能是 "latest"（只回传最近一轮，默认）、"all"（全部轮次回传）或 "none"（完全不回传）。';
+                if (v === "latest") delete target.historyFeed;
+                else target.historyFeed = v;
                 break;
             }
             default: {
@@ -485,9 +504,8 @@ export function mixToolSaveRecipe(args: Record<string, unknown>): ToolResult {
             return { name: NAME, success: false, error: `第 ${i + 1} 个槽位：「${material.name}」是${MIX_KIND_LABELS[material.kind]}，不是${MIX_KIND_LABELS[kind]}。` };
         }
         const entries = slots[kind] ?? (slots[kind] = []);
-        const limit = SINGLE_KINDS.includes(kind) ? 1 : MIX_SLOT_MAX;
-        if (entries.length >= limit) {
-            return { name: NAME, success: false, error: `${MIX_KIND_LABELS[kind]}槽位最多放 ${limit} 件。` };
+        if (SINGLE_KINDS.includes(kind) && entries.length >= 1) {
+            return { name: NAME, success: false, error: `${MIX_KIND_LABELS[kind]}槽位只放 1 件。` };
         }
         const entry: MixSlotEntry = { materialId: material.id };
         if (record?.when !== undefined && !SINGLE_KINDS.includes(kind)) {

@@ -118,7 +118,7 @@ export function createDefaultDesktopIconLayout(_widgets: WidgetInstance[] = []):
   } as DesktopIconLayout;
 }
 
-function normalizePage(raw: unknown): IconPosition[] {
+function normalizePage(raw: unknown, folderIds?: Set<string>): IconPosition[] {
   if (!Array.isArray(raw)) {
     return [];
   }
@@ -138,10 +138,12 @@ function normalizePage(raw: unknown): IconPosition[] {
     if (typeof id !== "string" || typeof row !== "number" || typeof col !== "number") {
       continue;
     }
-    const migratedId = migrateLegacyDesktopIconId(id, customIconIds);
+    // 文件夹 tile：随附文件夹表的调用方（主题包导出/导入）显式放行，
+    // 否则照旧丢弃——没有成员表的 folder tile 是空壳
+    const migratedId = folderIds?.has(id) ? (id as DesktopIconId) : migrateLegacyDesktopIconId(id, customIconIds);
     if (
       !migratedId
-      || (!knownIcons.has(migratedId) && !customIconIds.has(migratedId))
+      || (!knownIcons.has(migratedId) && !customIconIds.has(migratedId) && !folderIds?.has(migratedId))
       || row < 1
       || row > GRID_ROWS
       || col < 1
@@ -164,7 +166,7 @@ function normalizePage(raw: unknown): IconPosition[] {
   return result;
 }
 
-export function normalizeDesktopIconLayout(raw: unknown): DesktopIconLayout {
+export function normalizeDesktopIconLayout(raw: unknown, folderIds?: Set<string>): DesktopIconLayout {
   if (!raw || typeof raw !== "object") {
     return createDefaultDesktopIconLayout();
   }
@@ -172,13 +174,13 @@ export function normalizeDesktopIconLayout(raw: unknown): DesktopIconLayout {
   const candidate = raw as Record<string, unknown>;
   const normalized = {} as DesktopIconLayout;
   for (const pageKey of getDesktopPageKeys(candidate)) {
-    normalized[pageKey] = normalizePage(candidate[pageKey]);
+    normalized[pageKey] = normalizePage(candidate[pageKey], folderIds);
   }
   return normalized;
 }
 
-export function writeDesktopIconLayout(layout: DesktopIconLayout): DesktopIconLayout {
-  const normalized = normalizeDesktopIconLayout(layout);
+export function writeDesktopIconLayout(layout: DesktopIconLayout, folderIds?: Set<string>): DesktopIconLayout {
+  const normalized = normalizeDesktopIconLayout(layout, folderIds);
   kvSet(ICON_LAYOUT_STORAGE_KEY, JSON.stringify(normalized));
   return normalized;
 }

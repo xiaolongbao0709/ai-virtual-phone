@@ -1380,6 +1380,7 @@
 }
 /* 选中列表为灰色，不选中无底色 */
 .qa-drawer-item {
+  position: relative; /* 三点菜单的定位锚 */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1430,6 +1431,65 @@
   color: var(--qa-danger);
   opacity: 1;
   filter: none;
+}
+/* 列表内三点按钮：沿用删除键的扁平样式 */
+.qa-drawer-item-more {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--qa-text-tertiary);
+  opacity: 0.55;
+}
+.qa-drawer-item-more:hover {
+  color: var(--qa-text-primary);
+  opacity: 1;
+  filter: none;
+}
+/* 标题前的置顶小图钉 */
+.qa-drawer-pin-mark {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 4px;
+  color: var(--qa-accent);
+}
+/* 三点菜单：置顶 / 重命名 / 删除 */
+.qa-drawer-item-menu {
+  position: absolute;
+  top: 34px;
+  right: 8px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 108px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--qa-border-subtle);
+  background: var(--qa-bg-overlay);
+  box-shadow: var(--qa-shadow-md);
+}
+.qa-drawer-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--qa-text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.qa-drawer-menu-btn:hover {
+  background: var(--qa-state-hover);
+}
+.qa-drawer-menu-btn.is-danger {
+  color: var(--qa-danger);
 }
 /* 底部创建新会话按钮 */
 .qa-drawer-foot {
@@ -1677,4 +1737,74 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* ── 会话重命名弹窗：盖住舞台与抽屉，配色全走工坊主题变量 ── */
+.qa-rename-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.38);
+  animation: qa-fade-in 0.18s ease;
+}
+.qa-rename-dialog {
+  width: min(100%, 320px);
+  padding: 20px;
+  border: 1px solid var(--qa-border-subtle);
+  border-radius: 12px;
+  background: var(--qa-bg-overlay);
+  box-shadow: var(--qa-shadow-lg);
+}
+.qa-rename-title {
+  margin-bottom: 14px;
+  color: var(--qa-text-primary);
+  font-size: 16px;
+  font-weight: 600;
+}
+.qa-rename-input {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--qa-border-strong);
+  border-radius: 10px;
+  outline: none;
+  background: var(--qa-bg-surface);
+  color: var(--qa-text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+.qa-rename-input:focus {
+  border-color: var(--qa-accent);
+  box-shadow: 0 0 0 3px var(--qa-accent-subtle);
+}
+.qa-rename-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+.qa-rename-cancel {
+  height: 42px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--qa-text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+}
+.qa-rename-confirm {
+  min-width: 88px;
+  height: 42px;
+  justify-content: center;
+  padding: 0 22px;
+}
+.qa-rename-confirm:disabled {
+  opacity: 0.45;
+  cursor: default;
 }

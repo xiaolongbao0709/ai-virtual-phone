@@ -171,6 +171,10 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
     const [renderHtml, setRenderHtml] = useState(initial?.kind === "ticket" ? initial.renderHtml : "");
     const [previewRaw, setPreviewRaw] = useState(initial?.kind === "ticket" ? initial.previewRaw ?? "" : "");
     const [vars, setVars] = useState<MixTicketVar[]>(initial?.kind === "ticket" ? initial.vars ?? [] : []);
+    // 历史回传（小票/尾调共用）：往期轮次的壳内原文要不要回传给模型
+    const [historyFeed, setHistoryFeed] = useState<"latest" | "all" | "none">(
+        (initial?.kind === "ticket" || initial?.kind === "encore") ? initial.historyFeed ?? "latest" : "latest",
+    );
     const [script, setScript] = useState(initial?.kind === "mechanism" ? initial.script ?? "" : "");
     // 摆放不进表单：界面代码里用 mix.move / mix.size / mix.chrome … 自己定。
     // 老材料带着的那份原样保留，免得改一次名字就把人家摆好的位置抹了。
@@ -253,7 +257,8 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             hook: hook.trim() || undefined,
             author: initial?.author,
             tags: tags.length ? tags : undefined,
-            cover: cover || undefined,
+            // 只有角色卡收封面：其余种类连老材料残留的 cover 也在这一步洗掉
+            cover: isCharacter ? cover || undefined : undefined,
             createdAt: initial?.createdAt ?? Date.now(),
             updatedAt: Date.now(),
         };
@@ -295,7 +300,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             const cleanVars = vars
                 .map((v) => ({ name: v.name.trim(), initial: v.initial?.trim() || undefined }))
                 .filter((v, i, all) => v.name && all.findIndex((x) => x.name === v.name) === i);
-            onSave({ ...meta, kind: "ticket", contract: contract.trim(), renderHtml, previewRaw: previewRaw.trim() || undefined, vars: cleanVars.length ? cleanVars : undefined });
+            onSave({ ...meta, kind: "ticket", contract: contract.trim(), renderHtml, previewRaw: previewRaw.trim() || undefined, vars: cleanVars.length ? cleanVars : undefined, historyFeed: historyFeed !== "latest" ? historyFeed : undefined });
             return;
         }
         if (kind === "mechanism") {
@@ -328,6 +333,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                 contract: encoreContract.trim() || undefined,
                 renderHtml: html,
                 previewRaw: encorePreviewRaw.trim() || undefined,
+                historyFeed: historyFeed !== "latest" ? historyFeed : undefined,
             });
             return;
         }
@@ -550,7 +556,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                             style={{ minHeight: 130 }}
                             value={contract}
                             onChange={(e) => setContract(e.target.value)}
-                            placeholder={"例：\n每轮结束后报告下面三行，每行一个字段：\n好感度: 0-100 的整数\n心情: 四个字以内\n此刻在想: 一句话"}
+                            placeholder={"例：\n每轮按下面的分组逐行报告，键名不变：\n【核心】\n好感度: 0-100 整数，括号里注变化与原因，如 62（+3，替我挡了酒）\n关系阶段: 陌生/试探/靠近/纠缠 之一\n【他此刻】\n动作神态: 带细节的完整句，写到小动作\n衣着: 具体到单品与状态\n内心OS: 第一人称一句，20~40 字，可带吐槽\n【小节】\n今日流言: 两三句成段的八卦或传闻"}
                         />
                     </Field>
                     <Field label="渲染代码" hint="必填，HTML+CSS+JS，把上面那段原文画成卡片">
@@ -571,6 +577,13 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                             onChange={(e) => setPreviewRaw(e.target.value)}
                             placeholder={"照着上面的契约编一份，例：\n好感度: 62\n心情: 嘴硬\n此刻在想: 想留你再坐一会"}
                         />
+                    </Field>
+                    <Field label="历史回传" hint="往期轮次的壳内原文要不要回传给 AI；默认只回传最近一轮——状态接续和格式示范都够用，长局不费 token">
+                        <div className="mix-feed-seg">
+                            <button type="button" data-on={historyFeed === "none" ? "true" : undefined} onClick={() => setHistoryFeed("none")}>不回传</button>
+                            <button type="button" data-on={historyFeed === "latest" ? "true" : undefined} onClick={() => setHistoryFeed("latest")}>只最近一轮（默认）</button>
+                            <button type="button" data-on={historyFeed === "all" ? "true" : undefined} onClick={() => setHistoryFeed("all")}>全部轮次</button>
+                        </div>
                     </Field>
                     <Field label="要记住的项" hint="记住的值会一路留着，可以拿来设材料的「什么时候出现」；抽不到时保留上一轮的值">
                         {contractFieldNames.length ? (
@@ -700,8 +713,15 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                             style={{ minHeight: 110 }}
                             value={encoreContract}
                             onChange={(e) => setEncoreContract(e.target.value)}
-                            placeholder={"告诉 AI 何时输出、写什么。例：\n仅在剧情出现明显进展或情绪转折时输出：以旁观视角（助理、监控、朋友圈动态等）写一段不超过 80 字的小剧场，第一行标注视角。平淡回合整段省略。"}
+                            placeholder={"告诉 AI 写什么、按什么格式写；小剧场默认每轮都演。例：\n每轮以他朋友圈最新一条动态收尾：第一行「配图」用文字描述画面，第二行正文文案（口吻贴人设），随后一行点赞数，再盖至少 5 条评论楼——各有人名与口吻、有来有回可以歪楼拌嘴，其中一条是盖楼回复。整块十来行、两三百字起步，像一篇完整的帖子，不要三五行敷衍。"}
                         />
+                    </Field>
+                    <Field label="历史回传" hint="往期轮次的壳内原文要不要回传给 AI；默认只回传最近一轮——格式示范够用，长局不费 token">
+                        <div className="mix-feed-seg">
+                            <button type="button" data-on={historyFeed === "none" ? "true" : undefined} onClick={() => setHistoryFeed("none")}>不回传</button>
+                            <button type="button" data-on={historyFeed === "latest" ? "true" : undefined} onClick={() => setHistoryFeed("latest")}>只最近一轮（默认）</button>
+                            <button type="button" data-on={historyFeed === "all" ? "true" : undefined} onClick={() => setHistoryFeed("all")}>全部轮次</button>
+                        </div>
                     </Field>
                     <Field label="渲染代码" hint="必填，HTML/JS；AI 输出经 {{RAW}} 或 window.ENCORE_RAW 注入，静态小品则直接展示">
                         <textarea

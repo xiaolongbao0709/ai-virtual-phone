@@ -5,7 +5,7 @@ import { updateChatMessage, type ChatMessage } from "./chat-storage";
 import { DATA_MODULES } from "./data-management/modules";
 import { estimateValueBytes } from "./data-management/serializers";
 import { openIndexedDbAtLeast } from "./idb-open";
-import { kvEntries, kvGet, kvSet, registerKvMigration } from "./kv-db";
+import { hydrateKvDb, isKvHydrated, kvEntries, kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { deleteMediaRef, isMediaStoreRef, loadMediaBlob, storeMediaBlob } from "./media-cache-storage";
 import { getAudioBlob, deleteTrack, loadAllTracks } from "./music-storage";
 import { momentsDb } from "./moments-db";
@@ -201,12 +201,12 @@ async function deleteMediaRefWithSize(ref: string | undefined, seen: Set<string>
   return existing?.blob.size ?? 0;
 }
 
-function isChatImageMessage(message: ChatMessage): boolean {
+export function isChatImageMessage(message: ChatMessage): boolean {
   return message.mediaType === "image"
     || (message.mediaType === "media_file" && message.mediaData?.fileType === "image");
 }
 
-function isChatXiaohongshuShareImage(message: ChatMessage): boolean {
+export function isChatXiaohongshuShareImage(message: ChatMessage): boolean {
   return message.mediaType === "xiaohongshu_note_share" && Boolean(message.mediaData?.xiaohongshuImageAssetId);
 }
 
@@ -303,7 +303,7 @@ async function compactChatXiaohongshuShareImage(message: ChatMessage, nowIso: st
   return compressed;
 }
 
-async function cleanChatImage(message: ChatMessage, nowIso: string): Promise<number> {
+export async function cleanChatImage(message: ChatMessage, nowIso: string): Promise<number> {
   const seen = new Set<string>();
   let freedBytes = 0;
   freedBytes += await deleteMediaRefWithSize(message.mediaUrl, seen);
@@ -326,7 +326,7 @@ async function cleanChatImage(message: ChatMessage, nowIso: string): Promise<num
   return freedBytes + estimateValueBytes(message.mediaUrl);
 }
 
-async function cleanChatXiaohongshuShareImage(message: ChatMessage, nowIso: string): Promise<number> {
+export async function cleanChatXiaohongshuShareImage(message: ChatMessage, nowIso: string): Promise<number> {
   const assetId = message.mediaData?.xiaohongshuImageAssetId;
   const nextMediaData: ChatMessage["mediaData"] = {
     ...message.mediaData,
@@ -522,11 +522,11 @@ async function openExistingDb(name: string): Promise<IDBDatabase | null> {
   });
 }
 
-type ThemeAssetSummary = { id: string; bytes: number };
+export type ThemeAssetSummary = { id: string; bytes: number };
 
 /** 用游标逐条读取，只保留 id 和字节数——getAll() 会把所有素材的完整
  *  dataUrl（壁纸/VN 场景可达数百 MB）一次性载入内存，手机上会 OOM 假死。 */
-async function listThemeAssetSummaries(): Promise<ThemeAssetSummary[]> {
+export async function listThemeAssetSummaries(): Promise<ThemeAssetSummary[]> {
   if (!hasBrowserApi()) return [];
   const db = await openIndexedDbAtLeast(THEME_DB_NAME, THEME_DB_VERSION, (database) => {
     if (!database.objectStoreNames.contains(THEME_ASSET_STORE)) {
@@ -566,7 +566,7 @@ const ASSET_URL_RE = /asset:\/\/([A-Za-z0-9_-]+)/g;
 /** base64 载荷（字符集 A-Za-z0-9+/=）不可能含 "_" 或 ":"，上面两个正则永远
  *  不会在其中命中。聊天/素材里的 data URL 动辄数 MB，跳过载荷只扫头部，
  *  是「清理未引用素材」从分钟级假死降到秒级的关键。 */
-function scannableSlice(value: string): string {
+export function scannableSlice(value: string): string {
   if (!value.startsWith("data:")) return value;
   const marker = value.indexOf(";base64,");
   return marker !== -1 && marker < 256 ? value.slice(0, marker) : value;
@@ -591,25 +591,27 @@ function scanStringForAssetIds(rawValue: string, knownIds: Set<string>, referenc
   }
 }
 
-function scanValueForAssetIds(value: unknown, knownIds: Set<string>, referenced: Set<string>, seen = new WeakSet<object>()): void {
+/** 深扫任意结构里的每个字符串叶子。scan 回调自己决定匹配什么 id。 */
+export type StorageStringScanner = (value: string) => void;
+
+function scanValueWithScanner(value: unknown, scan: StorageStringScanner, seen = new WeakSet<object>()): void {
   if (typeof value === "string") {
-    scanStringForAssetIds(value, knownIds, referenced);
+    scan(value);
     return;
   }
   if (!value || typeof value !== "object") return;
   if (seen.has(value)) return;
   seen.add(value);
   if (Array.isArray(value)) {
-    value.forEach(item => scanValueForAssetIds(item, knownIds, referenced, seen));
+    value.forEach(item => scanValueWithScanner(item, scan, seen));
     return;
   }
   for (const nested of Object.values(value as Record<string, unknown>)) {
-    scanValueForAssetIds(nested, knownIds, referenced, seen);
+    scanValueWithScanner(nested, scan, seen);
   }
 }
 
-async function scanIndexedDbSourceForThemeRefs(dbName: string, knownIds: Set<string>, referenced: Set<string>): Promise<void> {
-  if (dbName === THEME_DB_NAME) return;
+async function scanIndexedDbSourceWithScanner(dbName: string, scan: StorageStringScanner): Promise<void> {
   const db = await openExistingDb(dbName);
   if (!db) return;
   try {
@@ -627,8 +629,8 @@ async function scanIndexedDbSourceForThemeRefs(dbName: string, knownIds: Set<str
             resolve();
             return;
           }
-          scanValueForAssetIds(cursor.primaryKey, knownIds, referenced);
-          scanValueForAssetIds(cursor.value, knownIds, referenced);
+          scanValueWithScanner(cursor.primaryKey, scan);
+          scanValueWithScanner(cursor.value, scan);
           cursor.continue();
         };
         request.onerror = () => reject(request.error);
@@ -640,21 +642,19 @@ async function scanIndexedDbSourceForThemeRefs(dbName: string, knownIds: Set<str
   }
 }
 
-async function collectReferencedThemeAssetIds(knownIds: Set<string>): Promise<Set<string>> {
-  const referenced = new Set<string>();
-
-  for (const id of collectThemeAssetIds(readThemeProfile())) {
-    if (knownIds.has(id)) referenced.add(id);
-  }
-
+/** 扫描整个应用存储（kv、localStorage、所有已注册模块的 IndexedDB）里的
+ *  每个字符串，供「谁还引用这个资源」类的孤儿判定使用。孤儿清理的安全性
+ *  完全依赖这里覆盖到所有可能藏引用的地方——新增存储位置时必须登记进
+ *  data-management/modules.ts（本函数按那份契约遍历）。 */
+export async function scanAllStorageStrings(scan: StorageStringScanner, excludeDbNames: string[] = []): Promise<void> {
   for (const { key, value } of kvEntries()) {
-    scanStringForAssetIds(key, knownIds, referenced);
+    scan(key);
     // JSON 值走结构化深扫（每个字符串叶子都会被扫到），不再对原始 JSON 串
     // 整体重扫一遍——大值双重扫描是清理假死的帮凶之一。
     try {
-      scanValueForAssetIds(JSON.parse(value), knownIds, referenced);
+      scanValueWithScanner(JSON.parse(value), scan);
     } catch {
-      scanStringForAssetIds(value, knownIds, referenced);
+      scan(value);
     }
   }
 
@@ -662,32 +662,57 @@ async function collectReferencedThemeAssetIds(knownIds: Set<string>): Promise<Se
     for (let index = 0; index < localStorage.length; index += 1) {
       const key = localStorage.key(index);
       if (!key) continue;
-      const value = localStorage.getItem(key) ?? "";
-      scanStringForAssetIds(key, knownIds, referenced);
-      scanStringForAssetIds(value, knownIds, referenced);
+      scan(key);
+      scan(localStorage.getItem(key) ?? "");
     }
   }
 
+  const excluded = new Set(excludeDbNames);
   const indexedDbNames = new Set<string>();
   for (const dataModule of DATA_MODULES) {
     for (const source of dataModule.sources) {
-      if (source.type === "indexeddb" && source.dbName !== THEME_DB_NAME) {
+      if (source.type === "indexeddb" && !excluded.has(source.dbName)) {
         indexedDbNames.add(source.dbName);
       }
     }
   }
   for (const dbName of indexedDbNames) {
-    await scanIndexedDbSourceForThemeRefs(dbName, knownIds, referenced).catch(() => undefined);
+    await scanIndexedDbSourceWithScanner(dbName, scan).catch(() => undefined);
   }
+}
+
+async function collectReferencedThemeAssetIds(knownIds: Set<string>): Promise<Set<string>> {
+  const referenced = new Set<string>();
+
+  for (const id of collectThemeAssetIds(readThemeProfile())) {
+    if (knownIds.has(id)) referenced.add(id);
+  }
+
+  await scanAllStorageStrings((value) => scanStringForAssetIds(value, knownIds, referenced), [THEME_DB_NAME]);
 
   return referenced;
 }
 
 export async function cleanupOrphanThemeAssets(): Promise<OrphanThemeCleanupResult> {
   if (!hasBrowserApi()) return { deletedAssets: 0, freedBytes: 0 };
+
+  // 孤儿判定的安全性完全依赖"扫到了所有引用"。表情包/壁纸/字体等的引用都记在
+  // kv 里，而 kvEntries() 读的是内存缓存——自动维护在启动 45 秒后就会跑，慢设备
+  // 上 kv 可能还没水合完，此时扫描是空的，全部素材都会被误判成孤儿一波删光
+  // （用户实报：133 个表情包名字都在、图全没了）。未水合宁可跳过本次清理。
+  await hydrateKvDb().catch(() => {});
+  if (!isKvHydrated()) return { deletedAssets: 0, freedBytes: 0 };
+
   const summaries = await listThemeAssetSummaries();
+  if (summaries.length === 0) return { deletedAssets: 0, freedBytes: 0 };
   const knownIds = new Set(summaries.map(summary => summary.id));
   const referenced = await collectReferencedThemeAssetIds(knownIds);
+
+  // 理智检查：素材库非空但一条引用都没扫到，几乎必然是扫描侧出了问题
+  // （存储读取异常、缓存为空等），而不是用户真把所有主题内容都删了。
+  // 误删不可恢复，这种情况放弃本次清理。
+  if (referenced.size === 0) return { deletedAssets: 0, freedBytes: 0 };
+
   let deletedAssets = 0;
   let freedBytes = 0;
 

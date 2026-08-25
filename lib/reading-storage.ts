@@ -310,6 +310,30 @@ export async function deleteRawFile(bookId: string): Promise<void> {
     idb.close();
 }
 
+/** 逐条列出原始文件的 bookId 与大小（blob.size 只读元数据，不载入内容）。 */
+export async function listRawFileSummaries(): Promise<Array<{ bookId: string; bytes: number }>> {
+    try {
+        const idb = await openRawFileDatabase();
+        const out: Array<{ bookId: string; bytes: number }> = [];
+        await new Promise<void>((resolve, reject) => {
+            const tx = idb.transaction(RAW_FILE_STORE_NAME, "readonly");
+            const req = tx.objectStore(RAW_FILE_STORE_NAME).openCursor();
+            req.onsuccess = () => {
+                const cursor = req.result;
+                if (!cursor) return resolve();
+                const blob = cursor.value as Blob | undefined;
+                out.push({ bookId: String(cursor.primaryKey), bytes: blob?.size ?? 0 });
+                cursor.continue();
+            };
+            req.onerror = () => reject(req.error);
+        });
+        idb.close();
+        return out;
+    } catch {
+        return [];
+    }
+}
+
 export async function loadRawFile(bookId: string): Promise<ArrayBuffer | null> {
     const blob = await loadRawFileBlob(bookId);
     if (!blob) return null;

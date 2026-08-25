@@ -2,6 +2,7 @@ import nodeCrypto from "crypto";
 
 import { NextResponse } from "next/server";
 
+import { uploadAppIconToStorage } from "@/lib/server/app-market-assets";
 import { getCurrentAccount } from "@/lib/server/account-auth";
 import { getModeratorContext } from "@/lib/server/admin-auth";
 import { encodeSupabaseFilter, formatSupabaseRestError, getSupabaseServerConfig, supabaseRestFetch } from "@/lib/server/supabase-rest";
@@ -68,6 +69,23 @@ function cleanIconDataUrl(value: unknown): string {
   if (!icon.startsWith("data:image/")) return "";
   if (icon.length >= MAX_ICON_DATA_URL_LENGTH) return "";
   return icon;
+}
+
+// 图标列现在是双格式：老数据 base64，新数据（发布转存/惰性迁移后）是 Storage
+// 公开桶的 https URL。读侧两种都接受。
+function cleanStoredIcon(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (/^https?:\/\//i.test(raw)) return raw.length <= 2000 ? raw : "";
+  return cleanIconDataUrl(raw);
+}
+
+// 对外响应不再携带图标本体（base64 或桶 URL 一律换成站内 icon 路由引用）：
+// 详情响应从 ~180KB 瘦到几 KB。客户端已有约定——/api/app-market/icon? 开头的
+// 值按「引用」处理（apps-lite 一直这么发）：展示走 <img src>，安装/再发布
+// 不会把它当图标内容回传。
+function withIconRef(app: CustomAppMarketItem | null): CustomAppMarketItem | null {
+  if (!app?.iconDataUrl) return app;
+  return { ...app, iconDataUrl: `/api/app-market/icon?id=${encodeURIComponent(app.id)}&v=${encodeURIComponent(app.updatedAt)}` };
 }
 
 function randomIdSuffix(): string {
@@ -203,7 +221,7 @@ function normalizeMarketItem(raw: unknown): CustomAppMarketItem | null {
     version,
     changelog: cleanText(record.changelog ?? record.release_notes ?? record.releaseNotes, 4000) || undefined,
     description: cleanText(record.description, 800) || undefined,
-    iconDataUrl: cleanIconDataUrl(record.icon_data_url ?? record.iconDataUrl) || undefined,
+    iconDataUrl: cleanStoredIcon(record.icon_data_url ?? record.iconDataUrl) || undefined,
     permissions: normalizePermissions(record.permissions),
     manifest,
     packageUrl,
@@ -265,11 +283,11 @@ function hasOwn(input: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(input, key);
 }
 
-function buildPayload(
+async function buildPayload(
   input: Record<string, unknown>,
   account: { id: string; displayName: string },
   existing?: CustomAppMarketItem,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const now = new Date().toISOString();
   const name = cleanText(input.name, 60) || existing?.name || "";
   const version = cleanText(input.version, 30) || existing?.version || "1.0.0";
@@ -284,9 +302,16 @@ function buildPayload(
   const manifest = normalizeManifest(input.manifest ?? existing?.manifest, { appId, name, version });
   const hasChangelog = hasOwn(input, "changelog") || hasOwn(input, "release_notes") || hasOwn(input, "releaseNotes");
   const description = hasOwn(input, "description") ? cleanText(input.description, 800) : existing?.description ?? "";
-  const iconDataUrl = hasOwn(input, "iconDataUrl") || hasOwn(input, "icon_data_url")
+  const providedIcon = hasOwn(input, "iconDataUrl") || hasOwn(input, "icon_data_url")
     ? cleanIconDataUrl(input.iconDataUrl ?? input.icon_data_url)
-    : existing?.iconDataUrl ?? "";
+    : "";
+  // 空值不再清掉已有图标：老版客户端把「引用/URL 形态的图标」送进压缩函数会得到
+  // 空串，若照写库会在更新时把图标弄丢。发布时把 base64 转存到公开桶、只存 URL；
+  // 转存失败回落 base64（老链路照常工作）。
+  let iconDataUrl = providedIcon || existing?.iconDataUrl || "";
+  if (iconDataUrl.startsWith("data:image/")) {
+    iconDataUrl = (await uploadAppIconToStorage(id, iconDataUrl)) || iconDataUrl;
+  }
   return {
     id,
     app_id: appId,
@@ -389,7 +414,7 @@ export async function GET(request: Request) {
         `custom_app_market_apps?deleted_at=is.null${statusFilter}&select=${REST_APP_COLUMNS}&order=updated_at.desc&limit=200`,
       );
       if (!result.ok) return NextResponse.json({ ok: false, apps: [], error: mapSupabaseError(result.error) }, { status: result.status });
-      return NextResponse.json({ ok: true, apps: result.data.map(normalizeMarketItem).filter(Boolean) });
+      return NextResponse.json({ ok: true, apps: result.data.map(normalizeMarketItem).filter(Boolean).map(app => withIconRef(app as CustomAppMarketItem)) });
     }
 
     const requestedAppId = cleanId(url.searchParams.get("appId") ?? url.searchParams.get("app_id"));
@@ -402,7 +427,7 @@ export async function GET(request: Request) {
       if (!app || (app.reviewStatus !== "approved" && app.authorId !== account?.id)) {
         return NextResponse.json({ ok: true });
       }
-      return NextResponse.json({ ok: true, app: stripPackageLinkForViewer(app, account?.id) });
+      return NextResponse.json({ ok: true, app: withIconRef(stripPackageLinkForViewer(app, account?.id)) });
     }
 
     const requestedId = cleanId(url.searchParams.get("id"));
@@ -416,7 +441,7 @@ export async function GET(request: Request) {
       if (app.reviewStatus !== "approved" && app.authorId !== account?.id) {
         return NextResponse.json({ ok: false, error: "应用尚未通过审核。" }, { status: 403 });
       }
-      return NextResponse.json({ ok: true, app: stripPackageLinkForViewer(app, account?.id) });
+      return NextResponse.json({ ok: true, app: withIconRef(stripPackageLinkForViewer(app, account?.id)) });
     }
 
     const mine = url.searchParams.get("mine") === "1";
@@ -426,7 +451,7 @@ export async function GET(request: Request) {
         `custom_app_market_apps?author_id=eq.${encodeSupabaseFilter(account.id)}&deleted_at=is.null&select=${REST_APP_COLUMNS}&order=updated_at.desc&limit=100`,
       );
       if (!result.ok) return NextResponse.json({ ok: false, apps: [], error: mapSupabaseError(result.error) }, { status: result.status });
-      return NextResponse.json({ ok: true, apps: result.data.map(normalizeMarketItem).filter(Boolean) });
+      return NextResponse.json({ ok: true, apps: result.data.map(normalizeMarketItem).filter(Boolean).map(app => withIconRef(app as CustomAppMarketItem)) });
     }
 
     const result = await supabaseRestFetch<unknown[]>(
@@ -463,7 +488,7 @@ export async function POST(request: Request) {
       if (conflict) return NextResponse.json({ ok: false, error: conflict }, { status: 409 });
       return NextResponse.json({ ok: true });
     }
-    const payload = buildPayload(record, account);
+    const payload = await buildPayload(record, account);
     payload.package_hash = await computePackageHash(String(payload.package_path ?? ""));
     const conflict = await validateMarketConflicts(payload);
     if (conflict) return NextResponse.json({ ok: false, error: conflict }, { status: 409 });
@@ -488,7 +513,7 @@ export async function POST(request: Request) {
       );
     }
     if (!result.ok) return NextResponse.json({ ok: false, error: mapSupabaseError(result.error) }, { status: result.status });
-    return NextResponse.json({ ok: true, app: normalizeMarketItem(result.data[0]) });
+    return NextResponse.json({ ok: true, app: withIconRef(normalizeMarketItem(result.data[0])) });
   } catch (err) {
     return NextResponse.json({ ok: false, error: formatSupabaseRestError(err) }, { status: getSupabaseServerConfig() ? 400 : 503 });
   }
@@ -514,7 +539,7 @@ export async function PUT(request: Request) {
       if (conflict) return NextResponse.json({ ok: false, error: conflict }, { status: 409 });
       return NextResponse.json({ ok: true });
     }
-    const payload = buildPayload(record, account, existing);
+    const payload = await buildPayload(record, account, existing);
     payload.package_hash = await computePackageHash(String(payload.package_path ?? ""));
     const conflict = await validateMarketConflicts(payload, existing.id);
     if (conflict) return NextResponse.json({ ok: false, error: conflict }, { status: 409 });
@@ -540,7 +565,7 @@ export async function PUT(request: Request) {
     if (!result.ok) return NextResponse.json({ ok: false, error: mapSupabaseError(result.error) }, { status: result.status });
     const app = normalizeMarketItem(result.data[0]);
     if (!app) return NextResponse.json({ ok: false, error: "没有找到可修改的已发布应用。" }, { status: 404 });
-    return NextResponse.json({ ok: true, app });
+    return NextResponse.json({ ok: true, app: withIconRef(app) });
   } catch (err) {
     return NextResponse.json({ ok: false, error: formatSupabaseRestError(err) }, { status: getSupabaseServerConfig() ? 400 : 503 });
   }
@@ -567,7 +592,7 @@ export async function PATCH(request: Request) {
       if (!result.ok) return NextResponse.json({ ok: false, error: mapSupabaseError(result.error) }, { status: result.status });
       const app = normalizeMarketItem(result.data[0]);
       if (!app) return NextResponse.json({ ok: false, error: "没有找到应用。" }, { status: 404 });
-      return NextResponse.json({ ok: true, app });
+      return NextResponse.json({ ok: true, app: withIconRef(app) });
     }
 
     if (record.action !== "increment_install") {
@@ -587,7 +612,7 @@ export async function PATCH(request: Request) {
       },
     );
     if (!result.ok) return NextResponse.json({ ok: false, error: mapSupabaseError(result.error) }, { status: result.status });
-    return NextResponse.json({ ok: true, app: normalizeMarketItem(result.data[0]) });
+    return NextResponse.json({ ok: true, app: withIconRef(normalizeMarketItem(result.data[0])) });
   } catch (err) {
     return NextResponse.json({ ok: false, error: formatSupabaseRestError(err) }, { status: getSupabaseServerConfig() ? 400 : 503 });
   }

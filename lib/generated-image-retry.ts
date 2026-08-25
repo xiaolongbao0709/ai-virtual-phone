@@ -49,6 +49,20 @@ export async function generateAndApplyChatGeneratedImage(
         syncChatGeneratedImagePromptText(message.id, previousDescription, description);
     }
 
+    // 重试路径：先落库为 pending 并广播，气泡立刻切到"生成中"态（首次生图本来就是 pending，无需重写）。
+    // 之后无论成功/失败都会再写一次状态，不会卡在 pending。
+    if (message.mediaData?.imageGenerationStatus !== "pending") {
+        const marked = updateChatMessage(message.id, {
+            mediaData: {
+                ...message.mediaData,
+                label: description,
+                imageGenerationStatus: "pending",
+                imageGenerationError: undefined,
+            },
+        });
+        if (marked) dispatchChatMessagesUpdated(marked.sessionId, marked);
+    }
+
     try {
         const generated = await generateImageFromConfiguredApi({
             description,
@@ -105,6 +119,14 @@ export async function retryChatGeneratedImage(
 export async function retryMomentGeneratedPhoto(post: MomentPost, nextDescription?: string): Promise<MomentPost> {
     const description = (nextDescription ?? post.photoDescription)?.trim();
     if (!description) throw new Error("缺少图片描述，无法重新生成");
+
+    // 同聊天：重试先置 pending 并广播，卡片立刻显示"图片生成中…"；成功/失败都会再写状态。
+    updateMomentPost(post.id, {
+        photoDescription: description,
+        photoGenerationStatus: "pending",
+        photoGenerationError: undefined,
+    });
+    dispatchMomentsUpdated();
 
     try {
         const generated = await generateImageFromConfiguredApi({

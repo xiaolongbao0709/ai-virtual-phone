@@ -30,7 +30,7 @@ const guide = read(GUIDE);
 const NAMESPACES = new Set([
   "app", "db", "ai", "user", "network", "tools", "events", "chat",
   "characters", "ui", "notifications", "tasks", "wallet", "memory",
-  "voice", "calendar", "world", "media",
+  "voice", "calendar", "world", "media", "geo", "room", "cloud", "bridge",
 ]);
 
 // ---------- 1. SDK 外壳：方法 -> 它发送的 action ----------
@@ -65,7 +65,12 @@ const wrapperActions = new Set();        // 外壳会发送的 action
 const dispatchActions = new Set();
 for (const m of runner.matchAll(/action === (['"])([\w.]+)\1/g)) dispatchActions.add(m[2]);
 const dbPrefixHandled = /action\.startsWith\((['"])db\.\1\)/.test(runner);
-const actionHandled = (a) => dispatchActions.has(a) || (dbPrefixHandled && a.startsWith("db."));
+const roomPrefixHandled = /action\.startsWith\((['"])room\.\1\)/.test(runner);
+const cloudPrefixHandled = /action\.startsWith\((['"])cloud\.\1\)/.test(runner);
+const actionHandled = (a) => dispatchActions.has(a)
+  || (dbPrefixHandled && a.startsWith("db."))
+  || (roomPrefixHandled && a.startsWith("room."))
+  || (cloudPrefixHandled && a.startsWith("cloud."));
 
 // ---------- 3. 权限白名单 ----------
 const allowStart = storage.indexOf("const allowed = new Set");

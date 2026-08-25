@@ -2,7 +2,8 @@
 // 独家特调 · 装配器：把一杯特调（角色卡 + 各槽材料）装配成提示词。
 //
 // 一格可以叠多件材料：累加型的格（基底/风味/杯型/苦精）把这一叠依次拼接，
-// 择一型的格（面具/小票/尾调）只用第一件。带条件的材料由调用方先筛过再交进来。
+// 小票/尾调每件各自成块（一轮可同时带多个状态栏/小剧场，多块时开标签带名字），
+// 择一型的格（角色卡/面具）只用第一件。带条件的材料由调用方先筛过再交进来。
 //
 // 固定装配顺序（创作者不可调，保证"任意搭配都不散架"）：
 //   序言 → 基底 → 角色资料 → 世界与剧情 → 风味 → 杯型 → 状态栏契约 → 示例对话
@@ -37,7 +38,8 @@ export type MixAssembleInput = {
     character: MixCharacterCard;
     /**
      * 其余槽位材料：每格是一叠（已由调用方按生效条件筛过、按顺序排好）。
-     * 累加型的格（基底/风味/杯型/苦精）整叠依次拼接，择一型的格只看第一件。
+     * 累加型的格（基底/风味/杯型/苦精）整叠依次拼接，小票/尾调每件各自成块，
+     * 择一型的格（角色卡/面具）只看第一件。
      */
     materials: Partial<Record<MixMaterialKind, MixMaterial[]>>;
     /** 用户的名字，空则用默认 */
@@ -148,39 +150,84 @@ const PROSE_PROTOCOL = [
     "- 除以上四种外，不要使用任何其他富文本标记（不用 Markdown 标题、粗体、列表）。",
 ].join("\n");
 
-/** 状态栏契约段：把小票材料的 contract 包进固定壳指令 */
-function ticketSection(ticket: MixTicketMaterial, charName: string, userName: string, state?: MixState): string | null {
-    const contract = ticket.contract.trim();
-    if (!contract) return null;
-    return [
-        "# 状态栏",
-        `输出格式：每轮回复的最开头，第一行输出 ${MIX_TICKET_OPEN}，随后按「输出契约」的要求逐行填写本轮的实际数据，以 ${MIX_TICKET_CLOSE} 单独一行收束，之后空一行再写正文。任何一轮都不要省略这一段。`,
-        "## 输出契约",
-        applyMixMacros(contract, charName, userName, state),
-    ].join("\n");
+/** 具名开标签：一轮多块时块靠名字对号入座（[状态栏:心情卡]） */
+export function mixNamedOpen(open: string, name: string): string {
+    return `${open.slice(0, -1)}:${name.trim()}]`;
 }
 
-/** 小剧场契约段：格式说明在前，内容要求在后；契约留空则整段不存在 */
-function encoreSection(encore: MixEncoreMaterial, charName: string, userName: string, state?: MixState): string | null {
-    const contract = encore.contract?.trim();
-    if (!contract) return null;
-    return [
+/**
+ * 状态栏契约段：把小票材料的 contract 包进固定壳指令。
+ * 单张 = 老格式（不具名的壳，旧对局提示词逐字不变）；
+ * 多张 = 每张一块，开标签带小票名，回复开头按顺序依次输出。
+ */
+function ticketSection(tickets: MixTicketMaterial[], charName: string, userName: string, state?: MixState): string | null {
+    const withContract = tickets.filter((t) => t.contract.trim());
+    if (!withContract.length) return null;
+    if (withContract.length === 1) {
+        return [
+            "# 状态栏",
+            `输出格式：每轮回复的最开头，第一行输出 ${MIX_TICKET_OPEN}，随后按「输出契约」的要求逐行填写本轮的实际数据，以 ${MIX_TICKET_CLOSE} 单独一行收束，之后空一行再写正文。任何一轮都不要省略这一段。`,
+            "## 输出契约",
+            applyMixMacros(withContract[0].contract.trim(), charName, userName, state),
+        ].join("\n");
+    }
+    const lines = [
+        "# 状态栏",
+        `输出格式：本局有 ${withContract.length} 个状态栏，每轮回复的最开头按下面的顺序逐个输出，彼此独立成块：每块第一行输出带名字的开标签（如 ${mixNamedOpen(MIX_TICKET_OPEN, withContract[0].name)}），随后按该块「输出契约」的要求逐行填写本轮的实际数据，以 ${MIX_TICKET_CLOSE} 单独一行收束。全部块输出完之后空一行再写正文。任何一轮都不要省略任何一块。`,
+    ];
+    for (const ticket of withContract) {
+        lines.push(
+            `## ${mixNamedOpen(MIX_TICKET_OPEN, ticket.name)} 的输出契约`,
+            applyMixMacros(ticket.contract.trim(), charName, userName, state),
+        );
+    }
+    return lines.join("\n");
+}
+
+/**
+ * 小剧场契约段：格式说明在前，内容要求在后；没写契约的不进提示词。
+ * 单出 = 老格式；多出 = 每出一块、开标签带名。
+ * 每轮必演——壳指令不给"这轮好像不用演"的台阶：条件式措辞会让模型在长篇里
+ * 越来越常把末尾块整个吞掉（历史先例又会放大这一点）。创作者真想按条件上演，
+ * 在契约里自己写条件，契约的要求压得过这句默认。
+ */
+function encoreSection(encores: MixEncoreMaterial[], charName: string, userName: string, state?: MixState): string | null {
+    const withContract = encores.filter((e) => e.contract?.trim());
+    if (!withContract.length) return null;
+    if (withContract.length === 1) {
+        return [
+            "# 小剧场",
+            `输出格式：每轮回复的最末尾（正文之后）输出这一块，整块用 ${MIX_ENCORE_OPEN}...${MIX_ENCORE_CLOSE} 包裹，内容按「输出契约」的要求写。任何一轮都不要省略这一块。`,
+            "## 输出契约",
+            applyMixMacros(withContract[0].contract!.trim(), charName, userName, state),
+        ].join("\n");
+    }
+    const lines = [
         "# 小剧场",
-        `输出格式：放在回复最末尾（正文之后），整块用 ${MIX_ENCORE_OPEN}...${MIX_ENCORE_CLOSE} 包裹；是否输出由「输出契约」的条件决定，不输出时整段省略，不要输出空壳。`,
-        "## 输出契约",
-        applyMixMacros(contract, charName, userName, state),
-    ].join("\n");
+        `输出格式：本局有 ${withContract.length} 个小剧场，每轮回复的最末尾（正文之后）按下面的顺序全部输出，彼此独立成块：每块用带名字的开标签（如 ${mixNamedOpen(MIX_ENCORE_OPEN, withContract[0].name)}）开头，以 ${MIX_ENCORE_CLOSE} 收束。任何一轮任何一块都不要省略。`,
+    ];
+    for (const encore of withContract) {
+        lines.push(
+            `## ${mixNamedOpen(MIX_ENCORE_OPEN, encore.name)} 的输出契约`,
+            applyMixMacros(encore.contract!.trim(), charName, userName, state),
+        );
+    }
+    return lines.join("\n");
 }
 
 /** 收尾核对清单：放在最后压阵，防止模型写完正文忘了必须输出的块 */
-function checklistSection(withTicket: boolean, withEncore: boolean): string | null {
-    if (!withTicket && !withEncore) return null;
+function checklistSection(ticketCount: number, encoreCount: number): string | null {
+    if (!ticketCount && !encoreCount) return null;
     const items = ["- 正文符合「正文输出要求」。"];
-    if (withTicket) {
+    if (ticketCount === 1) {
         items.push(`- 回复最开头已按「状态栏」的格式输出 ${MIX_TICKET_OPEN}...${MIX_TICKET_CLOSE} 块——任何一轮都不能缺。`);
+    } else if (ticketCount > 1) {
+        items.push(`- 回复最开头已按「状态栏」的格式与顺序输出全部 ${ticketCount} 块（每块开标签带名字）——任何一轮任何一块都不能缺。`);
     }
-    if (withEncore) {
-        items.push(`- 若本轮满足「小剧场」的输出条件，已用 ${MIX_ENCORE_OPEN}...${MIX_ENCORE_CLOSE} 块输出。`);
+    if (encoreCount === 1) {
+        items.push(`- 回复最末尾已按「小剧场」的格式输出 ${MIX_ENCORE_OPEN}...${MIX_ENCORE_CLOSE} 块——任何一轮都不能缺。`);
+    } else if (encoreCount > 1) {
+        items.push(`- 回复最末尾已按「小剧场」的格式与顺序输出全部 ${encoreCount} 块（每块开标签带名字）——任何一轮任何一块都不能缺。`);
     }
     return ["# 输出格式检查", "每轮回复发出前逐项核对：", ...items].join("\n");
 }
@@ -206,8 +253,9 @@ export function assembleMixPrompt(input: MixAssembleInput): MixAssembledPrompt {
     const persona = firstOf<MixPersonaMaterial>("persona");
     // 用户的名字：显式传入 > 面具材料里填的 > 默认「你」
     const userName = input.userName?.trim() || persona?.userName?.trim() || MIX_DEFAULT_USER_NAME;
-    const ticket = firstOf<MixTicketMaterial>("ticket");
-    const encore = firstOf<MixEncoreMaterial>("encore");
+    // 小票/尾调是多块并行的格：条件命中的全部生效，每件各自成块
+    const tickets = (m.ticket ?? []).filter((item): item is MixTicketMaterial => item.kind === "ticket");
+    const encores = (m.encore ?? []).filter((item): item is MixEncoreMaterial => item.kind === "encore");
 
     const apply = (text: string) => applyMixMacros(text, charName, userName, input.state);
 
@@ -249,12 +297,12 @@ export function assembleMixPrompt(input: MixAssembleInput): MixAssembledPrompt {
         flavorText ? `# 文风\n${flavorText}` : null,
         // 内置协议在前，作者写的正文输出要求接在后面，各自是一个 ## 条目
         `# 正文输出要求\n${PROSE_PROTOCOL}${glassText ? `\n\n## 正文输出要求\n${glassText}` : ""}`,
-        ticket ? ticketSection(ticket, charName, userName, input.state) : null,
-        encore ? encoreSection(encore, charName, userName, input.state) : null,
+        ticketSection(tickets, charName, userName, input.state),
+        encoreSection(encores, charName, userName, input.state),
         exampleSection(card, charName, userName),
         checklistSection(
-            Boolean(ticket?.contract.trim()),
-            Boolean(encore?.contract?.trim()),
+            tickets.filter((t) => t.contract.trim()).length,
+            encores.filter((e) => e.contract?.trim()).length,
         ),
     ];
 
@@ -270,7 +318,7 @@ export function assembleMixPrompt(input: MixAssembleInput): MixAssembledPrompt {
             ? `【最高优先级要求】\n${strengthText}`
             : "",
         opening,
-        hasTicket: Boolean(ticket?.contract.trim() && ticket?.renderHtml.trim()),
-        hasEncore: Boolean(encore?.contract?.trim() && encore && mixEncoreRenderHtml(encore).trim()),
+        hasTicket: tickets.some((t) => t.contract.trim() && t.renderHtml.trim()),
+        hasEncore: encores.some((e) => e.contract?.trim() && mixEncoreRenderHtml(e).trim()),
     };
 }

@@ -101,7 +101,8 @@ export type ImportDestination =
     | "plugin"
     | "theme"
     | "preset_entry"
-    | "status_bar";
+    | "status_bar"
+    | "mixology";
 
 export const IMPORT_DESTINATIONS: Array<{ key: ImportDestination; label: string; hint: string }> = [
     { key: "preset", label: "预设", hint: "预设管理页导出的 JSON" },
@@ -112,10 +113,11 @@ export const IMPORT_DESTINATIONS: Array<{ key: ImportDestination; label: string;
     { key: "chat_app_css", label: "聊天主页CSS", hint: "应用到聊天主页" },
     { key: "global_css", label: "全局CSS", hint: "应用到外观页全局样式" },
     { key: "custom_app", label: "应用", hint: "应用市场 zip 安装包或单 HTML" },
-    { key: "game", label: "游戏", hint: "游戏草稿箱导出的 JSON" },
-    { key: "theater", label: "黑市剧场", hint: "剧场草稿箱导出的 JSON" },
+    { key: "game", label: "游戏", hint: "游戏草稿箱导出的 JSON，导入后进我的柜子直接可玩" },
+    { key: "theater", label: "黑市剧场", hint: "剧场草稿箱导出的 JSON，导入后进本地暗柜直接开演" },
     { key: "plugin", label: "插件", hint: "聊天插件 JS 源码文件" },
     { key: "theme", label: "主题包", hint: "外观页导出的主题包 zip" },
     { key: "preset_entry", label: "预设条目", hint: "单条预设条目，插入或覆盖到已有预设" },
     { key: "status_bar", label: "状态栏", hint: "聊天信息页导出的自定义状态栏 JSON，导入后进方案库" },
+    { key: "mixology", label: "特调", hint: "独家特调导出的材料或配方文件（JSON/PNG），内容全部自动入柜" },
 ];

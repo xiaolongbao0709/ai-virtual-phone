@@ -57,6 +57,8 @@ export type QaSession = {
     createdAt: number;
     updatedAt: number;
     messages: QaMsg[];
+    /** 抽屉里置顶显示；只影响排序，不动 updatedAt */
+    isPinned?: boolean;
     /** 模型侧完整上下文（含工具调用与结果），跨轮保留；触顶时压缩为摘要 */
     context?: QaContextEntry[];
     /** 本会话中 agent 创建/更新过的本机内容（APP/游戏/剧场），供工坊内预览直接打开 */
@@ -267,6 +269,18 @@ export function subscribeQaChat(listener: () => void): () => void {
 
 export function getQaChatSnapshot(): QaChatSnapshot {
     return snapshot;
+}
+
+/** 重命名对话：只改标题，不碰 updatedAt——改个名字不该把会话顶到时间序最前 */
+export function renameQaSession(id: string, title: string): void {
+    const trimmed = title.trim().slice(0, 80);
+    if (!trimmed) return;
+    updateSession(id, (s) => ({ ...s, title: trimmed }));
+}
+
+/** 置顶开关：排序在抽屉渲染层做（置顶在前，其余按时间），存储顺序保持时间序 */
+export function toggleQaSessionPin(id: string): void {
+    updateSession(id, (s) => ({ ...s, isPinned: !s.isPinned }));
 }
 
 export async function hydrateQaChat(): Promise<void> {

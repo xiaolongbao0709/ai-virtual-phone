@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentAccount } from "@/lib/server/account-auth";
-import { getMixologySupabaseConfig, mixologyRestFetch } from "@/lib/server/mixology-supabase";
+import { getMixologySupabaseConfig, mixologyRestFetch, uploadMixologyCoverToStorage } from "@/lib/server/mixology-supabase";
 import { normalizeRecipeParts as normalizeParts, validateMechanismPayload, type RecipePartRef } from "@/lib/mixology/hall-parts";
 
 // 独家特调 · 酒材/配方 API：材料（mixology_items）与配方（mixology_recipes）共用一套路由，
@@ -35,6 +35,16 @@ const TABLES: Record<HallType, string> = {
  *（likedByMe/savedByMe 只在详情里给），响应对所有人相同，让 Netlify 边缘
  * 挡掉重复回源——列表带封面 base64，是特调这边 Supabase 出站的大头。
  */
+// 发布/更新时把 base64 封面转存到 Storage 公开桶，DB 只存公共 URL：
+// 浏览器直连桶拉图，函数与 PostgREST 都不再背封面字节。转存失败回落
+// 原 base64（老链路照常工作），空值或已是 URL 的原样保留。
+async function resolveCoverForWrite(type: HallType, id: string, rawCover: unknown): Promise<string> {
+  const cover = cleanText(rawCover, 2_000_000);
+  if (!cover.startsWith("data:image/")) return cover;
+  const url = await uploadMixologyCoverToStorage(type, id, cover);
+  return url || cover;
+}
+
 const CDN_LIST_CACHE_HEADERS = {
   "Cache-Control": "public, max-age=0, must-revalidate",
   "Netlify-CDN-Cache-Control": "public, durable, s-maxage=60, stale-while-revalidate=300",
@@ -310,17 +320,18 @@ export async function POST(request: Request) {
         const invalid = validateMechanismPayload(payload);
         if (invalid) return NextResponse.json({ ok: false, error: invalid }, { status: 400 });
       }
+      const materialId = createId("mxi");
       const insert = await supabaseFetch<unknown[]>(
         `mixology_items?select=${ITEM_COLUMNS}`,
         {
           method: "POST",
           headers: { Prefer: "return=representation" },
           body: JSON.stringify({
-            id: createId("mxi"),
+            id: materialId,
             kind,
             name,
             hook: cleanText(record.hook, 200),
-            cover: cleanText(record.cover, 2_000_000),
+            cover: await resolveCoverForWrite("material", materialId, record.cover),
             tags: normalizeTags(record.tags),
             payload,
             author_id: account.id,
@@ -341,16 +352,17 @@ export async function POST(request: Request) {
     }
     const shelfError = await verifyPartsOnShelf(normalized.parts);
     if (shelfError) return NextResponse.json({ ok: false, error: shelfError }, { status: 409 });
+    const recipeId = createId("mxr");
     const insert = await supabaseFetch<unknown[]>(
       `mixology_recipes?select=${RECIPE_COLUMNS}`,
       {
         method: "POST",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
-          id: createId("mxr"),
+          id: recipeId,
           name,
           intro: cleanText(record.intro, 400),
-          cover: cleanText(record.cover, 2_000_000),
+          cover: await resolveCoverForWrite("recipe", recipeId, record.cover),
           char_name: cleanText(record.charName, 80),
           part_names: normalizeTags(record.partNames),
           materials: normalized.parts,
@@ -403,7 +415,7 @@ export async function PUT(request: Request) {
         kind,
         name,
         hook: cleanText(record.hook, 200),
-        cover: cleanText(record.cover, 2_000_000),
+        cover: await resolveCoverForWrite(type, id, record.cover),
         tags: normalizeTags(record.tags),
         payload: materialPayload,
         // 更新时同步刷新署名与头像：发布身份以创作者资料当前值为准
@@ -421,7 +433,7 @@ export async function PUT(request: Request) {
       payload = {
         name,
         intro: cleanText(record.intro, 400),
-        cover: cleanText(record.cover, 2_000_000),
+        cover: await resolveCoverForWrite(type, id, record.cover),
         char_name: cleanText(record.charName, 80),
         part_names: normalizeTags(record.partNames),
         materials: normalized.parts,

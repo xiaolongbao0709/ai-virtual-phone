@@ -110,6 +110,9 @@
   text-align: center;
   width: 100%;
   overflow-y: auto;
+  /* 显式关掉横轴：overflow-y:auto 会把未声明的横轴也算成 auto，
+     一旦内容超宽整个弹窗就能左右滑（MCP 弹窗请求头行曾触发） */
+  overflow-x: hidden;
   flex: 1;
   min-height: 0;
 }
@@ -128,6 +131,51 @@
 
 .modal-dialog .modal-footer .ui-btn {
   flex: 1;
+}
+
+.offline-push-revamp-notice {
+  width: min(82%, 330px);
+  max-width: 330px;
+}
+
+.offline-push-revamp-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--c-accent, #6688b5);
+  background: color-mix(in srgb, var(--c-accent, #6688b5) 14%, transparent);
+}
+
+.offline-push-revamp-notice .modal-body {
+  display: grid;
+  gap: 10px;
+  text-align: left;
+}
+
+.offline-push-revamp-actions {
+  display: flex;
+}
+
+.offline-push-revamp-actions .ui-btn {
+  min-height: 44px;
+}
+
+.cloud-deployment-scope-dialog {
+  width: min(84%, 340px);
+  max-width: 340px;
+}
+
+.cloud-deployment-scope-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.cloud-deployment-scope-actions .ui-btn {
+  width: 100%;
+  min-height: 44px;
 }
 
 /* The import dialog is position:fixed inside the transformed phone shell; on iOS
@@ -2615,7 +2663,7 @@
 
 .data-management-menu .data-cloud-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -5416,4 +5464,28 @@
   font-weight: 700;
   line-height: 1;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* 提示词查看器：组成标签默认收起，点小按钮展开 */
+.pv-msg-badge-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  cursor: pointer;
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: rgba(128,128,128,0.08);
+  color: var(--c-icon);
+}
+.pv-msg-badge-toggle[data-active] {
+  background: rgba(100,170,255,0.12);
+  color: rgba(100,170,255,0.9);
+}
+.pv-msg-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px 8px;
 }

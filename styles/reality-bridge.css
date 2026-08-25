@@ -1,0 +1,1137 @@
+/* ═══ 现实桥 · 极简黑白灰 + 紫（参考图定稿：平面/细线图标/黑主钮/紫点缀） ═══ */
+.reality-bridge-app-shell {
+  --rb-bg: #f9f9fb;
+  --rb-card: #ffffff;
+  --rb-ink: #17171c;
+  --rb-sub: #8e8e98;
+  --rb-line: #ebebf0;
+  --rb-inset: #f0f0f4;
+  --rb-acc: #7a5af8;
+  --rb-acc-soft: #efeafe;
+  --rb-acc-ink: #ffffff;
+  --rb-acc-text: #5f3cc4;
+  --rb-ok: #2fa46a;
+  --rb-warn: #e8a33d;
+  --rb-shadow: 0 2px 8px rgba(23, 23, 28, 0.04);
+
+  /* dock 保留一层轻磨砂，其余全部平面 */
+  --rb-glass: rgba(255, 255, 255, 0.78);
+  --rb-glass-blur: blur(16px) saturate(1.4);
+
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--rb-bg);
+  color: var(--rb-ink);
+  z-index: 5;
+}
+.reality-bridge-app {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ── 顶栏（安全区规则保持小红书同构，勿动） ── */
+.rb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: var(--page-header-safe-top, max(48px, env(safe-area-inset-top, 48px)));
+  min-height: 48px;
+  padding: 0 16px 6px;
+}
+/* 顶栏按钮：液态玻璃底 + 黑色线条图标 */
+.rb-back,
+.rb-iconbtn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--rb-glass);
+  -webkit-backdrop-filter: var(--rb-glass-blur);
+  backdrop-filter: var(--rb-glass-blur);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  color: var(--rb-ink);
+  box-shadow: var(--rb-shadow),
+    inset 0 1px 1px rgba(255, 255, 255, 0.9),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.35);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: transform 0.18s ease, opacity 0.2s ease;
+  animation: rb-btn-in 0.32s ease-out backwards;
+}
+.rb-back:active { transform: scale(0.9); }
+.rb-back svg { width: 24px; height: 24px; }
+.rb-iconbtn {
+  animation-delay: 0.06s;
+  /* 点击丝滑放大：按下快速微放大，松手弹性回落 */
+  transition: transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+}
+.rb-iconbtn:active { transform: scale(1.1); transition-duration: 0.12s; }
+.rb-trash svg { width: 19px; height: 19px; }
+/* 返回渐隐：点返回后按钮先淡出缩小，再卸载 */
+.rb-header.closing .rb-back,
+.rb-header.closing .rb-iconbtn { opacity: 0; transform: scale(0.78); }
+@keyframes rb-btn-in {
+  from { opacity: 0; transform: scale(0.7); }
+}
+.rb-iconbtn svg { width: 21px; height: 21px; }
+.rb-iconbtn:disabled { opacity: 0.55; }
+/* 刷新旋转：角度由组件递增，这里只负责丝滑缓动 */
+.rb-refresh {
+  display: inline-flex;
+  transition: transform 0.85s cubic-bezier(0.3, 0.1, 0.25, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rb-back, .rb-iconbtn { animation: none; }
+  .rb-refresh { transition: none; }
+}
+
+.rb-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 16px calc(env(safe-area-inset-bottom, 0px) + 96px);
+}
+
+/* ── 弹窗（数据项编辑） ── */
+.rb-modal-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 18, 26, 0.45);
+  /* 盖住标题栏与底部 dock（dock z-index 3） */
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(env(safe-area-inset-top, 24px) + 16px) 20px calc(env(safe-area-inset-bottom, 0px) + 24px);
+}
+.rb-modal {
+  width: 100%;
+  max-height: 82%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--rb-card);
+  border-radius: 22px;
+  padding: 17px 16px;
+  box-shadow: 0 20px 50px rgba(10, 13, 20, 0.22);
+}
+.rb-modal-title { font-size: 15px; font-weight: 800; }
+/* ── 三点弹窗：液态玻璃 ── */
+.rb-menu-mask { background: rgba(15, 18, 26, 0.12); }
+.rb-glass-modal {
+  max-width: 330px;
+  background: rgba(255, 255, 255, 0.68);
+  -webkit-backdrop-filter: blur(10px) saturate(1.5);
+  backdrop-filter: blur(10px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 20px 50px rgba(10, 13, 20, 0.22),
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.9),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.4);
+  animation: rb-modal-in 0.28s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@keyframes rb-modal-in {
+  from { opacity: 0; transform: scale(0.88); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rb-glass-modal { animation: none; }
+}
+/* 弹窗内的步骤卡拍平：白底弹窗里不再叠白卡阴影，用分隔线区分 */
+.rb-modal .rb-ecard { box-shadow: none; padding: 0; border-radius: 0; }
+.rb-modal .rb-ecard + .rb-ecard { border-top: 1px solid var(--rb-line); padding-top: 13px; }
+
+/* ── 底部悬浮 dock（仅图标，通栏胶囊） ── */
+.rb-dock {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: fit-content;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  display: flex;
+  gap: 30px;
+  padding: 8px 16px;
+  /* 液态玻璃透镜：底子几乎全透、只留一丝模糊，材质感全靠边缘高光曲率
+     （真折射需 SVG 位移滤镜进 backdrop-filter，iOS Safari 不支持，安卓分支可再增强） */
+  background: rgba(255, 255, 255, 0.1);
+  -webkit-backdrop-filter: blur(3px) saturate(1.5);
+  backdrop-filter: blur(3px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 999px;
+  box-shadow: 0 12px 32px rgba(23, 23, 28, 0.14);
+  z-index: 3;
+}
+.rb-dock::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  /* 透镜曲率：左上受光、底部收暗、右下一点环境紫 */
+  background:
+    radial-gradient(120% 80% at 16% -14%, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0) 32%),
+    radial-gradient(140% 110% at 85% 125%, rgba(122, 90, 248, 0.06), transparent 50%);
+  box-shadow:
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.95),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.55),
+    inset 3px 0 3px -2px rgba(255, 255, 255, 0.75),
+    inset -3px 0 3px -2px rgba(255, 255, 255, 0.75),
+    inset 0 -7px 10px -8px rgba(23, 23, 28, 0.14);
+}
+.rb-dock button {
+  width: 54px;
+  height: 54px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  color: rgba(23, 23, 28, 0.85);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.2s, transform 0.18s ease;
+}
+.rb-dock button:active { transform: scale(0.86); }
+.rb-dock button svg { width: 25px; height: 25px; }
+.rb-dock button.active {
+  /* 蓝紫渐变圆钮 + 顶部镜面高光，切换时果冻弹跳 */
+  background: linear-gradient(rgba(255, 255, 255, 0.25), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(135deg, #6d7dff 0%, #8a5cf6 60%, #a24df0 100%);
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(122, 90, 248, 0.42), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+  animation: rb-dock-pop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes rb-dock-pop {
+  0% { transform: scale(0.8); }
+  55% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rb-dock button.active { animation: none; }
+}
+
+/* ── 通用件 ── */
+.rb-card {
+  background: var(--rb-card);
+  border-radius: 22px;
+  padding: 15px 16px;
+  margin-bottom: 12px;
+  box-shadow: var(--rb-shadow);
+  font-size: 13px;
+  color: var(--rb-ink);
+}
+.rb-card-title { font-size: 14px; font-weight: 800; display: block; margin-bottom: 4px; }
+.rb-icchip {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--rb-acc-soft);
+  color: var(--rb-acc);
+}
+.rb-icchip svg { width: 18px; height: 18px; }
+.rb-switch {
+  position: relative;
+  width: 48px;
+  height: 28px;
+  border-radius: 999px;
+  border: none;
+  background: var(--rb-line);
+  transition: background 0.25s;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.rb-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  transition: left 0.25s;
+}
+.rb-switch.on { background: var(--rb-acc); }
+.rb-switch.on::after { left: 23px; }
+.rb-switch.small { width: 42px; height: 24px; }
+.rb-switch.small::after { width: 18px; height: 18px; }
+.rb-switch.small.on::after { left: 21px; }
+.rb-sect {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 4px 8px;
+}
+/* ── 主页子 tab（参考图 Template/Terminal/Snippets 那排 chip） ── */
+.rb-chipbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 12px;
+}
+/* 分段控件：浅灰轨道 + 白色滑块 */
+.rb-chips {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--rb-inset);
+}
+.rb-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 0;
+  border-radius: 999px;
+  border: none;
+  background: none;
+  color: var(--rb-sub);
+  font-size: 13.5px;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.rb-chip.active {
+  background: var(--rb-card);
+  color: var(--rb-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(23, 23, 28, 0.03);
+}
+.rb-sect > b, .rb-sect > span:first-child { font-size: 14px; font-weight: 800; color: var(--rb-ink); }
+.rb-link {
+  border: none;
+  background: none;
+  color: var(--rb-acc);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.rb-help { font-size: 12.5px; color: var(--rb-sub); line-height: 1.75; margin-top: 4px; }
+.rb-help.dim { font-size: 11px; opacity: 0.8; margin-top: 8px; }
+.rb-hint { font-size: 11.5px; color: var(--rb-sub); line-height: 1.6; }
+/* 空态：居中标题 + 灰色说明 + 黑色新建按钮 */
+.rb-empty {
+  text-align: center;
+  padding: 34px 24px 30px;
+  animation: rb-fade-up 0.3s ease;
+}
+@keyframes rb-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rb-empty { animation: none; }
+}
+.rb-empty > b {
+  display: block;
+  font-size: 16.5px;
+  font-weight: 800;
+  color: var(--rb-ink);
+  margin-bottom: 8px;
+}
+.rb-empty > p {
+  font-size: 12.5px;
+  color: var(--rb-sub);
+  line-height: 1.8;
+  margin: 0 0 18px;
+}
+.rb-empty > .rb-btn {
+  min-width: 190px;
+  padding: 13px 26px;
+  font-size: 14px;
+}
+.rb-intro {
+  font-size: 13px;
+  color: var(--rb-sub);
+  line-height: 1.7;
+  padding: 2px 2px 12px;
+}
+.rb-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 11px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  /* 参考图语言：主按钮 = 黑色胶囊，紫色只做点缀 */
+  background: var(--rb-ink);
+  color: #ffffff;
+  cursor: pointer;
+  /* 松手时用回弹曲线弹回，按下时瞬时收缩 */
+  transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.rb-btn:active { transform: scale(0.92); transition-duration: 0.1s; }
+.rb-btn.ghost {
+  background: var(--rb-card);
+  border: 1px solid var(--rb-line);
+  color: var(--rb-ink);
+  box-shadow: var(--rb-shadow);
+}
+.rb-btn.danger { color: #d9534f; }
+.rb-shortcut-import {
+  min-height: 44px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  text-decoration: none;
+}
+.rb-screen-chat-manual {
+  border-top: 1px solid var(--rb-line);
+  padding-top: 10px;
+}
+.rb-screen-chat-manual > summary {
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 12px 0;
+}
+.rb-screen-chat-bind-hint {
+  color: var(--rb-acc-text);
+  font-weight: 700;
+}
+
+/* ── 首页 · 问候 ── */
+.rb-hello {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 4px 14px;
+}
+.rb-hello h3 { font-size: 30px; font-weight: 800; margin: 0; letter-spacing: 0.2px; }
+
+/* ── 桥接设置（三点弹窗内的开关行与频率选择） ── */
+.rb-main-row { display: flex; align-items: center; gap: 11px; }
+.rb-main-row + .rb-main-row,
+.rb-freq + .rb-main-row { margin-top: 16px; }
+.rb-modal-title + .rb-main-row { margin-top: 14px; }
+.rb-main-row b { font-size: 15px; font-weight: 800; display: block; }
+.rb-main-row p { font-size: 11.5px; color: var(--rb-sub); margin-top: 2px; line-height: 1.5; }
+.rb-main-text { flex: 1; min-width: 0; }
+.rb-freq { display: flex; gap: 5px; margin-top: 13px; }
+.rb-freq button {
+  flex: 1;
+  border: none;
+  border-radius: 999px;
+  padding: 6px 0;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(23, 23, 28, 0.06);
+  color: var(--rb-ink);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.rb-freq button.sel { background: var(--rb-ink); color: #ffffff; font-weight: 800; }
+
+/* ── 首页 · 状态磁贴 ── */
+.rb-tiles { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.rb-tile {
+  background: var(--rb-card);
+  border-radius: 18px;
+  padding: 12px 11px 11px;
+  box-shadow: var(--rb-shadow);
+}
+.rb-tile i { font-style: normal; font-size: 10.5px; color: var(--rb-sub); display: block; }
+.rb-tile b { display: block; font-size: 15px; font-weight: 800; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.rb-tile b.ok { color: var(--rb-ok); }
+.rb-tile b.warn { color: var(--rb-warn); }
+
+/* ── 首页 · 流水 ── */
+.rb-feed-item { padding: 12px 14px; margin-bottom: 8px; }
+.rb-feed-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.rb-type {
+  background: var(--rb-acc-soft);
+  color: var(--rb-acc);
+  border-radius: 999px;
+  padding: 2.5px 9px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+.rb-time { font-size: 11px; color: var(--rb-sub); font-variant-numeric: tabular-nums; }
+.rb-payload { font-size: 13px; line-height: 1.65; word-break: break-all; }
+.rb-meta { font-size: 11.5px; color: var(--rb-sub); margin-top: 5px; line-height: 1.6; }
+
+/* ── 联动 · 双列卡片网格 ── */
+.rb-add {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--rb-ink);
+  color: #ffffff;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--rb-shadow);
+  transition: transform 0.18s ease;
+}
+.rb-add:active { transform: scale(0.92); }
+.rb-add:disabled {
+  background: var(--rb-line);
+  color: var(--rb-sub);
+  cursor: default;
+  box-shadow: none;
+  opacity: 0.72;
+}
+.rb-add:disabled:active { transform: none; }
+.rb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.rb-rcard {
+  background: var(--rb-card);
+  border-radius: 22px;
+  padding: 13px;
+  box-shadow: var(--rb-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  cursor: pointer;
+  transition: background 0.3s, color 0.3s, opacity 0.3s;
+}
+.rb-rcard b { font-size: 13.5px; font-weight: 800; line-height: 1.35; word-break: break-all; }
+.rb-rcard.off { opacity: 0.55; }
+.rb-rtop { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
+.rb-fired-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--rb-acc-soft);
+  color: var(--rb-acc);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.rb-rsum {
+  font-size: 11px;
+  color: var(--rb-sub);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 33px;
+}
+.rb-rfoot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
+.rb-rstate { font-size: 11px; color: var(--rb-sub); }
+
+/* ── 编辑器 · 步骤卡 ── */
+.rb-editor { display: flex; flex-direction: column; gap: 10px; }
+.rb-ecard {
+  background: var(--rb-card);
+  border-radius: 22px;
+  padding: 15px;
+  box-shadow: var(--rb-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.rb-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--rb-ink);
+}
+.rb-step i {
+  font-style: normal;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--rb-acc);
+  color: var(--rb-acc-ink);
+  font-size: 12px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.rb-editor label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 700; color: var(--rb-sub); }
+.rb-editor select,
+.rb-editor input,
+.rb-editor textarea,
+.rb-action-body select,
+.rb-action-body input {
+  border: none;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  background: var(--rb-inset);
+  color: var(--rb-ink);
+  outline: none;
+  max-width: 100%;
+}
+.rb-fieldset {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+}
+.rb-fieldset legend {
+  margin-bottom: 6px;
+  color: var(--rb-sub);
+  font-size: 12px;
+  font-weight: 700;
+}
+.rb-schema-input {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px !important;
+  line-height: 1.55;
+}
+.rb-schema-presets button {
+  min-height: 36px;
+}
+.rb-seg {
+  display: flex;
+  background: var(--rb-inset);
+  border-radius: 999px;
+  padding: 3px;
+}
+.rb-seg button {
+  flex: 1;
+  border: none;
+  border-radius: 999px;
+  padding: 7px 0;
+  font-size: 12px;
+  font-weight: 600;
+  background: none;
+  color: var(--rb-sub);
+  cursor: pointer;
+}
+.rb-seg button.sel {
+  background: var(--rb-card);
+  color: var(--rb-ink);
+  font-weight: 800;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+.rb-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 9px !important;
+  font-size: 13.5px !important;
+  font-weight: 700 !important;
+  color: var(--rb-ink) !important;
+}
+.rb-check input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--rb-acc); }
+.rb-check.small { font-size: 12px !important; }
+.rb-action { display: flex; flex-direction: column; gap: 7px; }
+.rb-action-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding-left: 27px;
+}
+.rb-more summary {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--rb-sub);
+  cursor: pointer;
+  padding: 2px 0 6px;
+}
+/* details 元素上直接用 flex 在 iOS Safari 不生效，间距由内层 rb-more-body 负责 */
+.rb-more-body { display: flex; flex-direction: column; gap: 11px; padding-top: 2px; }
+/* 两列等宽网格：多个下拉框对齐排布（聊天/记忆/卡片/时间线的子配置） */
+.rb-action-body.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  align-items: center;
+}
+.rb-action-body.grid2 select { width: 100%; }
+.rb-editor-btns { display: flex; gap: 10px; margin-top: 2px; }
+.rb-editor-btns .rb-btn { flex: 1; padding: 13px 0; font-size: 14px; }
+.rb-del-link {
+  border: none;
+  background: none;
+  color: #d9534f;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 8px 0 2px;
+  align-self: center;
+}
+.rb-test-shortcut {
+  min-height: 44px;
+  margin-top: 2px;
+}
+.rb-test-shortcut:disabled { opacity: 0.5; cursor: default; }
+
+/* ── 教程 · 接线向导 ── */
+.rb-wstep { display: flex; gap: 12px; align-items: flex-start; }
+.rb-wmark {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  font-weight: 800;
+  font-style: normal;
+}
+.rb-wmark.done { background: var(--rb-ok); color: #fff; }
+.rb-wmark.now { background: var(--rb-acc); color: var(--rb-acc-ink); }
+.rb-wmark.todo { background: var(--rb-inset); color: var(--rb-sub); }
+.rb-wmark.extra { background: var(--rb-acc-soft); color: var(--rb-acc); }
+.rb-wbody { flex: 1; min-width: 0; }
+.rb-wbody > b { font-size: 14px; font-weight: 800; display: block; margin-bottom: 2px; }
+.rb-ol {
+  list-style: decimal; /* 宿主全局样式清掉了 ol 序号，这里必须显式恢复 */
+  padding-left: 20px;
+  font-size: 12.5px;
+  color: var(--rb-ink);
+  line-height: 1.9;
+  margin: 6px 0;
+}
+
+/* ── 教程 · 小步骤与键值色块 ── */
+.rb-substep { display: flex; gap: 10px; margin-top: 13px; }
+.rb-substep > i {
+  font-style: normal;
+  width: 19px;
+  height: 19px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--rb-acc-soft);
+  color: var(--rb-acc);
+  font-size: 11px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.rb-substep-body { flex: 1; min-width: 0; }
+.rb-substep-body > p { font-size: 12.5px; line-height: 1.7; }
+.rb-substep-body > p > b { font-weight: 800; }
+.rb-email-form {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 8px;
+}
+.rb-email-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+.rb-email-form .rb-email-submit {
+  min-width: 104px;
+  min-height: 44px;
+  border-radius: 12px;
+  padding: 10px 14px;
+  white-space: nowrap;
+  transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 120ms ease;
+}
+.rb-email-form .rb-email-submit.is-sent {
+  background: #e4f6ec;
+  color: #247c50;
+  box-shadow: none;
+}
+.rb-email-form .rb-email-submit.is-busy,
+.rb-email-form .rb-email-submit.is-busy:disabled {
+  background: var(--rb-acc);
+  color: var(--rb-acc-ink);
+  box-shadow: none;
+  opacity: 1;
+}
+.rb-email-form .rb-email-submit:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.rb-email-form .rb-email-submit:active:not(:disabled) { transform: scale(0.98); }
+.rb-email-verified {
+  width: 100%;
+  min-height: 52px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 7px 8px 7px 12px;
+  border-radius: 12px;
+  background: var(--rb-inset);
+}
+.rb-email-verified-value,
+.rb-copy-field-value {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rb-email-verified-value small,
+.rb-copy-field-value small {
+  color: var(--rb-sub);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.rb-email-verified-value b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+.rb-email-unlink {
+  min-width: 88px;
+  min-height: 40px;
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: #b4413e !important;
+  white-space: nowrap;
+}
+.rb-copy-field {
+  width: 100%;
+  min-height: 52px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  padding: 7px 8px 7px 12px;
+  border-radius: 12px;
+  background: var(--rb-inset);
+}
+.rb-copy-field-value code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--rb-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+.rb-copy-btn {
+  min-width: 64px;
+  min-height: 40px;
+  border: none;
+  border-radius: 10px;
+  background: var(--rb-card);
+  color: var(--rb-acc);
+  box-shadow: var(--rb-shadow);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background-color 180ms ease, color 180ms ease, transform 120ms ease;
+}
+.rb-copy-btn.copied { background: #e4f6ec; color: #247c50; }
+.rb-copy-btn:active { transform: scale(0.97); }
+.rb-sublines { font-size: 12px; line-height: 2.1; color: var(--rb-ink); margin-top: 4px; }
+.rb-kv {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  background: var(--rb-inset);
+  border-radius: 10px;
+  padding: 8px 11px;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.rb-k { color: var(--rb-sub); font-weight: 700; flex: 0 0 auto; }
+.rb-v { font-weight: 800; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.rb-kv .rb-v { min-width: 0; overflow-wrap: anywhere; }
+.rb-eg {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--rb-acc-soft);
+  color: var(--rb-acc);
+  flex: 0 0 auto;
+}
+.rb-var {
+  display: inline-block;
+  background: #e3ecff;
+  color: #3565c0;
+  border-radius: 6px;
+  padding: 0 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.rb-code {
+  background: var(--rb-inset);
+  border: 1px solid var(--rb-line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.rb-code code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 1.6;
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+  color: var(--rb-sub);
+}
+.rb-code .rb-copy {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--rb-acc-soft);
+  color: var(--rb-acc);
+  flex: 0 0 auto;
+}
+.rb-outbox-mini { margin-top: 12px; border-top: 1px solid var(--rb-line); padding-top: 4px; }
+.rb-outbox-btns { display: flex; gap: 10px; margin-top: 10px; }
+.rb-outbox-btns .rb-btn { flex: 1; padding: 8px 10px; font-size: 12px; }
+.rb-header-actions { display: flex; align-items: center; gap: 8px; }
+
+/* 历史页顶部分段控件：位于滚动区之外，彻底不随列表滚动/回弹 */
+.rb-chipbar.rb-fixedbar {
+  padding: 6px 16px 10px;
+  flex: 0 0 auto;
+}
+/* 最近快捷指令：状态图标跟在动作名后（✓成功 ✕失败 时钟=进行中） */
+.rb-cmd-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rb-cmd-mark { display: inline-flex; flex: 0 0 auto; }
+.rb-cmd-mark svg { width: 15px; height: 15px; }
+.rb-cmd-mark.succeeded { color: var(--rb-ok); }
+.rb-cmd-mark.failed,
+.rb-cmd-mark.expired,
+.rb-cmd-mark.cancelled { color: #d9534f; }
+.rb-cmd-mark.pending,
+.rb-cmd-mark.claimed { color: var(--rb-sub); }
+
+/* ── 新建联动 · 分步向导 ── */
+.rb-wiz-steps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 12px 2px 4px;
+}
+.rb-wiz-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  flex: 0 0 auto;
+  background: var(--rb-inset);
+  color: var(--rb-sub);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s, transform 0.2s;
+}
+.rb-wiz-dot.cur { background: var(--rb-ink); color: #ffffff; transform: scale(1.15); }
+.rb-wiz-dot.done { background: var(--rb-ink); color: #ffffff; opacity: 0.8; }
+.rb-wiz-dot:disabled { cursor: default; opacity: 0.55; }
+.rb-wiz-line {
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--rb-line);
+  transition: background 0.3s;
+}
+.rb-wiz-line.done { background: var(--rb-ink); }
+.rb-wiz-label {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--rb-sub);
+  margin: 0;
+}
+.rb-wiz-page {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding-top: 4px;
+  animation: rb-wiz-in 0.28s ease;
+}
+@keyframes rb-wiz-in {
+  from { opacity: 0; transform: translateX(24px); }
+}
+.rb-wiz-intro { font-size: 13px; line-height: 1.7; margin: 0; }
+.rb-wiz-tip { font-size: 12px; color: var(--rb-sub); margin: 0; }
+.rb-wiz-ok {
+  background: #e9f7ef;
+  color: var(--rb-ok);
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.rb-wiz-warn {
+  background: #fdf3e2;
+  color: var(--rb-warn);
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 13px;
+  font-weight: 700;
+}
+/* 行内可复制芯片（点击复制内容） */
+.rb-copychip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: var(--rb-inset);
+  color: var(--rb-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 2.5px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  vertical-align: baseline;
+  transition: transform 0.15s ease, background 0.2s;
+}
+.rb-copychip::after {
+  content: "复制";
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--rb-acc);
+}
+.rb-copychip:active { transform: scale(0.94); background: var(--rb-line); }
+
+.rb-signal-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.rb-signal-chip {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--rb-inset);
+  color: var(--rb-ink);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, transform 0.18s ease;
+}
+.rb-signal-chip:active { transform: scale(0.95); }
+.rb-signal-chip.sel { background: var(--rb-ink); color: #ffffff; }
+.rb-wiz-summary {
+  background: var(--rb-inset);
+  border-radius: 16px;
+  padding: 14px 15px;
+}
+.rb-wiz-summary b { font-size: 14.5px; display: block; margin-bottom: 5px; }
+.rb-wiz-summary p { font-size: 12.5px; color: var(--rb-sub); line-height: 1.65; margin: 0; }
+.rb-wiz-nav {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 0 4px;
+}
+.rb-wiz-back {
+  position: absolute;
+  left: 2px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--rb-line);
+  background: var(--rb-card);
+  color: var(--rb-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.18s ease;
+}
+.rb-wiz-back:active { transform: scale(0.9); }
+.rb-wiz-back svg { width: 20px; height: 20px; }
+.rb-wiz-next {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--rb-ink);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(23, 23, 28, 0.25);
+  transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s;
+}
+.rb-wiz-next:active { transform: scale(0.9); transition-duration: 0.1s; }
+.rb-wiz-next.dim { opacity: 0.35; }
+.rb-wiz-next svg { width: 24px; height: 24px; }
+@media (prefers-reduced-motion: reduce) {
+  .rb-wiz-page { animation: none; }
+}
+
+/* ── 快捷动作 · 参数清单（单行：名/类型/说明/删） ── */
+.rb-param-row {
+  display: grid;
+  grid-template-columns: 88px 66px 1fr 26px;
+  gap: 5px;
+  align-items: center;
+}
+.rb-param-row + .rb-param-row { margin-top: 7px; }
+.rb-param-remove {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: #fdecec;
+  color: #d9534f;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.rb-param-remove:active { transform: scale(0.88); }
+.rb-param-add {
+  width: 100%;
+  padding: 11px 0;
+  font-size: 13px;
+}
+
+/* ── 数据项向导 · 快照预览 ── */
+.rb-wiz-snapshot {
+  background: var(--rb-inset);
+  border-radius: 14px;
+  padding: 11px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rb-wiz-snapshot small { font-size: 11px; color: var(--rb-ok); font-weight: 700; }
+.rb-wiz-snapshot code {
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+  white-space: pre-wrap;
+  color: var(--rb-ink);
+}

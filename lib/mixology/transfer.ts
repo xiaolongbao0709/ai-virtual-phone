@@ -8,7 +8,10 @@ import {
     createMixId,
     type MixMaterial,
     type MixMaterialKind,
+    type MixRecipe,
+    type MixSlotEntry,
 } from "./types";
+import { getMixMaterial, isMixBuiltinId, loadMixRecipes, MIX_CABINET_UPDATED_EVENT, saveMixMaterial, saveMixRecipe } from "./storage";
 
 const FILE_MARK = "float-mixology-material";
 const FILE_VERSION = 1;
@@ -328,4 +331,120 @@ export function parseMixMaterialsFromJson(text: string): MixMaterial[] {
         throw new Error("文件里没有能认出来的材料。");
     }
     return materials;
+}
+
+// ── 配方文件（整杯打包） ─────────────────────────────
+// 材料文件之外的第二种文件：配方本体 + 它引用的全部非官方材料。
+// 材料保留原 id——槽位靠 id 引用材料，改 id 就断链；官方出厂件导入端自带，只留引用。
+
+const RECIPE_FILE_MARK = "float-mixology-recipe";
+
+type MixRecipeTransferFile = {
+    mark: typeof RECIPE_FILE_MARK;
+    version: number;
+    recipe: MixRecipe;
+    materials: MixMaterial[];
+};
+
+/** 导出一杯配方为 .json 文件：配方 + 引用的全部非官方材料打包 */
+export async function exportMixRecipeFile(recipe: MixRecipe): Promise<void> {
+    const ids = [...new Set(Object.values(recipe.slots).flatMap((entries) => (entries ?? []).map((e) => e.materialId)))];
+    const materials = ids
+        .map((id) => getMixMaterial(id))
+        .filter((m): m is MixMaterial => Boolean(m) && !isMixBuiltinId(m!.id))
+        // 云端关联是导出者自己的，不随文件走；imported 由导入端按来源重新打
+        .map(({ publishedId: _p, publishedAt: _a, imported: _i, ...rest }) => rest as MixMaterial);
+    const { publishedId: _p, publishedAt: _a, imported: _i, ...cleanRecipe } = recipe;
+    const payload: MixRecipeTransferFile = { mark: RECIPE_FILE_MARK, version: FILE_VERSION, recipe: cleanRecipe as MixRecipe, materials };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    await downloadFile(blob, `${safeFileName(recipe.name)}.配方.json`);
+}
+
+/**
+ * 解析配方文件。不是配方文件（材料文件、别的 JSON）返回 null，
+ * 让调用方退回材料解析；是配方文件但内容坏了才抛错。
+ */
+export function parseMixRecipeFile(text: string): { recipe: MixRecipe; materials: MixMaterial[] } | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        return null;
+    }
+    if (!parsed || typeof parsed !== "object") return null;
+    const record = parsed as Record<string, unknown>;
+    if (record.mark !== RECIPE_FILE_MARK) return null;
+    const rawRecipe = record.recipe as Record<string, unknown> | undefined;
+    if (!rawRecipe || typeof rawRecipe !== "object") throw new Error("配方文件缺少配方本体。");
+    const name = typeof rawRecipe.name === "string" ? rawRecipe.name.trim() : "";
+    const slotsRaw = rawRecipe.slots;
+    if (!name || !slotsRaw || typeof slotsRaw !== "object") throw new Error("配方文件缺少名称或槽位。");
+    // 槽位只收认识的种类与合法条目；条件原样带过（渲染端自会容错）
+    const slots: MixRecipe["slots"] = {};
+    for (const kind of MIX_SLOT_ORDER) {
+        const entries = (slotsRaw as Record<string, unknown>)[kind];
+        if (!Array.isArray(entries)) continue;
+        const kept: MixSlotEntry[] = entries
+            .filter((e): e is { materialId: string; when?: unknown } =>
+                Boolean(e) && typeof e === "object" && typeof (e as Record<string, unknown>).materialId === "string")
+            .map((e) => ({ materialId: e.materialId, when: e.when } as MixSlotEntry));
+        if (kept.length) slots[kind] = kept;
+    }
+    if (!slots.character?.length) throw new Error("配方文件缺角色卡槽。");
+    const materialsRaw = Array.isArray(record.materials) ? record.materials : [];
+    const materials: MixMaterial[] = [];
+    for (const candidate of materialsRaw) {
+        if (!candidate || typeof candidate !== "object") continue;
+        const m = candidate as Record<string, unknown>;
+        if (!isMixKind(m.kind)) continue;
+        if (typeof m.id !== "string" || !m.id.trim()) continue;
+        if (typeof m.name !== "string" || !m.name.trim()) continue;
+        materials.push(m as unknown as MixMaterial);
+    }
+    const id = typeof rawRecipe.id === "string" && rawRecipe.id.trim() ? rawRecipe.id : createMixId("mixrec");
+    const now = Date.now();
+    return {
+        recipe: {
+            id,
+            name,
+            slots,
+            author: typeof rawRecipe.author === "string" ? rawRecipe.author : undefined,
+            createdAt: typeof rawRecipe.createdAt === "number" ? rawRecipe.createdAt : now,
+            updatedAt: now,
+        },
+        materials,
+    };
+}
+
+/**
+ * 把解析出的配方包落库。配方与材料都打 imported——他人作品：
+ * 配方可以换用材料（搭配可改），材料内容不可编辑、都不能发布，角色卡正文封存。
+ * 材料按 id 落柜（槽位靠 id 引用）：柜里同 id 的自己原件保留沿用，
+ * 已导入的同 id 覆盖更新；配方同理，自己的原杯不覆盖。
+ * 返回给用户看的结果说明。
+ */
+export function importMixRecipePack(pack: { recipe: MixRecipe; materials: MixMaterial[] }, author?: string): string {
+    const signed = author?.trim() || undefined;
+    let kept = 0;
+    for (const material of pack.materials) {
+        const existing = getMixMaterial(material.id);
+        if (existing && !existing.imported) {
+            kept += 1;
+            continue;
+        }
+        saveMixMaterial({ ...material, imported: true, author: signed || material.author });
+    }
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(MIX_CABINET_UPDATED_EVENT));
+    const keptNote = kept > 0 ? `（其中 ${kept} 味柜里已有你自己的原件，直接沿用）` : "";
+    const prior = loadMixRecipes().find((r) => r.id === pack.recipe.id);
+    if (prior && !prior.imported) {
+        return `配方「${prior.name}」已是吧台里你自己的原杯，未覆盖；${pack.materials.length} 味材料已处理${keptNote}`;
+    }
+    saveMixRecipe({
+        ...pack.recipe,
+        imported: true,
+        author: signed || pack.recipe.author,
+        createdAt: prior?.createdAt ?? pack.recipe.createdAt,
+    });
+    return `配方「${pack.recipe.name}」已入吧台，${pack.materials.length} 味材料入柜${keptNote}——导入的作品不能发布，材料内容不可改，搭配可以自己换`;
 }

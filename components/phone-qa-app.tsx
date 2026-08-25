@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExterna
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
-import { AppWindow, ArrowUp, BrushCleaning, Check, ChevronLeft, ChevronRight, Copy, Drama, Gamepad2, Github, Loader2, Menu, Pencil, Play, Plus, Square, Trash2, Wrench, X } from "lucide-react";
+import { AppWindow, ArrowUp, BrushCleaning, Check, ChevronLeft, ChevronRight, Copy, Drama, Gamepad2, Github, Loader2, Menu, MoreVertical, Pencil, Pin, PinOff, Play, Plus, Square, Trash2, Wrench, X } from "lucide-react";
 import { QaFileCard } from "@/components/qa-file-card";
 import { parseQaFileMarker } from "@/lib/qa-computer-tools";
 import { mdiHammerWrench } from "@mdi/js";
@@ -30,11 +30,13 @@ import {
   QA_DEFAULT_CONTEXT_BUDGET_CHARS,
   setQaContextBudgetChars,
   retryQaMessage,
+  renameQaSession,
   revertQaAppliedCommit,
   sendQaMessage,
   stopQaGeneration,
   subscribeQaChat,
   switchQaSession,
+  toggleQaSessionPin,
   updateQaMessageContent,
   type QaMsg,
   type QaSession,
@@ -418,6 +420,7 @@ function QaSessionDrawer({
   onDelete,
   onCreate,
   onOpenSettings,
+  onRenameRequest,
 }: {
   sessions: QaSession[];
   activeId: string | null;
@@ -425,35 +428,95 @@ function QaSessionDrawer({
   onDelete: (id: string) => void;
   onCreate: () => void;
   onOpenSettings: () => void;
+  onRenameRequest: (id: string, title: string) => void;
 }) {
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+
+  // 置顶的排最前，其余保持时间序。只在渲染层排，存储顺序不动
+  const sortedSessions = useMemo(() => {
+    return [...sessions].sort((a, b) => {
+      if (Boolean(a.isPinned) !== Boolean(b.isPinned)) return a.isPinned ? -1 : 1;
+      return b.updatedAt - a.updatedAt;
+    });
+  }, [sessions]);
+
   return (
     <aside className="qa-drawer">
       <div className="qa-drawer-head">
         <span className="qa-drawer-title">对话记录</span>
       </div>
-      <div className="qa-drawer-list hide-scrollbar">
-        {sessions.length === 0 && <div className="qa-drawer-empty">还没有对话</div>}
-        {sessions.map((session) => (
+      <div
+        className="qa-drawer-list hide-scrollbar"
+        onClick={() => { if (menuOpenId) setMenuOpenId(null); }}
+      >
+        {sortedSessions.length === 0 && <div className="qa-drawer-empty">还没有对话</div>}
+        {sortedSessions.map((session) => (
           <div
             key={session.id}
             className={`qa-drawer-item ${session.id === activeId ? "is-active" : ""}`}
             onClick={() => onSelect(session.id)}
           >
             <div className="qa-drawer-item-main">
-              <span className="qa-drawer-item-title">{session.title}</span>
+              <span className="qa-drawer-item-title">
+                {session.isPinned && <Pin size={12} className="qa-drawer-pin-mark" aria-label="已置顶" />}
+                {session.title}
+              </span>
               <span className="qa-drawer-item-time">{formatRelativeTime(session.updatedAt)}</span>
             </div>
             <button
               type="button"
-              className="qa-icon-btn qa-drawer-item-delete"
-              aria-label="删除对话"
+              className="qa-icon-btn qa-drawer-item-more"
+              aria-label="更多操作"
+              aria-expanded={menuOpenId === session.id}
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete(session.id);
+                setMenuOpenId(menuOpenId === session.id ? null : session.id);
               }}
             >
-              <Trash2 size={14} />
+              <MoreVertical size={14} />
             </button>
+
+            {menuOpenId === session.id && (
+              <div className="qa-drawer-item-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="qa-drawer-menu-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleQaSessionPin(session.id);
+                    setMenuOpenId(null);
+                  }}
+                >
+                  {session.isPinned ? <PinOff size={14} /> : <Pin size={14} />}
+                  {session.isPinned ? "取消置顶" : "置顶"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="qa-drawer-menu-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRenameRequest(session.id, session.title);
+                    setMenuOpenId(null);
+                  }}
+                >
+                  <Pencil size={14} /> 重命名
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="qa-drawer-menu-btn is-danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(session.id);
+                    setMenuOpenId(null);
+                  }}
+                >
+                  <Trash2 size={14} /> 删除
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -733,6 +796,9 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
   const [repoConnected, setRepoConnected] = useState(false);
   const [clearToolsOpen, setClearToolsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 会话重命名弹窗：抽屉菜单里点「重命名」打开 */
+  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [viewerImage, setViewerImage] = useState<string | null>(null);
   const [editingMsg, setEditingMsg] = useState<QaMsg | null>(null);
@@ -900,6 +966,10 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
         onOpenSettings={() => {
           setSettingsOpen(true);
           setDrawerOpen(false);
+        }}
+        onRenameRequest={(id, title) => {
+          setRenameTarget({ id, title });
+          setRenameTitle(title);
         }}
       />
       <div className={`qa-stage ${drawerOpen ? "is-pushed" : ""}`}>
@@ -1096,6 +1166,40 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
         />
       )}
       </div>
+
+      {renameTarget && (
+        <div className="qa-rename-backdrop" role="presentation" onClick={() => setRenameTarget(null)}>
+          <form
+            className="qa-rename-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="qa-rename-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const title = renameTitle.trim();
+              if (!title) return;
+              renameQaSession(renameTarget.id, title);
+              setRenameTarget(null);
+            }}
+          >
+            <div id="qa-rename-dialog-title" className="qa-rename-title">重命名对话</div>
+            <input
+              className="qa-rename-input"
+              autoFocus
+              value={renameTitle}
+              maxLength={80}
+              aria-label="新对话名称"
+              onChange={(e) => setRenameTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") setRenameTarget(null); }}
+            />
+            <div className="qa-rename-actions">
+              <button type="button" className="qa-rename-cancel" onClick={() => setRenameTarget(null)}>取消</button>
+              <button type="submit" className="qa-drawer-new qa-rename-confirm" disabled={!renameTitle.trim()}>确认</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {clearToolsOpen && (
         <div className="qa-devnotice-backdrop" onClick={() => setClearToolsOpen(false)}>

@@ -128,6 +128,27 @@ export function isMediaStoreRef(url: string): boolean {
     return url.startsWith(MEDIA_STORE_PROTOCOL);
 }
 
+export type MediaCacheSummary = {
+    id: string;
+    bytes: number;
+    category: MediaCacheEntry["mediaCategory"];
+    createdAt: number;
+};
+
+/** 逐条流式读取 id/大小/类别——blob.size 只读元数据，不会把媒体内容载入内存。 */
+export async function listMediaCacheSummaries(): Promise<MediaCacheSummary[]> {
+    const out: MediaCacheSummary[] = [];
+    await getDb().entries.each((entry) => {
+        out.push({
+            id: entry.id,
+            bytes: entry.blob?.size ?? 0,
+            category: entry.mediaCategory,
+            createdAt: entry.createdAt,
+        });
+    });
+    return out;
+}
+
 // ── Bulk detection in JSON text ──────────────────
 
 const B64_BLOCK_RE = /(?:data:([^;]+);base64,)?([A-Za-z0-9+/]{200,}={0,2})/g;

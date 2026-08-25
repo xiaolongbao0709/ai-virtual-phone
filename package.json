@@ -5,14 +5,16 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "node --max-old-space-size=4096 scripts/local-next-server.mjs --dev",
-    "build": "node scripts/build-weixin-assistant-dist.mjs && next build && node scripts/restore-backdrop-filter.mjs",
+    "build": "node scripts/build-weixin-assistant-dist.mjs && node scripts/build-personal-push-dist.mjs && next build && node scripts/restore-backdrop-filter.mjs",
     "start": "node scripts/local-next-server.mjs --prod",
     "lint": "next lint",
     "check:sdk": "node scripts/check-custom-app-sdk-consistency.mjs",
     "check:weixin": "node scripts/check-weixin-prompt-equivalence.mjs",
+    "check:push": "node scripts/check-personal-push-dist.mjs",
     "weixin:assistant": "node tools/weixin-local-assistant/assistant.mjs",
     "weixin:assistant:once": "node tools/weixin-local-assistant/assistant.mjs --once",
     "weixin:build-dist": "node scripts/build-weixin-assistant-dist.mjs",
+    "push:build-dist": "node scripts/build-personal-push-dist.mjs",
     "build:glass-icons": "node scripts/build-glass-icons.mjs"
   },
   "dependencies": {
@@ -25,6 +27,7 @@
     "@react-three/postprocessing": "^3.0.4",
     "@supabase/realtime-js": "^2.110.7",
     "@types/three": "^0.183.1",
+    "@types/web-push": "^3.6.4",
     "d3-delaunay": "^6.0.4",
     "dexie": "^4.3.0",
     "dompurify": "^3.3.3",
@@ -42,7 +45,8 @@
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "three": "^0.183.2",
-    "undici": "^7.26.0"
+    "undici": "^7.26.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@gltf-transform/core": "^4.3.0",

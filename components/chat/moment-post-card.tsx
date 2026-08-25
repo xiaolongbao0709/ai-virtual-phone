@@ -243,6 +243,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
     const canRegeneratePhoto = Boolean(resolvedPhotoUrl)
         && Boolean(post.photoUrl)
         && Boolean(post.photoDescription?.trim())
+        && post.photoGenerationStatus !== "pending"
         && (post.photoGenerationStatus === "generated" || Boolean(post.photoGenerationPrompt));
     const openPhotoPromptEditor = useCallback(() => {
         setPhotoPromptDraft(post.photoDescription?.trim() || "");
@@ -353,6 +354,9 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                         onRegenerate={canRegeneratePhoto ? openPhotoPromptEditor : undefined}
                         regenerating={photoRegenerating}
                     />
+                )}
+                {resolvedPhotoUrl && post.photoGenerationStatus === "pending" && (
+                    <div className="ts-12 text-[var(--c-icon)] opacity-80">图片重新生成中…</div>
                 )}
                 {fallbackPhotoDescription && (
                     <div className="feed-post-photo-retry-stack">

@@ -156,6 +156,12 @@ export async function hydrateKvDb(): Promise<void> {
 }
 
 // ── Synchronous read (IndexedDB-backed in-memory cache only) ──
+/** kv 是否已从 IndexedDB 水合完成。孤儿素材清理等「以 kv 内容为安全依据」的
+ *  流程必须先确认此状态：未水合时 kvEntries() 是空的，扫不到引用会导致误删。 */
+export function isKvHydrated(): boolean {
+    return _hydrated;
+}
+
 export function kvGet(key: string): string | null {
     const cached = _cache.get(key);
     if (cached !== undefined) return cached;

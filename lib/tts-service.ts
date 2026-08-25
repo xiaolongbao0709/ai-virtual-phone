@@ -76,10 +76,17 @@ const MINIMAX_EMOTIONS = new Set([
 
 const MINIMAX_SPEED_MIN = 0.5;
 const MINIMAX_SPEED_MAX = 2.0;
+const MINIMAX_PITCH_MIN = -12;
+const MINIMAX_PITCH_MAX = 12;
 
 function normalizeMinimaxSpeed(speed: number | undefined): number {
     if (typeof speed !== "number" || !Number.isFinite(speed)) return 1.0;
     return Math.min(MINIMAX_SPEED_MAX, Math.max(MINIMAX_SPEED_MIN, speed));
+}
+
+function normalizeMinimaxPitch(pitch: number | undefined): number {
+    if (typeof pitch !== "number" || !Number.isFinite(pitch)) return 0;
+    return Math.min(MINIMAX_PITCH_MAX, Math.max(MINIMAX_PITCH_MIN, Math.round(pitch)));
 }
 
 async function synthesizeMinimax(text: string, config: VoiceApiConfig, emotion?: string): Promise<Blob | null> {
@@ -90,7 +97,7 @@ async function synthesizeMinimax(text: string, config: VoiceApiConfig, emotion?:
         voice_id: config.defaultVoice || "male-qn-qingse",
         speed: normalizeMinimaxSpeed(config.speechSpeed),
         vol: 1.0,
-        pitch: 0,
+        pitch: normalizeMinimaxPitch(config.speechPitch),
     };
     const normalizedEmotion = emotion?.trim().toLowerCase();
     if (normalizedEmotion && MINIMAX_EMOTIONS.has(normalizedEmotion)) {
@@ -208,6 +215,20 @@ export function setTtsVolume(volume: number): void {
     if (_sharedAudio) { try { _sharedAudio.volume = _ttsVolume; } catch { /* ignore */ } }
 }
 
+// ── 通话音频会话开关 ──
+// 只有通话界面在场时才让 Web Audio 上下文保持 running。此前全局点击解锁会把
+// 上下文永久 resume，页面从第一次点击起就一直持有系统音频会话；叠加通话退出
+// 后识别泄漏，整页音频会被钉在"通话模式"（语音条/试听音量巨大且音量键失灵）。
+let _callAudioSessionActive = false;
+
+/** 通话界面挂载时置 true、卸载/挂断时置 false（false 时立即挂起空闲的上下文）。 */
+export function setCallAudioSessionActive(active: boolean): void {
+    _callAudioSessionActive = active;
+    if (!active && _audioCtx && !_activeGain) {
+        try { void _audioCtx.suspend(); } catch { /* ignore */ }
+    }
+}
+
 function getAudioContext(): AudioContext | null {
     if (typeof window === "undefined") return null;
     const Ctor = (window as any).AudioContext || (window as any).webkitAudioContext;
@@ -254,8 +275,16 @@ export function unlockAudioPlayback(): void {
 
     // Primary path: resume the Web Audio context within the gesture. Once
     // resumed under a gesture, subsequent programmatic resume()s are allowed.
+    // 非通话期只借这次手势拿"授权"，随即挂起——不让页面平时一直持有音频会话。
     const ctx = getAudioContext();
-    if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
+    if (ctx && ctx.state === "suspended") {
+        const keepRunning = _callAudioSessionActive;
+        ctx.resume().then(() => {
+            if (!keepRunning && !_activeGain && !_callAudioSessionActive) {
+                try { void ctx.suspend(); } catch { /* ignore */ }
+            }
+        }).catch(() => {});
+    }
 
     // Fallback path: unlock the shared <audio> element once.
     if (_audioUnlocked) return;
@@ -363,10 +392,9 @@ export function playAudioBlob(blob: Blob): { promise: Promise<void>; abort: () =
     let source: AudioBufferSourceNode | null = null;
 
     let gain: GainNode | null = null;
+    let fallbackAbort: (() => void) | null = null;
 
-    const finalize = () => {
-        if (settled) return;
-        settled = true;
+    const cleanupWebAudio = () => {
         if (source) {
             source.onended = null;
             try { source.stop(); } catch {}
@@ -378,6 +406,13 @@ export function playAudioBlob(blob: Blob): { promise: Promise<void>; abort: () =
         gain = null;
         // Suspend so iOS hands the audio session back to the microphone.
         try { ctx.suspend(); } catch {}
+    };
+
+    const finalize = () => {
+        if (settled) return;
+        settled = true;
+        cleanupWebAudio();
+        if (fallbackAbort) { fallbackAbort(); fallbackAbort = null; }
         resolveFn();
     };
 
@@ -385,7 +420,15 @@ export function playAudioBlob(blob: Blob): { promise: Promise<void>; abort: () =
         resolveFn = resolve;
         (async () => {
             try {
-                if (ctx.state === "suspended") await ctx.resume();
+                if (ctx.state === "suspended") {
+                    // 程序化 resume 在部分安卓浏览器上会被拒绝，甚至让 promise 永远
+                    // 悬着（要等下一次用户手势）。限时等待后检查状态，走不通就回落。
+                    await Promise.race([
+                        ctx.resume().catch(() => {}),
+                        new Promise(r => setTimeout(r, 800)),
+                    ]);
+                }
+                if (ctx.state !== "running") throw new Error("audio_context_not_running");
                 const audioBuffer = await decodeAudio(ctx, await blob.arrayBuffer());
                 if (settled) return;
                 source = ctx.createBufferSource();
@@ -399,7 +442,19 @@ export function playAudioBlob(blob: Blob): { promise: Promise<void>; abort: () =
                 source.onended = finalize;
                 source.start();
             } catch {
-                finalize();
+                // Web Audio 走不通（resume 被拒/解码失败等）时回落媒体元素播放：
+                // 宁可这一段绕过「iOS 归还麦克风」的优化，也不要静默无声——
+                // 此前这里直接 finalize，正是「语音条有声、通话没声」的来源之一。
+                if (settled) return;
+                cleanupWebAudio();
+                const fallback = playAudioBlobElement(blob);
+                fallbackAbort = fallback.abort;
+                void fallback.promise.then(() => {
+                    if (settled) return;
+                    settled = true;
+                    fallbackAbort = null;
+                    resolveFn();
+                });
             }
         })();
     });

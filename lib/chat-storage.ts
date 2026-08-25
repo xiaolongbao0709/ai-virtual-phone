@@ -243,6 +243,8 @@ export type ChatMessage = {
         externalId?: string;
         direction?: "inbound" | "outbound" | "local";
         syncedAt?: string;
+        /** 云端主动回复对应的本地触发消息，用于跨时钟因果排序。 */
+        replyAfterLocalMessageId?: string;
     };
     // Group chat fields
     senderCharacterId?: string; // which character sent this assistant message in a group chat
@@ -1112,11 +1114,14 @@ export function createToolExecutionId(): string {
     return `toolrun_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "status"> & { status?: ChatMessageStatus }): ChatMessage {
+export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "status"> & {
+    status?: ChatMessageStatus;
+    createdAt?: string;
+}): ChatMessage {
     let newMsg: ChatMessage = {
         ...msg,
         id: createMessageId(),
-        createdAt: new Date().toISOString(),
+        createdAt: msg.createdAt || new Date().toISOString(),
         order: getNextMessageOrder(msg.sessionId),
         status: msg.status || "sent"
     };

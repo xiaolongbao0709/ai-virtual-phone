@@ -57,6 +57,8 @@ export const PERMISSION_LABELS: Record<string, string> = {
   "ui.call": "触发通话界面",
   "wallet.read": "读取钱包余额",
   "wallet.pay": "从钱包付款",
+  "bridge.send": "通过现实桥向 iPhone 快捷指令回传数据",
+  "bridge.read": "读取现实桥的手机状态快照",
   "online.play": "多人联机（与其他玩家实时互通，你的昵称会展示给同房间玩家）",
 };
 

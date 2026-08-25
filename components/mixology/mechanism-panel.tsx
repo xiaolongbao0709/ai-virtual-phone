@@ -28,6 +28,7 @@ import { normalizeMechanismStore, type MixMechanismStore } from "@/lib/mixology/
 
 /** 界面能请求的动作，就这几条 */
 type PanelCommand =
+    | { name: "boot" }
     | { name: "setStore"; store: unknown }
     | { name: "setState"; state: unknown }
     | { name: "say"; text: unknown }
@@ -68,7 +69,7 @@ function clampBox(box: Box): Box {
     };
 }
 
-function buildPanelDoc(html: string, state: MixState, store: MixMechanismStore, autoHeight: boolean): string {
+export function buildPanelDoc(html: string, state: MixState, store: MixMechanismStore, autoHeight: boolean): string {
     const bridge = `
 <script>
 (function(){
@@ -159,6 +160,10 @@ function buildPanelDoc(html: string, state: MixState, store: MixMechanismStore, 
       try { window.onMixSync(window.MIX_STATE, window.MIX_STORE); } catch (e) {}
     }
   });
+  // 启动握手：上面烘进文档的 MIX_STATE/MIX_STORE 是宿主生成这份文档时的快照。
+  // 手机浏览器退后台会回收沙盒 iframe 的进程，回前台时 iframe 拿这份旧文档重启，
+  // 快照就成了旧账——喊一声让宿主把当前值无条件补推一份，界面永远从最新值起步。
+  send("boot", {});
   ${autoHeight ? `
   // 开了「高度随内容」就自动量，作者不用自己调 mix.fit
   var last = -1;
@@ -304,6 +309,10 @@ export function MixMechanismPanel({
         post({ state, store });
     }, [state, store, post]);
 
+    /** 最新的 state/store：boot 补推发生在消息回调里，闭包里的是旧引用，得走 ref */
+    const latestSyncRef = useRef({ state, store });
+    latestSyncRef.current = { state, store };
+
     /** 把一次几何变化落到面板上；拖完（commit）才写进对局 */
     const applyBox = useCallback((next: Box, commit: boolean) => {
         const clamped = clampBox(next);
@@ -364,6 +373,14 @@ export function MixMechanismPanel({
             if (!data || data.source !== "mix-panel") return;
             const command = data as unknown as PanelCommand;
             switch (command.name) {
+                case "boot": {
+                    // iframe（重）启动完成。退后台被系统回收的面板回前台时会拿旧文档重启，
+                    // 文档里烘的快照已经过期——这里无条件把当前值补推一份，别管变没变。
+                    const fresh = latestSyncRef.current;
+                    syncedRef.current = JSON.stringify(fresh);
+                    post({ ...fresh });
+                    break;
+                }
                 case "setStore":
                     onStore(materialId, normalizeMechanismStore(command.store));
                     break;
@@ -492,7 +509,7 @@ export function MixMechanismPanel({
         };
         window.addEventListener("message", onMessage);
         return () => window.removeEventListener("message", onMessage);
-    }, [materialId, onStore, onState, onSay, onBox, canDrag, applyBox, scale]);
+    }, [materialId, onStore, onState, onSay, onBox, canDrag, applyBox, scale, post]);
 
     const style: React.CSSProperties = {
         left: `${box.x}%`,
@@ -586,6 +603,163 @@ export function MixMechanismPanel({
             {grabbing && typeof document !== "undefined"
                 ? createPortal(<div className="mix-panel-catch" data-mode={grabbing} aria-hidden="true" />, document.body)
                 : null}
+        </div>
+    );
+}
+
+/**
+ * 内嵌形态的机括界面：按钮位（header/inputbar-*）打开的下拉/上升面板，
+ * 与流内位（flow-top/flow-bottom）的内嵌卡共用这一个组件。
+ * 与悬浮面板的差别只在"位置归宿主管"：宽度铺满容器、高度永远随内容（fit），
+ * 拖动/缩放/挪位的白名单命令一律不理会；能做的事不变——写存储、写记住的值、
+ * 以玩家身份发言、报高、要求设计宽度、开关底板。沙盒与消息协议完全同一套。
+ */
+export function MixMechanismInline({
+    materialId,
+    name,
+    html,
+    state,
+    store,
+    plateDefault,
+    onStore,
+    onState,
+    onSay,
+}: {
+    materialId: string;
+    name: string;
+    html: string;
+    state: MixState;
+    store: MixMechanismStore;
+    /** 摆放里的底板偏好（layout.plate），界面代码里 mix.plate() 说了算 */
+    plateDefault?: boolean;
+    onStore: (materialId: string, store: MixMechanismStore) => void;
+    onState: (state: MixState) => void;
+    onSay: (text: string) => void;
+}) {
+    const frameRef = useRef<HTMLIFrameElement | null>(null);
+    const stageRef = useRef<HTMLDivElement | null>(null);
+    const [fitPx, setFitPx] = useState(0);
+    const [designPx, setDesignPx] = useState<number | null>(null);
+    const [plateFlag, setPlateFlag] = useState<boolean | null>(null);
+    const [width, setWidth] = useState(0);
+
+    const plate = plateFlag ?? plateDefault ?? false;
+
+    useEffect(() => {
+        const node = stageRef.current;
+        if (!node || typeof ResizeObserver === "undefined") return;
+        const read = () => {
+            const rect = node.getBoundingClientRect();
+            setWidth((prev) => (Math.abs(prev - rect.width) < 0.5 ? prev : rect.width));
+        };
+        read();
+        const observer = new ResizeObserver(read);
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, []);
+
+    // 内嵌卡的高度只能随内容走，所以量高桥永远开着
+    const srcDoc = useMemo(() => buildPanelDoc(html, state, store, true), [html]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const post = useCallback((payload: Record<string, unknown>) => {
+        try {
+            frameRef.current?.contentWindow?.postMessage({ source: "mix-panel-host", ...payload }, "*");
+        } catch { /* 递不进去就等下一次同步 */ }
+    }, []);
+
+    const syncedRef = useRef("");
+    useEffect(() => {
+        const snapshot = JSON.stringify({ state, store });
+        if (snapshot === syncedRef.current) return;
+        syncedRef.current = snapshot;
+        post({ state, store });
+    }, [state, store, post]);
+
+    /** 最新的 state/store：boot 补推发生在消息回调里，闭包里的是旧引用，得走 ref */
+    const latestSyncRef = useRef({ state, store });
+    latestSyncRef.current = { state, store };
+
+    useEffect(() => {
+        const onMessage = (event: MessageEvent) => {
+            if (!frameRef.current || event.source !== frameRef.current.contentWindow) return;
+            const data = event.data as (Record<string, unknown> & { source?: string }) | null;
+            if (!data || data.source !== "mix-panel") return;
+            const command = data as unknown as PanelCommand;
+            switch (command.name) {
+                case "boot": {
+                    // 同悬浮面板：iframe 重启后拿的是旧文档快照，无条件补推当前值
+                    const fresh = latestSyncRef.current;
+                    syncedRef.current = JSON.stringify(fresh);
+                    post({ ...fresh });
+                    break;
+                }
+                case "setStore":
+                    onStore(materialId, normalizeMechanismStore(command.store));
+                    break;
+                case "setState": {
+                    const raw = command.state;
+                    if (!raw || typeof raw !== "object" || Array.isArray(raw)) break;
+                    const patch: MixState = {};
+                    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+                        const name2 = key.trim().slice(0, 40);
+                        if (!name2) continue;
+                        if (typeof value === "number" && Number.isFinite(value)) patch[name2] = value;
+                        else if (typeof value === "string" && value.trim()) patch[name2] = value.trim().slice(0, 200);
+                        if (Object.keys(patch).length >= 50) break;
+                    }
+                    if (Object.keys(patch).length) onState(patch);
+                    break;
+                }
+                case "say": {
+                    const text = String(command.text ?? "").trim().slice(0, MAX_SAY_LENGTH);
+                    if (text) onSay(text);
+                    break;
+                }
+                case "fit": {
+                    const px = Number(command.px);
+                    if (Number.isFinite(px) && px >= 0) setFitPx(Math.min(4000, Math.ceil(px)));
+                    break;
+                }
+                case "design": {
+                    const px = Number(command.px);
+                    if (!Number.isFinite(px)) break;
+                    setDesignPx(px <= 0 ? 0 : Math.min(1600, Math.max(120, Math.round(px))));
+                    break;
+                }
+                case "flag": {
+                    if (String(command.key ?? "") !== "plate") break;
+                    setPlateFlag(command.on !== false);
+                    break;
+                }
+                default:
+                    // 位置类命令（box/grab/drag/setOpen…）在内嵌形态下没有意义，一律不理会
+                    break;
+            }
+        };
+        window.addEventListener("message", onMessage);
+        return () => window.removeEventListener("message", onMessage);
+    }, [materialId, onStore, onState, onSay, post]);
+
+    const designWidth = designPx === null ? 0 : designPx;
+    const scale = designWidth && width > 0 ? width / designWidth : 1;
+    const height = Math.max(24, fitPx || 48);
+
+    return (
+        <div className="mix-inline-panel" data-plate={plate ? "true" : undefined}>
+            <div ref={stageRef} className="mix-inline-stage" style={{ height }}>
+                <iframe
+                    ref={frameRef}
+                    className="mix-panel-frame"
+                    title={name}
+                    sandbox="allow-scripts"
+                    srcDoc={srcDoc}
+                    style={
+                        scale !== 1
+                            ? { width: designWidth, height: height / scale, transform: `scale(${scale})`, transformOrigin: "top left" }
+                            : undefined
+                    }
+                />
+            </div>
         </div>
     );
 }

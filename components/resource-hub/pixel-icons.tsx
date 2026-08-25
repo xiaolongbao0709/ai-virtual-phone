@@ -291,6 +291,25 @@ const DEST_ICONS: Record<ImportDestination, PixelGrid> = {
         "................",
         "................",
     ],
+    // 马天尼杯：独家特调
+    mixology: [
+        "................",
+        ".kkkkkkkkkkkkkk.",
+        ".kppppppyppppk..",
+        "..kpppppppppk...",
+        "...kpppppppk....",
+        "....kpppppk.....",
+        ".....kpppk......",
+        "......kpk.......",
+        ".......k........",
+        ".......k........",
+        ".......k........",
+        ".......k........",
+        "....kkkkkkk.....",
+        "................",
+        "................",
+        "................",
+    ],
 };
 
 function renderGrid(grid: PixelGrid, size: number, className?: string) {

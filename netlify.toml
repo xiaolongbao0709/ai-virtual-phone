@@ -5,6 +5,9 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
+# 离线推送的执行函数已迁移至 Supabase Edge Functions（supabase/functions/），
+# 原因：Netlify Background Functions 免费档不可用。部署方式见 docs/push-supabase.sql。
+
 # 字体/模型/图片是不带指纹的静态资源，体积大（中文字体 7~24MB、3D 模型 10MB+）。
 # 设为一年 immutable，浏览器命中后回访零带宽。更新这些文件时请改文件名（加版本后缀），
 # 否则旧客户端会一直用缓存。

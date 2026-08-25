@@ -63,16 +63,15 @@ import {
     type MixMaterialKind,
     type MixRecipe,
     type MixSession,
-    MIX_SLOT_MAX,
     mixSlotEntries,
     mixSlotFirstId,
     type MixSlotEntry,
 } from "@/lib/mixology/types";
 import { fetchCurrentAccount } from "@/lib/account-client";
 import { MixHallGoneError, shareHallMaterial, shareHallRecipe, updateHallMaterial, updateHallRecipe } from "@/lib/mixology/hall-client";
-import { exportMixMaterial, exportMixMaterialPng, parseMixMaterialsFromJson, parseMixMaterialsFromPng } from "@/lib/mixology/transfer";
+import { exportMixMaterial, exportMixMaterialPng, exportMixRecipeFile, importMixRecipePack, parseMixMaterialsFromJson, parseMixMaterialsFromPng, parseMixRecipeFile } from "@/lib/mixology/transfer";
 import { MixMaterialEditor } from "./mixology-editor";
-import { MixMatAutoCover } from "./mixology-preview";
+import { MixMatAutoCover, mixMatHasAutoCover } from "./mixology-preview";
 import { MixologyGame } from "./mixology-game";
 import { CommentThread, MixologyHall } from "./mixology-hall";
 import { AuthorAvatar, KindGlyph, MatCard, MaterialDetail, MixConfirm, MixTagList, SealedNote, formatMixTime } from "./mixology-shared";
@@ -141,6 +140,11 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
         run: () => void;
     } | null>(null);
     const [barSlots, setBarSlots] = useState<Partial<Record<MixMaterialKind, MixSlotEntry[]>>>({});
+    /**
+     * 吧台的"改搭配存回原杯"模式：装载导入配方时记下原杯，存杯直接覆写它
+     * （保留 imported 标记与署名）。导入的配方内容动不了，但用哪件材料随便换。
+     */
+    const [barEditing, setBarEditing] = useState<MixRecipe | null>(null);
     const [slotPicker, setSlotPicker] = useState<MixMaterialKind | null>(null);
     const [slotEditor, setSlotEditor] = useState<MixMaterialKind | null>(null);
     const [nameSheetOpen, setNameSheetOpen] = useState(false);
@@ -156,6 +160,13 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
         setToast(message);
         if (toastTimer.current) clearTimeout(toastTimer.current);
         toastTimer.current = setTimeout(() => setToast(""), 2200);
+    }, []);
+
+    /** 常驻型 toast：上传这类要等一会儿的动作挂着不消失，结束时用定时 toast 顶掉 */
+    const showStickyToast = useCallback((message: string) => {
+        if (toastTimer.current) clearTimeout(toastTimer.current);
+        toastTimer.current = null;
+        setToast(message);
     }, []);
 
     useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
@@ -245,6 +256,16 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const handleBrew = () => {
         if (!mixSlotEntries(barSlots, "character").length) {
             showToast("先给第一槽挑一张角色卡。");
+            return;
+        }
+        // 存回原杯模式：不弹起名，直接覆写被装载的那杯（imported 与署名原样保留）
+        if (barEditing) {
+            saveMixRecipe({ ...barEditing, slots: { ...barSlots }, updatedAt: Date.now() });
+            setBarSlots({});
+            setBarEditing(null);
+            refresh();
+            setBarTab("mine");
+            showToast(`「${barEditing.name}」的搭配已更新。`);
             return;
         }
         const character = slotMaterials.character?.[0];
@@ -350,6 +371,15 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
         if (!file) return;
         try {
             const isPng = file.type === "image/png" || /\.png$/i.test(file.name);
+            if (!isPng) {
+                // 配方文件（整杯打包）：配方与材料按他人作品落库——搭配可换、内容不可改、不能发布
+                const pack = parseMixRecipeFile(await file.text());
+                if (pack) {
+                    showToast(importMixRecipePack(pack));
+                    refresh();
+                    return;
+                }
+            }
             const materials = isPng
                 ? parseMixMaterialsFromPng(await file.arrayBuffer())
                 : parseMixMaterialsFromJson(await file.text());
@@ -364,6 +394,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
     const handleShareMaterial = async (material: MixMaterial) => {
         if (sharing) return;
         setSharing(true);
+        showStickyToast(`「${material.name}」上传中…`);
         try {
             if (material.publishedId) {
                 await updateHallMaterial(material.publishedId, material);
@@ -427,10 +458,14 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
             return;
         }
         setSharing(true);
+        showStickyToast(`「${recipe.name}」上传中…`);
         try {
             // 第一步：把自己的材料推上云端——没上架的上架，改过的同步（云端丢失就重新上架）
             for (const material of plan.materials) {
                 if (isMixBuiltinId(material.id) || material.imported) continue;
+                if (!material.publishedId || mixCloudState(material) === "dirty") {
+                    showStickyToast(`「${material.name}」上传中…`);
+                }
                 if (!material.publishedId) {
                     const entry = await shareHallMaterial(material);
                     markMixMaterialSynced(material.id, entry.id);
@@ -457,6 +492,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                         : { id: fresh.find((m) => m.id === material.id)?.publishedId ?? material.publishedId ?? material.id, kind: material.kind, name: material.name };
                 return when ? { ...base, when } : base;
             });
+            showStickyToast(`「${recipe.name}」配方上传中…`);
             const character = plan.character;
             const input = {
                 name: recipe.name,
@@ -622,7 +658,13 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                         </div>
                     {barTab === "create" ? (
                     <div className="mix-bar-stage" data-centered="true">
-                        <div className="mix-bar-hint">左右滑动切换槽位 · 点击槽位选材料 · 一格最多叠 3 件</div>
+                        {barEditing ? (
+                            <div className="mix-bar-hint" style={{ color: "var(--mix-gold)" }}>
+                                正在改「{barEditing.name}」的搭配，存杯将存回这杯 ·{" "}
+                                <span style={{ textDecoration: "underline", cursor: "pointer" }} onClick={() => { setBarEditing(null); setBarSlots({}); }}>放弃</span>
+                            </div>
+                        ) : null}
+                        <div className="mix-bar-hint">左右滑动切换槽位 · 点击槽位选材料 · 一格可以叠多件</div>
                         <div className="mix-wheel" ref={wheelRef} onScroll={handleWheelScroll}>
                             {MIX_SLOT_ORDER.map((kind) => {
                                 const stack = slotMaterials[kind] ?? [];
@@ -777,7 +819,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                         hook={material.hook}
                                         tags={material.tags}
                                         cover={material.kind === "character" ? material.cover : undefined}
-                                        preview={<MixMatAutoCover material={material} />}
+                                        preview={mixMatHasAutoCover(material) ? <MixMatAutoCover material={material} /> : undefined}
                                         badge={isMixBuiltinId(material.id)
                                             ? "官方"
                                             : material.imported || mixCloudState(material) === "local"
@@ -1198,17 +1240,14 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                             hook={material.hook}
                                             tags={material.tags}
                                             cover={material.kind === "character" ? material.cover : undefined}
-                                            preview={<MixMatAutoCover material={material} />}
+                                            preview={mixMatHasAutoCover(material) ? <MixMatAutoCover material={material} /> : undefined}
                                             badge={isMixBuiltinId(material.id) ? "官方" : undefined}
                                             onClick={() => {
                                                 setBarSlots((prev) => {
                                                     const current = mixSlotEntries(prev, slotPicker);
-                                                    // 已经在这一格里就不重复加；满了就换掉最后一件
+                                                    // 已经在这一格里就不重复加
                                                     if (current.some((e) => e.materialId === material.id)) return prev;
-                                                    const next = current.length >= MIX_SLOT_MAX
-                                                        ? [...current.slice(0, MIX_SLOT_MAX - 1), { materialId: material.id }]
-                                                        : [...current, { materialId: material.id }];
-                                                    return { ...prev, [slotPicker]: next };
+                                                    return { ...prev, [slotPicker]: [...current, { materialId: material.id }] };
                                                 });
                                                 setSlotPicker(null);
                                             }}
@@ -1275,14 +1314,32 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                 className="mix-action-row"
                                 onClick={() => {
                                     setBarSlots({ ...recipeMenu.slots });
+                                    // 导入的配方：进"存回原杯"模式——材料内容动不了，但换用哪件随便
+                                    setBarEditing(recipeMenu.imported ? recipeMenu : null);
                                     setBarTab("create");
                                     setRecipeMenu(null);
-                                    showToast("已装回吧台，可以微调。");
+                                    showToast(recipeMenu.imported ? "已装回吧台——换好材料点存杯，直接存回这杯。" : "已装回吧台，可以微调。");
                                 }}
                             >
                                 <SlidersHorizontal size={17} />
-                                <span>装载到吧台<i>把这杯的材料放回槽位，改一改再存</i></span>
+                                <span>装载到吧台<i>{recipeMenu.imported ? "换用哪件材料可以改，存杯存回这杯" : "把这杯的材料放回槽位，改一改再存"}</i></span>
                             </button>
+                            {recipeMenu.imported ? null : (
+                            <button
+                                type="button"
+                                className="mix-action-row"
+                                onClick={() => {
+                                    const target = recipeMenu;
+                                    setRecipeMenu(null);
+                                    void exportMixRecipeFile(target)
+                                        .then(() => showToast("配方文件已导出：整杯打包，含引用的全部非官方材料。"))
+                                        .catch((error) => showToast(error instanceof Error ? error.message : "导出失败"));
+                                }}
+                            >
+                                <Download size={17} />
+                                <span>导出文件<i>整杯打包成 JSON，可发资源市场或私下分享</i></span>
+                            </button>
+                            )}
                             {recipeMenu.imported ? null : (
                             <button
                                 type="button"

@@ -772,6 +772,38 @@ export function saveBindingConfig(config: BindingConfig, notify: boolean = true)
 }
 
 /**
+ * 全局默认绑定「所见即所得」：API 配置 / 预设 / 用户身份三项不再有"未设置"态。
+ * 未设置（或指向已删除对象）时，把实际兜底值写进存储——API=第一个配置、
+ * 预设=内置预设、身份=列表第一条——让绑定界面显示的就是实际生效的，
+ * 消灭"没绑却悄悄用了第一个"的静默兜底（多身份用户曾因此身份错乱进记忆）。
+ * 列表为空的项保持缺省。应用启动和绑定界面加载时各跑一次即可，不在热路径调用。
+ */
+export function ensureGlobalBindingDefaults(): void {
+    if (typeof window === "undefined") return;
+    const config = loadBindingConfig();
+    const global = config.globalDefaults;
+    let changed = false;
+
+    const apiConfigs = loadApiConfigs();
+    if (apiConfigs.length > 0 && !apiConfigs.some(c => c.id === global.apiConfigId)) {
+        global.apiConfigId = apiConfigs[0].id;
+        changed = true;
+    }
+    const presets = loadPresets();
+    if (presets.length > 0 && !presets.some(p => p.id === global.presetId)) {
+        global.presetId = (presets.find(p => p.builtIn) ?? presets[0]).id;
+        changed = true;
+    }
+    const identities = loadUserIdentities();
+    if (identities.length > 0 && !identities.some(i => i.id === global.userIdentityId)) {
+        global.userIdentityId = identities[0].id;
+        changed = true;
+    }
+
+    if (changed) saveBindingConfig(config);
+}
+
+/**
  * 删除 API 配置后清理绑定里的悬空引用。
  * 不清理的话，指向已删除配置的绑定会让配置解析抛错（剧情模式曾因此整页白屏）。
  */

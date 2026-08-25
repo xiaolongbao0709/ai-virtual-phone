@@ -5,6 +5,9 @@
 import { Buffer } from "node:buffer";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 
+// 云函数动态核心协议版本。wrapper 只加载版本一致的桶内核心，避免站点更新后
+// 继续执行旧桶里不认识微信快捷动作续跑的代码。
+export const WEIXIN_CORE_PROTOCOL_VERSION = 3;
 export const DEFAULT_BUCKET = "ai-phone-backup";
 export const DEFAULT_INTERVAL_SECONDS = 5;
 const INDEX_PATH = "weixin-cloud/index.json";
@@ -14,6 +17,8 @@ const INCOMING_MEDIA_PREFIX = "weixin-cloud/media";
 const INCOMING_IMAGE_MAX_BYTES = 6_000_000;
 const LOCK_PREFIX = "weixin-cloud/locks";
 const PENDING_FLAG_PREFIX = "weixin-cloud/pending";
+const WEIXIN_SHORTCUT_RESULT_MARKER = "__FLOAT_WEIXIN_SHORTCUT_RESULT__";
+const WEIXIN_SHORTCUT_IMAGE_MARKER = "__FLOAT_WEIXIN_SHORTCUT_IMAGE__";
 const ILINK_BASE = "https://ilinkai.weixin.qq.com";
 const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
 const BASE_INFO = { channel_version: "1.0.2" };
@@ -23,7 +28,9 @@ const AUTO_REPLY_LOCK_TTL_MS = 3 * 60 * 1000;
 
 // 待回复标志与真实状态可能脱钩（函数中途被墙钟掐掉、标志写入失败等），
 // 空闲时每隔这么久做一次全量扫描自愈；期间新消息仍由入库路径实时置位标志。
-const PENDING_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+// 全量扫描一次要 list + 最多 200 个对象逐个 GET，是空闲期 Storage 流量大头，
+// 30 分钟一次足够兜底（标志丢失的最坏后果是回复晚一个扫描周期）。
+const PENDING_RECONCILE_INTERVAL_MS = 30 * 60 * 1000;
 
 // 运行包体积可达 MB 级（含提示词模板、贴纸与参考图 base64），不能每轮全量
 // 下载。索引条目的 updatedAt 随小手机每次同步更新，作为缓存失效依据；TTL 兜底。
@@ -302,9 +309,30 @@ async function autoReplyPendingMessages(env, runtime, options = {}) {
   const latest = pending[pending.length - 1].message;
   const stopTyping = await startIlinkTyping(runtime.bot?.botToken, latest.raw);
   try {
-    const replyText = await generateReply(env, runtime, cloudMessages, pending.map(item => item.message));
+    const generation = await generateReply(env, runtime, cloudMessages, pending.map(item => item.message));
+    const shortcutRequest = extractWeixinShortcutRequest(generation.text, generation.shortcutActions);
+    const replyText = shortcutRequest.text;
     const replyItems = await buildLocalReplyOutbox(replyText, runtime);
     if (replyItems.length === 0) return { status: "skipped_empty_reply", pending: pending.length, sent: 0 };
+
+    let deferredShortcut = null;
+    if (shortcutRequest.action) {
+      try {
+        // 先创建命令并（如需结果）挂稳续跑，但暂不发运行通知。首条微信
+        // 回复真正送达并写入云消息后，下面才会调用 shortcut-deliver。
+        deferredShortcut = await prepareWeixinShortcut(
+          env,
+          runtime,
+          shortcutRequest.action,
+          generation.messages,
+          replyText,
+        );
+      } catch (err) {
+        console.warn(`[weixin-assistant] 快捷动作准备失败 bot=${runtime.bot.id}: ${errorMessage(err)}`);
+      }
+    } else if (shortcutRequest.requestedName) {
+      console.warn(`[weixin-assistant] 快捷动作不存在 bot=${runtime.bot.id}: ${shortcutRequest.requestedName}`);
+    }
 
     const replyExternalId = `reply_${Date.now()}_raw_${Math.random().toString(36).slice(2)}`;
     // 首条送达后立刻把待回复消息标记为已回复：媒体回复耗时长，若函数在
@@ -345,7 +373,15 @@ async function autoReplyPendingMessages(env, runtime, options = {}) {
       sentCount: sendResults.length,
       failedCount: sendErrors.length,
       sendResults,
+      ...(deferredShortcut ? { shortcutCommandId: deferredShortcut.commandId } : {}),
     });
+    if (deferredShortcut) {
+      const delivered = await deliverWeixinShortcut(env, deferredShortcut.commandId).catch(err => ({
+        ok: false,
+        error: errorMessage(err),
+      }));
+      if (!delivered.ok) sendErrors.push(`快捷动作通知失败: ${delivered.error || "unknown"}`);
+    }
     await clearPendingFlagIfCovered(env, runtime.bot.id, pending);
 
     return {
@@ -424,6 +460,8 @@ async function generateReply(env, runtime, cloudMessages, pendingMessages) {
   const messages = mergeAdjacentSameRoleMessages(
     normalizeLlmMessages(buildRuntimePromptMessages(runtime, cloudHistory, pendingMessages, imageAttachments)),
   );
+  const shortcutActions = await loadWeixinShortcutActions(env);
+  appendWeixinShortcutCapability(messages, shortcutActions);
 
   const request = buildChatCompletionRequest(apiConfig, preset, messages);
   // LLM 调用必须有超时：预留 ~30s 给后续的媒体生成与发送。
@@ -445,7 +483,249 @@ async function generateReply(env, runtime, cloudMessages, pendingMessages) {
   } catch {
     throw new Error(`LLM returned non-json: ${text.slice(0, 200)}`);
   }
-  return cleanReplyText(extractOpenAiCompatibleText(data));
+  return {
+    text: cleanReplyText(extractOpenAiCompatibleText(data)),
+    messages,
+    shortcutActions,
+  };
+}
+
+async function supabaseRest(env, path, init = {}) {
+  const base = normalizeRequiredUrl(env.SUPABASE_URL, "SUPABASE_URL");
+  return fetch(`${base}/rest/v1/${path}`, {
+    ...init,
+    headers: {
+      ...supabaseHeaders(env),
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+      ...(init.headers || {}),
+    },
+  });
+}
+
+async function loadWeixinShortcutActions(env) {
+  try {
+    const response = await supabaseRest(
+      env,
+      "push_bridge_config?user_id=eq.owner&select=shortcut_actions&limit=1",
+    );
+    if (!response.ok) return [];
+    const rows = await response.json().catch(() => []);
+    const raw = Array.isArray(rows?.[0]?.shortcut_actions) ? rows[0].shortcut_actions : [];
+    return raw.map(action => {
+      const resultMode = ["none", "text", "image"].includes(String(action?.resultMode))
+        ? String(action.resultMode)
+        : "none";
+      return {
+        actionId: String(action?.actionId || "").trim(),
+        name: String(action?.name || "").trim(),
+        shortcutName: String(action?.shortcutName || "").trim(),
+        description: String(action?.description || "").trim(),
+        resultMode,
+        expiresInSeconds: Math.max(30, Math.min(900, Number(action?.expiresInSeconds) || 120)),
+      };
+    }).filter(action => action.actionId && action.name && action.shortcutName).slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+function appendWeixinShortcutCapability(messages, actions) {
+  if (!Array.isArray(actions) || actions.length === 0) return;
+  // 老运行包会声明“微信里所有工具都不可用”。这里把它收窄为“原生工具
+  // 不可用”，随后下发当前个人云中实际登记的 iPhone 快捷动作目录。
+  for (const message of messages) {
+    if (message?.role !== "system" || typeof message.content !== "string") continue;
+    if (!message.content.includes("<tool_availability>")) continue;
+    message.content = message.content.replace(
+      /<tool_availability>[\s\S]*?<\/tool_availability>/g,
+      "<tool_availability>当前对话正通过微信进行：原生工具调用不可用；但下方明确列出的 iPhone 快捷动作可以使用。不要输出其他工具调用格式。</tool_availability>",
+    );
+  }
+  const menu = actions.map(action => action.description
+    ? `「${action.name}」（${action.description.slice(0, 40)}）`
+    : `「${action.name}」`).join("、");
+  messages.push({
+    role: "system",
+    content: "（可选能力：你可以请求在对方的 iPhone 上执行这些快捷动作：" + menu
+      + "。确有需要时，在回复中单独一行输出【快捷动作：动作名】，动作名必须与上面完全一致；"
+      + "系统会先把你本轮的其他话发到微信，再提示对方运行。会回传结果的动作，结果之后会自动交给你继续回复。"
+      + "不需要就不要输出，也不要解释本条说明。）",
+  });
+}
+
+export function extractWeixinShortcutRequest(text, actions = []) {
+  const raw = String(text || "");
+  const match = raw.match(/【快捷动作[：:]\s*([^】\n]{1,60})】/);
+  if (!match) return { text: raw.trim(), requestedName: "", action: null };
+  const requestedName = match[1].trim();
+  const cleaned = raw
+    .replace(/【快捷动作[：:][^】\n]{1,60}】/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim() || "……";
+  const action = actions.find(item => String(item?.name || "") === requestedName) || null;
+  return { text: cleaned, requestedName, action };
+}
+
+function compactContinuationMessages(messages) {
+  return messages.map(message => {
+    if (!Array.isArray(message?.content)) return { ...message };
+    const content = message.content.map(part => {
+      if (part?.type === "image_url") {
+        return { type: "text", text: "（上一轮微信图片已由角色看过，此处不重复携带原图。）" };
+      }
+      return part;
+    });
+    return { ...message, content };
+  });
+}
+
+export function encryptWeixinPushJobPayload(plain, secret) {
+  const key = createHash("sha256").update(`${secret}:push-job-v1`).digest();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(String(plain), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    v: 1,
+    iv: iv.toString("base64"),
+    tag: tag.toString("base64"),
+    ct: encrypted.toString("base64"),
+  };
+}
+
+async function loadPushPayloadKey(env) {
+  const response = await supabaseRest(env, "push_server_config?id=eq.main&select=payload_key&limit=1");
+  if (!response.ok) throw new Error(`push_config_http_${response.status}`);
+  const rows = await response.json().catch(() => []);
+  const key = String(rows?.[0]?.payload_key || "");
+  if (!key) throw new Error("push_payload_key_missing");
+  return key;
+}
+
+async function callPersonalPushGateway(env, action, body) {
+  const base = normalizeRequiredUrl(env.SUPABASE_URL, "SUPABASE_URL");
+  const serviceKey = String(env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  const configResponse = await supabaseRest(env, "push_server_config?id=eq.main&select=site_origin&limit=1");
+  const configRows = configResponse.ok ? await configResponse.json().catch(() => []) : [];
+  const siteOrigin = String(configRows?.[0]?.site_origin || "").trim();
+  const response = await fetch(`${base}/functions/v1/ai-phone-push?action=${encodeURIComponent(action)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-ai-phone-service-key": serviceKey,
+      "x-ai-phone-origin": siteOrigin,
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.ok !== true) {
+    throw new Error(String(data?.error || `push_gateway_http_${response.status}`));
+  }
+  return data;
+}
+
+async function prepareWeixinShortcut(env, runtime, action, firstMessages, firstReply) {
+  const created = await callPersonalPushGateway(env, "shortcut-create", {
+    actionId: action.actionId,
+    actionName: action.name,
+    shortcutName: action.shortcutName,
+    arguments: {},
+    resultMode: action.resultMode,
+    expiresInSeconds: action.expiresInSeconds,
+    deferDelivery: true,
+  });
+  const commandId = String(created?.command?.id || "");
+  if (!commandId) throw new Error("shortcut_command_id_missing");
+
+  if (action.resultMode !== "none") {
+    try {
+    const messages = [
+      ...compactContinuationMessages(firstMessages),
+      { role: "assistant", content: firstReply },
+      { role: "user", content: WEIXIN_SHORTCUT_RESULT_MARKER },
+      ...(action.resultMode === "image"
+        ? [{ role: "user", content: WEIXIN_SHORTCUT_IMAGE_MARKER }]
+        : []),
+    ];
+    const request = buildChatCompletionRequest(runtime.apiConfig || {}, runtime.preset || null, messages);
+    const payload = {
+      request: { ...request, providerKind: "openai-compatible" },
+      shortcut: {
+        commandId,
+        actionName: action.name,
+        resultMode: action.resultMode,
+        resultMarker: WEIXIN_SHORTCUT_RESULT_MARKER,
+        ...(action.resultMode === "image" ? { imageMarker: WEIXIN_SHORTCUT_IMAGE_MARKER } : {}),
+        style: "text",
+      },
+      notify: { title: runtime.character?.name || "小手机", url: "/" },
+      weixin: { botId: runtime.bot?.id || "", force: true },
+      merge: {
+        sessionId: runtime.session?.id || null,
+        regexes: Array.isArray(runtime.regexes) ? runtime.regexes : [],
+        characterName: runtime.character?.name || "小手机",
+        userName: runtime.userIdentity?.name || "用户",
+        appId: "chat",
+        appTags: ["chat", "text"],
+        shortcutCommandId: commandId,
+        weixinShortcut: true,
+      },
+    };
+    // 第一轮正文直接固化在加密快照内，续跑时不再依赖微信消息文件是否仍存在。
+    const payloadText = JSON.stringify(payload);
+    const payloadKey = await loadPushPayloadKey(env);
+    const triggerKey = `shortcut:${commandId}`;
+    await supabaseRest(
+      env,
+      `push_jobs?user_id=eq.owner&trigger_key=eq.${encodeURIComponent(triggerKey)}`,
+      { method: "DELETE" },
+    ).catch(() => undefined);
+    const armed = await supabaseRest(env, "push_jobs", {
+      method: "POST",
+      body: JSON.stringify([{
+        id: `job_${randomUUID()}`,
+        user_id: "owner",
+        trigger_key: triggerKey,
+        kind: "shortcut_resume",
+        execute_at: new Date(Date.now() + (action.expiresInSeconds + 90) * 1000).toISOString(),
+        status: "pending",
+        result_note: "cloud_shortcut_resume",
+        payload: encryptWeixinPushJobPayload(payloadText, payloadKey),
+      }]),
+    });
+    if (!armed.ok) throw new Error(`shortcut_resume_arm_http_${armed.status}`);
+    } catch (err) {
+      // 续跑没挂稳就绝不通知手机执行，并把不可见的命令取消，避免它占住
+      // pending 配额直到自然过期。
+      await supabaseRest(
+        env,
+        `push_shortcut_commands?id=eq.${encodeURIComponent(commandId)}&status=eq.pending`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            status: "cancelled",
+            error: `微信结果续跑挂载失败：${errorMessage(err).slice(0, 120)}`,
+            updated_at: new Date().toISOString(),
+          }),
+        },
+      ).catch(() => undefined);
+      throw err;
+    }
+  }
+
+  return { commandId, actionName: action.name };
+}
+
+async function deliverWeixinShortcut(env, commandId) {
+  try {
+    const data = await callPersonalPushGateway(env, "shortcut-deliver", { commandId });
+    return data?.delivered === true
+      ? { ok: true }
+      : { ok: false, error: "shortcut_notification_not_delivered" };
+  } catch (err) {
+    return { ok: false, error: errorMessage(err) };
+  }
 }
 
 // 视觉附件：遵循 API 设置的图像识别开关（runtime.promptContext.enableVision）
@@ -1473,7 +1753,7 @@ function makeIlinkHeaders(botToken) {
   return headers;
 }
 
-async function storeOutgoingMessage(env, runtime, externalId, content, raw) {
+async function storeOutgoingMessage(env, runtime, externalId, content, raw, replyAnchor) {
   const createdAt = new Date().toISOString();
   const path = `${MESSAGE_PREFIX}/${runtime.bot.id}/${sanitizePathPart(externalId)}.json`;
   await putObject(env, path, JSON.stringify({
@@ -1488,7 +1768,55 @@ async function storeOutgoingMessage(env, runtime, externalId, content, raw) {
     role: "assistant",
     content,
     raw,
+    ...(replyAnchor?.localMessageId ? {
+      replyAfterLocalMessageId: replyAnchor.localMessageId,
+      replyAfterCreatedAt: replyAnchor.createdAt,
+      replySequence: replyAnchor.sequence,
+    } : {}),
   }, null, 2), "application/json");
+}
+
+// 离线主动发送：借该 bot 最近一条入站消息的回复上下文（context_token）发文本。
+// iLink 协议只能"回复"，不能凭空向任意用户发起会话；用户太久没发过微信
+// 消息时令牌可能失效，调用方（push-generate / push-bridge）需准备回退渠道。
+export async function sendProactiveText(env, botId, text, replyAnchor) {
+  const index = await loadRuntimeIndex(env);
+  const item = index.packages.find(entry => entry.botId === botId);
+  if (!item) throw new Error("bot_not_found: 云端没有该微信的运行包，请在小手机同步一次");
+  const runtime = await loadRuntimePackage(env, item);
+  const botToken = runtime.bot?.botToken;
+  if (!botToken) throw new Error("missing_bot_token");
+  const rows = await loadCloudMessagesForBot(env, botId, 60);
+  const target = [...rows].reverse().find(row =>
+    row.message?.direction === "inbound"
+    && row.message?.raw?.context_token
+    && row.message?.raw?.from_user_id);
+  if (!target) throw new Error("no_reply_context: 该微信最近没有入站消息，无法主动发送");
+  const raw = target.message.raw;
+  const segments = String(text).split(/\n{2,}/).map(part => part.trim()).filter(Boolean).slice(0, 4);
+  const parts = segments.length > 0 ? segments : [String(text).trim()];
+  const localMessageId = typeof replyAnchor?.localMessageId === "string"
+    ? replyAnchor.localMessageId.trim().slice(0, 240)
+    : "";
+  const anchorCreatedAt = typeof replyAnchor?.createdAt === "string" && Number.isFinite(Date.parse(replyAnchor.createdAt))
+    ? new Date(replyAnchor.createdAt).toISOString()
+    : "";
+  let sent = 0;
+  for (const part of parts) {
+    const data = await sendIlinkTextMessage(botToken, raw, part);
+    const errorCode = typeof data?.error_code === "number" && data.error_code !== 0 ? data.error_code : undefined;
+    if (errorCode !== undefined) {
+      if (sent === 0) throw new Error(`ilink error_code ${errorCode}`);
+      break;
+    }
+    await storeOutgoingMessage(env, runtime, `proactive-${Date.now()}-${sent}`, part, raw,
+      localMessageId && anchorCreatedAt
+        ? { localMessageId, createdAt: anchorCreatedAt, sequence: sent }
+        : undefined);
+    sent += 1;
+    if (sent < parts.length) await new Promise(resolve => setTimeout(resolve, 800));
+  }
+  return { sent };
 }
 
 async function loadCloudMessagesForBot(env, botId, limit = 200) {

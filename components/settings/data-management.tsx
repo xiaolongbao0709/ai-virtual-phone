@@ -7,6 +7,7 @@ import {
   Brain,
   Database,
   Download,
+  HardDrive,
   Loader2,
   MessageCircle,
   Palette,
@@ -25,7 +26,7 @@ import {
 } from "lucide-react";
 import { DATA_MODULES, getLightModuleIds } from "@/lib/data-management/modules";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
-import { Input, Select, Toggle } from "@/components/ui/form";
+import { Select, Toggle } from "@/components/ui/form";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { CloudUpload } from "lucide-react";
 import {
@@ -36,7 +37,6 @@ import {
   type CloudBackupConfig,
 } from "@/lib/cloud-backup/config";
 import { getRuntimePwaDisplayMode } from "@/lib/pwa-display-mode";
-import { testCloudBackupConnection } from "@/lib/cloud-backup/storage-client";
 import { listCloudBackups, loadCloudBackupState, restoreFromCloudManifest, runCloudBackup, type CloudBackupListItem, type CloudBackupState } from "@/lib/cloud-backup/engine";
 import { CloudDownload } from "lucide-react";
 import {
@@ -59,6 +59,7 @@ import {
   type MediaMaintenanceConfig,
   type MediaMaintenanceState,
 } from "@/lib/media-maintenance";
+import { clearStorageCategory, scanStorageSpace, type StorageCategoryId, type StorageCategoryStat } from "@/lib/storage-space";
 import { isAndroidBrowser, isIOSBrowser } from "@/lib/download-utils";
 import type { BackupManifest, DataModuleId, DataSnapshot, ImportResult, ModuleStats } from "@/lib/data-management/types";
 
@@ -293,8 +294,6 @@ export function DataManagement({ onNotice }: DataManagementProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [cloudConfig, setCloudConfig] = useState<CloudBackupConfig>(DEFAULT_CLOUD_BACKUP_CONFIG);
-  const [cloudTesting, setCloudTesting] = useState(false);
-  const [cloudTestMsg, setCloudTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [cloudBackingUp, setCloudBackingUp] = useState(false);
   const [cloudProgress, setCloudProgress] = useState<{ percent: number; detail: string } | null>(null);
   const [cloudState, setCloudState] = useState<CloudBackupState>({});
@@ -304,6 +303,11 @@ export function DataManagement({ onNotice }: DataManagementProps) {
   const [restorePending, setRestorePending] = useState<PendingCloudRestore | null>(null);
   const [mediaConfig, setMediaConfig] = useState<MediaMaintenanceConfig>(DEFAULT_MEDIA_MAINTENANCE_CONFIG);
   const [mediaState, setMediaState] = useState<MediaMaintenanceState>({});
+  const [spaceStats, setSpaceStats] = useState<StorageCategoryStat[] | null>(null);
+  const [spaceScanning, setSpaceScanning] = useState(false);
+  const [spaceScanDetail, setSpaceScanDetail] = useState<string | null>(null);
+  const [spaceClearPending, setSpaceClearPending] = useState<StorageCategoryStat | null>(null);
+  const [spaceClearRange, setSpaceClearRange] = useState<number>(30);
 
   useEffect(() => {
     setCloudConfig(loadCloudBackupConfig());
@@ -321,7 +325,6 @@ export function DataManagement({ onNotice }: DataManagementProps) {
   const runBackupNow = async () => {
     if (cloudBackingUp) return;
     setCloudBackingUp(true);
-    setCloudTestMsg(null);
     try {
       saveCloudBackupConfig(cloudConfig);
       // Cloud uploads are chunked → large media is fine; always back up in full (incl. images).
@@ -393,29 +396,11 @@ export function DataManagement({ onNotice }: DataManagementProps) {
       saveCloudBackupConfig(next);
       return next;
     });
-    setCloudTestMsg(null);
   };
 
   const updateMediaMaintenance = (enabled: boolean) => {
     const next = saveMediaMaintenanceConfig({ enabled });
     setMediaConfig(next);
-  };
-
-  const testCloud = async () => {
-    if (cloudTesting) return;
-    setCloudTesting(true);
-    setCloudTestMsg(null);
-    try {
-      saveCloudBackupConfig(cloudConfig);
-      const result = await testCloudBackupConnection(cloudConfig);
-      setCloudTestMsg(result.ok
-        ? { ok: true, text: "连接成功，备份桶已就绪。" }
-        : { ok: false, text: result.error });
-    } catch (error) {
-      setCloudTestMsg({ ok: false, text: error instanceof Error ? error.message : "测试失败。" });
-    } finally {
-      setCloudTesting(false);
-    }
   };
 
   const moduleChipItems = useMemo<ModuleChipItem[]>(
@@ -572,6 +557,28 @@ export function DataManagement({ onNotice }: DataManagementProps) {
     return formatMediaMaintenanceResult(result);
   });
 
+  const rescanStorageSpace = async (silent = false) => {
+    if (spaceScanning) return;
+    setSpaceScanning(true);
+    if (!silent) setSpaceStats(null);
+    try {
+      const stats = await scanStorageSpace((detail) => setSpaceScanDetail(detail));
+      setSpaceStats(stats);
+    } catch (error) {
+      onNotice?.(error instanceof Error ? error.message : "扫描存储占用失败。");
+    } finally {
+      setSpaceScanning(false);
+      setSpaceScanDetail(null);
+    }
+  };
+
+  const executeStorageClear = (categoryId: StorageCategoryId, label: string, keepDays?: number) => runAction("空间清理中", async () => {
+    const result = await clearStorageCategory(categoryId, { keepDays });
+    // 清理完成后自动重扫，让列表反映真实占用（不清空已展示的列表，避免闪烁）
+    void rescanStorageSpace(true);
+    return `已清理「${label}」${result.cleared} 项，释放约 ${formatBytes(result.freedBytes)}。`;
+  });
+
   const executeOrphanThemeCleanup = () => runAction("孤儿素材清理中", async () => {
     const result = await cleanupOrphanThemeAssets();
     setMediaState(loadMediaMaintenanceState());
@@ -684,6 +691,58 @@ export function DataManagement({ onNotice }: DataManagementProps) {
       </div>
 
       <div className="data-section">
+        <DataSectionTitle>Storage Space</DataSectionTitle>
+        <div className="menu-group">
+          <div className="menu-item data-readonly-item">
+            <DataSettingsIcon icon={HardDrive} color={BINDING_ACCENTS.api} />
+            <div className="menu-label-group">
+              <span className="menu-label">存储空间占用</span>
+              <span className="menu-desc">
+                {spaceScanning
+                  ? (spaceScanDetail ?? "扫描中…")
+                  : spaceStats
+                    ? `共约 ${formatBytes(spaceStats.reduce((sum, item) => sum + item.bytes, 0))}，按内容类别列出，可单独清理`
+                    : "按图片、语音、音乐等内容类别统计占用，看得懂再清理"}
+              </span>
+            </div>
+            <div className="menu-right data-inline-actions">
+              <button
+                type="button"
+                className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                onClick={() => void rescanStorageSpace()}
+                disabled={spaceScanning || Boolean(busy)}
+              >
+                {spaceScanning ? <Loader2 size={14} className="animate-spin" /> : spaceStats ? "重新扫描" : "扫描占用"}
+              </button>
+            </div>
+          </div>
+          {spaceStats?.map((stat) => (
+            <div key={stat.id} className="menu-item data-readonly-item">
+              <div className="menu-label-group">
+                <span className="menu-label">
+                  {stat.label} · {formatBytes(stat.bytes)}{stat.count > 0 ? `（${stat.count} 项）` : ""}
+                </span>
+                <span className="menu-desc">{stat.description}</span>
+              </div>
+              <div className="menu-right data-inline-actions">
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                  onClick={() => {
+                    setSpaceClearRange(30);
+                    setSpaceClearPending(stat);
+                  }}
+                  disabled={Boolean(busy) || spaceScanning || (stat.bytes === 0 && stat.count === 0)}
+                >
+                  清理
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="data-section">
         <DataSectionTitle>Export & Import</DataSectionTitle>
         <div className="menu-group">
           <div className="menu-item data-readonly-item">
@@ -742,51 +801,35 @@ export function DataManagement({ onNotice }: DataManagementProps) {
             <DataSettingsIcon icon={CloudUpload} color={BINDING_ACCENTS.api} />
             <div className="menu-label-group">
               <span className="menu-label">备份到你的 Supabase</span>
-              <span className="menu-desc">填入你自己的 Supabase 地址与 service_role key，点测试连接会自动建好备份桶（无需手动设置）。</span>
+              <span className="menu-desc">云端备份与恢复</span>
             </div>
           </div>
 
           <div className="data-cloud-form">
-            <label className="data-cloud-field">
-              <span className="menu-desc ml-1">Supabase 地址 (URL)</span>
-              <Input
-                value={cloudConfig.url}
-                onChange={(e) => updateCloud({ url: e.target.value })}
-                placeholder="https://xxxx.supabase.co"
-                spellCheck={false}
-              />
-            </label>
-            <label className="data-cloud-field">
-              <span className="menu-desc ml-1">service_role key</span>
-              <Input
-                type="password"
-                value={cloudConfig.key}
-                onChange={(e) => updateCloud({ key: e.target.value })}
-                placeholder="eyJhbGci..."
-                spellCheck={false}
-              />
-            </label>
+            <div className="flex items-center gap-3">
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${isCloudBackupConfigured(cloudConfig) ? "bg-green-500" : "bg-black/20"}`} />
+              <span className="menu-label flex-1">{isCloudBackupConfigured(cloudConfig) ? "已部署" : "未部署"}</span>
+              <button
+                type="button"
+                className="ui-btn ui-btn-outline shrink-0 py-1 px-3 ts-12"
+                onClick={() => window.dispatchEvent(new CustomEvent("settings-navigate", { detail: { page: "cloud" } }))}
+              >
+                {isCloudBackupConfigured(cloudConfig) ? "重新部署" : "去部署"}
+              </button>
+            </div>
 
             <div className="data-cloud-actions">
               <button
                 type="button"
-                className={`ui-btn ui-btn-outline ${cloudTesting ? "is-busy" : ""}`}
-                onClick={() => void testCloud()}
-                disabled={cloudTesting || cloudBackingUp || !isCloudBackupConfigured(cloudConfig)}
-              >
-                {cloudTesting ? <><Loader2 size={16} className="animate-spin" /> 测试中…</> : "测试连接"}
-              </button>
-              <button
-                type="button"
                 className={`ui-btn ui-btn-primary ${cloudBackingUp ? "is-busy" : ""}`}
                 onClick={() => void runBackupNow()}
-                disabled={cloudTesting || cloudBackingUp || !isCloudBackupConfigured(cloudConfig)}
+                disabled={cloudBackingUp || !isCloudBackupConfigured(cloudConfig)}
               >
                 {cloudBackingUp ? <><Loader2 size={16} className="animate-spin" /> 备份中…</> : <><CloudUpload size={16} /> 立即备份</>}
               </button>
               <button
                 type="button"
-                className="ui-btn ui-btn-ghost"
+                className="ui-btn ui-btn-outline"
                 onClick={() => void openRestore()}
                 disabled={cloudBackingUp || !isCloudBackupConfigured(cloudConfig)}
               >
@@ -800,12 +843,6 @@ export function DataManagement({ onNotice }: DataManagementProps) {
                   <div className="data-cloud-progress-fill" style={{ width: `${Math.min(100, Math.round(cloudProgress.percent))}%` }} />
                 </div>
                 <span className="data-cloud-progress-text">{cloudProgress.detail} · {Math.round(cloudProgress.percent)}%</span>
-              </div>
-            )}
-
-            {cloudTestMsg && (
-              <div className={`data-cloud-result ${cloudTestMsg.ok ? "is-ok" : "is-err"}`} role="status">
-                {cloudTestMsg.text}
               </div>
             )}
 
@@ -910,6 +947,59 @@ export function DataManagement({ onNotice }: DataManagementProps) {
           </div>
         </div>
       </div>
+
+      {spaceClearPending && (
+        <div className="modal-overlay" data-ui="modal" onClick={() => { if (!busy) setSpaceClearPending(null); }}>
+          <div className="modal-dialog data-import-modal" data-ui="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" data-ui="modal-header">
+              <h3 className="modal-title">清理{spaceClearPending.label}</h3>
+            </div>
+            <div className="modal-body" data-ui="modal-body" style={{ textAlign: "left", width: "100%" }}>
+              <p className="menu-desc" style={{ marginBottom: 12 }}>
+                当前占用 {formatBytes(spaceClearPending.bytes)}（{spaceClearPending.count} 项）。{spaceClearPending.description}
+              </p>
+              {spaceClearPending.supportsKeepDays ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[
+                    { value: 30, label: "清理 30 天前的内容", note: "最近 30 天的保留" },
+                    { value: 7, label: "清理 7 天前的内容", note: "最近 7 天的保留" },
+                    { value: 0, label: "全部清理", note: "该类内容全部删除" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`ui-btn ${spaceClearRange === option.value ? "ui-btn-primary" : "ui-btn-outline"}`}
+                      style={{ width: "100%", justifyContent: "space-between", whiteSpace: "nowrap" }}
+                      onClick={() => setSpaceClearRange(option.value)}
+                    >
+                      <span>{option.label}</span>
+                      <span className="ts-12" style={{ opacity: 0.7 }}>{option.note}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="menu-desc">该类别将整体清理。建议先做一次备份。</p>
+              )}
+            </div>
+            <div className="modal-footer" data-ui="modal-footer" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button
+                type="button"
+                className="ui-btn ui-btn-danger"
+                style={{ width: "100%", whiteSpace: "nowrap" }}
+                onClick={() => {
+                  const stat = spaceClearPending;
+                  setSpaceClearPending(null);
+                  void executeStorageClear(stat.id, stat.label, stat.supportsKeepDays ? spaceClearRange : undefined);
+                }}
+                disabled={Boolean(busy)}
+              >
+                <Trash2 size={16} /> 确认清理
+              </button>
+              <button type="button" className="ui-btn ui-btn-outline" style={{ width: "100%", whiteSpace: "nowrap" }} onClick={() => setSpaceClearPending(null)} disabled={Boolean(busy)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pendingExport && (
         <div className="modal-overlay" data-ui="modal" onClick={() => { if (!exportSaving) setPendingExport(null); }}>

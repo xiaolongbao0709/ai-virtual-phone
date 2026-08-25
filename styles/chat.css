@@ -1589,6 +1589,38 @@
   animation: chat-generated-image-spin 0.8s linear infinite;
 }
 
+/* 重新生成中的角标：状态落库在消息上（pending），滚走再回来角标还在 */
+.chat-generated-image-regen-wrap {
+  position: relative;
+}
+
+.chat-generated-image-regen-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: calc(10.8px*var(--app-text-scale,1));
+  line-height: 1;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.chat-generated-image-regen-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  animation: chat-generated-image-spin 0.8s linear infinite;
+}
+
 .chat-generated-image-retry-error,
 .feed-post-photo-retry-error {
   max-width: 240px;

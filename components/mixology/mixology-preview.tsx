@@ -4,7 +4,7 @@
 // 小票喂示例数据渲染，装饰套在样例正文上，尾调进沙盒跑，滤网拿样文试洗，
 // 机括摆进一块假的对局画面里，界面能拖能点、钩子能当场跑一遍看它还回来什么。
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronLeft, Copy, Play, X } from "lucide-react";
 import { MixProseView } from "./prose-view";
 import { MixRichText } from "./rich-text";
@@ -533,17 +533,52 @@ export function MixCraftSheet({ kind, onClose }: { kind: MixMaterialKind; onClos
 }
 
 /**
+ * 半宽缩样容器：内容按两倍宽渲染再 scale(0.5)，视觉上等于手机全宽比例。
+ * transform 不改布局高度，这里用 ResizeObserver 量内层实际高度、给外层
+ * 一半——卡片高度就跟着渲染内容走，矮小票出矮卡，长装饰出长卡。
+ */
+function HalfScale({ children }: { children: ReactNode }) {
+    const innerRef = useRef<HTMLDivElement | null>(null);
+    const [height, setHeight] = useState(120);
+    useEffect(() => {
+        const el = innerRef.current;
+        if (!el || typeof ResizeObserver === "undefined") return;
+        const ro = new ResizeObserver(() => setHeight(Math.max(60, Math.ceil(el.offsetHeight / 2))));
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+    return (
+        <div style={{ position: "relative", height, overflow: "hidden" }}>
+            <div ref={innerRef} style={{ position: "absolute", top: 0, left: 0, width: "200%", transform: "scale(0.5)", transformOrigin: "0 0" }}>
+                {children}
+            </div>
+        </div>
+    );
+}
+
+/**
  * 瀑布卡的自动封面：没配封面的小票/装饰/尾调，用自己的渲染效果缩样当海报——
  * 这几类材料"长什么样"本来就该由渲染代码说话，不必再让作者传一张图。
- * 渲染不出来（缺示例数据、缺代码）时返回 null，卡片露出底下的占位纹。
- * 角色卡除外：它的封面是人物立绘，画布缩样代替不了。
+ * 卡片高度跟随缩样实际高度（HalfScale 量高）；渲染不出来（缺示例数据、
+ * 缺代码）时返回 null。角色卡除外：它的封面是人物立绘，画布缩样代替不了。
  */
+/** 这件材料能不能渲染出自动封面：MatCard 据此决定走缩样流还是占位纹 */
+export function mixMatHasAutoCover(material: MixMaterial): boolean {
+    if (material.kind === "ticket") return Boolean(material.renderHtml?.trim() && material.previewRaw?.trim());
+    if (material.kind === "encore") {
+        if (!mixEncoreRenderHtml(material).trim()) return false;
+        return !(material.contract?.trim() && !material.previewRaw?.trim());
+    }
+    if (material.kind === "garnish") return Boolean(material.css.trim());
+    return false;
+}
+
 export function MixMatAutoCover({ material }: { material: MixMaterial }) {
     if (material.kind === "ticket") {
         const html = material.renderHtml?.trim() ?? "";
         const raw = material.previewRaw?.trim() ?? "";
         if (!html || !raw) return null;
-        return <MixTicketFrame html={html} raw={raw} />;
+        return <HalfScale><MixTicketFrame html={html} raw={raw} /></HalfScale>;
     }
     if (material.kind === "encore") {
         const html = mixEncoreRenderHtml(material).trim();
@@ -551,15 +586,17 @@ export function MixMatAutoCover({ material }: { material: MixMaterial }) {
         const raw = material.previewRaw?.trim() ?? "";
         // AI 供稿型没留示例数据就渲染不出内容，别摆一张空壳
         if (material.contract?.trim() && !raw) return null;
-        return <MixTicketFrame html={html} raw={raw} />;
+        return <HalfScale><MixTicketFrame html={html} raw={raw} /></HalfScale>;
     }
     if (material.kind === "garnish") {
         if (!material.css.trim()) return null;
         return (
-            <div className="mix-garnish-stage mix-garnish-scope" style={{ margin: 0, border: "none", borderRadius: 0, minHeight: "100%" }}>
-                <style>{scopeMixCss(material.css)}</style>
-                <MixProseView text={GARNISH_SAMPLE} />
-            </div>
+            <HalfScale>
+                <div className="mix-garnish-stage mix-garnish-scope" style={{ margin: 0, border: "none", borderRadius: 0 }}>
+                    <style>{scopeMixCss(material.css)}</style>
+                    <MixProseView text={GARNISH_SAMPLE} />
+                </div>
+            </HalfScale>
         );
     }
     return null;

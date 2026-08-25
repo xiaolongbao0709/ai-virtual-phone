@@ -1963,6 +1963,15 @@ function MediaFileBubble({
         );
     }
 
+    // 存储空间清理会置空 mediaUrl 并打上 mediaCleanedAt：占位说明而不是一张点不动的文件卡。
+    if (!rawUrl && msg.mediaData?.mediaCleanedAt) {
+        return (
+            <div className="chat-media-file-card chat-media-file-generic">
+                <span className="chat-media-file-title" style={{ opacity: 0.5 }}>{title ? `${title} · 已清理` : "文件已清理"}</span>
+            </div>
+        );
+    }
+
     if (!url && isMediaStoreRef(rawUrl)) {
         return (
             <div className="chat-media-file-card chat-media-file-generic">
@@ -2026,17 +2035,29 @@ function MediaFileBubble({
 
     if (fileType === "image" && url) {
         const displayTitle = msg.mediaData?.imageGenerationPrompt ? "" : title;
-        const canRegenerateImage = Boolean(msg.mediaData?.label?.trim())
+        // 重试把状态落库为 pending（见 generated-image-retry.ts），角标据此显示——
+        // 比组件内的 imageRegenerating 可靠：滚远了卸载再回来，角标还在。
+        const imageRegenPending = msg.mediaData?.imageGenerationStatus === "pending";
+        const canRegenerateImage = !imageRegenPending
+            && Boolean(msg.mediaData?.label?.trim())
             && (msg.mediaData?.imageGenerationStatus === "generated" || Boolean(msg.mediaData?.imageGenerationPrompt));
         return (
             <div className="chat-generated-image-retry-stack">
-                <MediaImageWithPreview
-                    url={url}
-                    title={displayTitle}
-                    filename={title}
-                    onRegenerate={canRegenerateImage ? openImagePromptEditor : undefined}
-                    regenerating={imageRegenerating}
-                />
+                <div className="chat-generated-image-regen-wrap">
+                    <MediaImageWithPreview
+                        url={url}
+                        title={displayTitle}
+                        filename={title}
+                        onRegenerate={canRegenerateImage ? openImagePromptEditor : undefined}
+                        regenerating={imageRegenerating}
+                    />
+                    {imageRegenPending && (
+                        <div className="chat-generated-image-regen-badge" aria-hidden="true">
+                            <span className="chat-generated-image-regen-spinner" />
+                            生成中
+                        </div>
+                    )}
+                </div>
                 {showImagePromptEditor && typeof document !== "undefined" && createPortal(
                     <GeneratedImagePromptDialog
                         value={imagePromptDraft}

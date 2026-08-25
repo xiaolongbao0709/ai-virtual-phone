@@ -43,7 +43,6 @@ import {
     type MixMaterial,
     type MixMaterialKind,
     type MixRecipe,
-    MIX_SLOT_MAX,
     mixKindRunsActiveCode,
     type MixCondition,
     type MixSlotEntry,
@@ -445,7 +444,6 @@ export function MixologyHall({
             // 一格可能叠了多件，按线上顺序依次落格；作者设的生效条件跟着一起带过来
             const pushSlot = (kind: MixMaterialKind, materialId: string, when?: MixCondition) => {
                 const list = slots[kind] ?? [];
-                if (list.length >= MIX_SLOT_MAX) return;
                 list.push(when ? { materialId, when } : { materialId });
                 slots[kind] = list;
             };
@@ -561,7 +559,7 @@ export function MixologyHall({
                 name={m.name}
                 hook={m.hook}
                 tags={m.tags}
-                cover={m.cover}
+                cover={m.kind === "character" ? m.cover : undefined}
                 badge="官方"
                 onClick={() => setOfficialDetail(m)}
                 key={m.id}
@@ -602,7 +600,8 @@ export function MixologyHall({
                             name={entry.name}
                             hook={entry.hook}
                             tags={entry.tags}
-                            cover={entry.cover}
+                            // 云端老条目可能还存着换制前上传的封面，非角色卡一律不认
+                            cover={entry.kind === "character" ? entry.cover : undefined}
                             author={entry.authorName}
                             stats={statsLine(entry)}
                             onClick={() => void openMaterial(entry)}
@@ -718,10 +717,6 @@ export function MixologyHall({
                                 <span className="mix-author-name">@{detailMaterial.authorName}</span>
                                 <span className="mix-mat-stats">{MIX_KIND_LABELS[detailMaterial.kind]} · 浏览 {detailMaterial.viewCount} · 评论 {detailMaterial.commentCount}</span>
                             </div>
-                            {detailMaterial.cover && detailMaterial.kind !== "character" ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={detailMaterial.cover} alt={detailMaterial.name} style={{ width: 96, height: 128, objectFit: "cover", borderRadius: 12, margin: "10px 0 4px" }} />
-                            ) : null}
                             {detailMaterial.payload ? (
                                 <>
                                     <div style={{ marginTop: 8 }}>

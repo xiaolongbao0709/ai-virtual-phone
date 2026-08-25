@@ -20,9 +20,24 @@ function renderParagraph(paragraph: MixProseParagraph, key: number) {
     }
     return (
         <p className="mix-para" key={key}>
-            {paragraph.segments.map((segment, i) => (
-                <span className={`mix-${segment.type}`} key={i}>{segment.text}</span>
-            ))}
+            {paragraph.segments.map((segment, i) => {
+                // 对白/心声里嵌着 ~强调~：外层类不变，强调以 .mix-accent 子 span 嵌套渲染
+                if (segment.inner) {
+                    const quoted = segment.type === "dialogue";
+                    return (
+                        <span className={`mix-${segment.type}`} key={i}>
+                            {quoted ? "「" : null}
+                            {segment.inner.map((run, j) =>
+                                run.type === "accent"
+                                    ? <span className="mix-accent" key={j}>{run.text}</span>
+                                    : run.text,
+                            )}
+                            {quoted ? "」" : null}
+                        </span>
+                    );
+                }
+                return <span className={`mix-${segment.type}`} key={i}>{segment.text}</span>;
+            })}
         </p>
     );
 }

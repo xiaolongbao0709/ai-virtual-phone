@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { uploadAppIconToStorage } from "@/lib/server/app-market-assets";
 import { getCurrentAccount } from "@/lib/server/account-auth";
 import { encodeSupabaseFilter, formatSupabaseRestError, getSupabaseServerConfig, supabaseRestFetch } from "@/lib/server/supabase-rest";
 
@@ -31,15 +32,36 @@ export async function GET(request: Request) {
       const account = await getCurrentAccount(request);
       if (!account || cleanText(row.author_id, 160) !== account.id) return new Response(null, { status: 404 });
     }
-    const decoded = decodeDataUrl(cleanText(row.icon_data_url, 2_000_000));
-    if (!decoded) return new Response(null, { status: 404 });
-    const headers: Record<string, string> = { "Content-Type": decoded.mime, "Content-Length": String(decoded.bytes.length), "X-Content-Type-Options": "nosniff" };
+    const cacheHeaders: Record<string, string> = isPublic
+      ? {
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Netlify-CDN-Cache-Control": "public, durable, s-maxage=31536000, immutable",
+        "Netlify-Vary": "query",
+      }
+      : { "Cache-Control": "private, max-age=300" };
+    const stored = cleanText(row.icon_data_url, 2_000_000);
+    // 图标列双格式：已迁移的行存 Storage 公开桶 URL，302 让浏览器直连拉图。
+    if (/^https?:\/\//i.test(stored)) {
+      return new Response(null, { status: 302, headers: { ...cacheHeaders, Location: stored } });
+    }
+    // 存量 base64 的惰性迁移：公开图标第一次被请求时顺手转存到桶并回写行，
+    // 之后（含本次）都 302；转存失败照旧从函数下发字节。
     if (isPublic) {
-      headers["Cache-Control"] = "public, max-age=31536000, immutable";
-      headers["Netlify-CDN-Cache-Control"] = "public, durable, s-maxage=31536000, immutable";
-      headers["Netlify-Vary"] = "query";
-    } else headers["Cache-Control"] = "private, max-age=300";
-    return new Response(decoded.bytes, { status: 200, headers });
+      const migrated = await uploadAppIconToStorage(id, stored);
+      if (migrated) {
+        await supabaseRestFetch(
+          `custom_app_market_apps?id=eq.${encodeSupabaseFilter(id)}&deleted_at=is.null`,
+          { method: "PATCH", body: JSON.stringify({ icon_data_url: migrated }) },
+        ).catch(() => null);
+        return new Response(null, { status: 302, headers: { ...cacheHeaders, Location: migrated } });
+      }
+    }
+    const decoded = decodeDataUrl(stored);
+    if (!decoded) return new Response(null, { status: 404 });
+    return new Response(new Uint8Array(decoded.bytes), {
+      status: 200,
+      headers: { ...cacheHeaders, "Content-Type": decoded.mime, "Content-Length": String(decoded.bytes.length), "X-Content-Type-Options": "nosniff" },
+    });
   } catch (err) {
     return NextResponse.json({ ok: false, error: formatSupabaseRestError(err) }, { status: 500 });
   }

@@ -8,7 +8,6 @@ import {
   Download,
   LayoutGrid,
   PaintBucket,
-  MonitorSmartphone,
   Plus,
   RotateCcw,
   Smartphone,
@@ -21,7 +20,7 @@ import { GlassIcon } from "@/components/ui/glass-icon";
 import { normalizeThemeProfile, resolveActiveIconSkins, DEFAULT_THEME_PROFILE, type ThemeProfile } from "@/lib/theme-types";
 import type { DesktopIconId, IconId } from "@/lib/desktop-config";
 import { DOCK_DEFAULT, PAGE_1_DEFAULT, PAGE_2_DEFAULT, PAGE_3_DEFAULT, ICONS } from "@/lib/desktop-config";
-import type { DesktopIconLayout } from "@/lib/desktop-layout-storage";
+import type { DesktopFolderMap, DesktopIconLayout } from "@/lib/desktop-layout-storage";
 import { CUSTOM_APPS_UPDATED_EVENT, loadInstalledCustomApps } from "@/lib/custom-app-storage";
 import { toCustomAppIconId, type InstalledCustomApp } from "@/lib/custom-app-types";
 import { PageShell } from "@/components/ui/page-shell";
@@ -86,6 +85,7 @@ type PhoneThemeAppProps = {
     widgets: WidgetInstance[];
     iconLayout: DesktopIconLayout;
     dock?: DesktopIconId[];
+    folders?: DesktopFolderMap;
   }) => void;
   pageIcons: DesktopIconLayout;
   iconSkins: Record<string, string | null>;
@@ -243,7 +243,7 @@ export function PhoneThemeApp({
     setThemeTransferBusy(true);
     try {
       const result = await installThemePackageFile(file);
-      onDesktopThemeChange({ widgets: result.widgets, iconLayout: result.iconLayout, dock: result.dock });
+      onDesktopThemeChange({ widgets: result.widgets, iconLayout: result.iconLayout, dock: result.dock, folders: result.folders });
       await onApply(result.themeProfile);
       onDraftChange(result.themeProfile);
       setShowThemeTransfer(false);
@@ -260,7 +260,7 @@ export function PhoneThemeApp({
     setThemeTransferBusy(true);
     try {
       const result = await resetThemePackageState();
-      onDesktopThemeChange({ widgets: result.widgets, iconLayout: result.iconLayout, dock: result.dock });
+      onDesktopThemeChange({ widgets: result.widgets, iconLayout: result.iconLayout, dock: result.dock, folders: result.folders });
       await onApply(result.themeProfile);
       onDraftChange(result.themeProfile);
       setConfirmThemeReset(false);
@@ -359,9 +359,7 @@ export function PhoneThemeApp({
                   type="button"
                   onClick={() => { setShellMode(readShellModeOverride()); setShowShellMode(true); }}
                 >
-                  <span className="card-icon" style={menuIconStyle(BINDING_ACCENTS.memory)}>
-                    <MonitorSmartphone />
-                  </span>
+                  <span className="card-icon card-icon-glass"><GlassIcon name="agent-computer" /></span>
                   <span className="menu-label appearance-menu-item-label">{"显示形态"}</span>
                 </button>
                 {MENU_ITEMS.filter(item => ["text"].includes(item.section)).map((item) => (

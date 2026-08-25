@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useState, useEffect, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { Trash2, Plus, Smile, ImagePlus, ChevronRight, Sticker, Layers } from "lucide-react";
+import { Trash2, Plus, Smile, ImagePlus, Check, ChevronDown, ChevronRight, Info, Pencil, Sticker, Layers } from "lucide-react";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
 import {
@@ -350,6 +350,11 @@ function PackEditor({ pack, onBack }: { pack: StickerPack; onBack: () => void })
     const [showBatchDialog, setShowBatchDialog] = useState(false);
     const [packNameDraft, setPackNameDraft] = useState(pack.name);
     const [packNoteDraft, setPackNoteDraft] = useState(pack.note ?? "");
+    // 改名进标题栏、备注默认折叠：把两块常驻编辑区收起来，别挤表情格子。
+    // 交互设计来自社区 #149（V2），实现按当前存储层（updateStickerPackInfo）重接
+    const [isEditingPackName, setIsEditingPackName] = useState(false);
+    const [isNoteExpanded, setIsNoteExpanded] = useState(false);
+    const [showNoteInfo, setShowNoteInfo] = useState(false);
 
     const refreshPack = useCallback(() => {
         const fresh = loadStickerPacks().find(p => p.id === pack.id);
@@ -420,49 +425,100 @@ function PackEditor({ pack, onBack }: { pack: StickerPack; onBack: () => void })
         refreshAssignments();
     };
 
-    const handleSavePackInfo = () => {
+    const handlePackNameSave = () => {
         const trimmedName = packNameDraft.trim();
         if (!trimmedName) return;
-        const trimmedNote = packNoteDraft.trim();
-        updateStickerPackInfo(pack.id, { name: trimmedName, note: trimmedNote });
+        updateStickerPackInfo(pack.id, { name: trimmedName });
         setPackNameDraft(trimmedName);
+        setIsEditingPackName(false);
+        refreshPack();
+    };
+
+    const handleNoteSave = () => {
+        const trimmedNote = packNoteDraft.trim();
+        updateStickerPackInfo(pack.id, { note: trimmedNote });
         setPackNoteDraft(trimmedNote);
         refreshPack();
     };
 
-    const packInfoChanged = packNameDraft.trim() !== currentPack.name
-        || packNoteDraft.trim() !== (currentPack.note ?? "");
+    const noteChanged = packNoteDraft.trim() !== (currentPack.note ?? "");
 
     return (
-        <PageShell title={currentPack.name} onBack={onBack} className="absolute inset-0 z-[100]">
+        <PageShell
+            title={isEditingPackName ? (
+                <input
+                    autoFocus
+                    type="text"
+                    value={packNameDraft}
+                    maxLength={STICKER_PACK_NAME_MAX}
+                    onChange={e => setPackNameDraft(e.target.value)}
+                    onKeyDown={e => {
+                        if (e.key === "Enter") handlePackNameSave();
+                        if (e.key === "Escape") {
+                            setPackNameDraft(currentPack.name);
+                            setIsEditingPackName(false);
+                        }
+                    }}
+                    className="ui-input h-9 w-full min-w-0 px-2 text-center font-bold"
+                    aria-label="图集名称"
+                />
+            ) : currentPack.name}
+            onBack={onBack}
+            rightAction={
+                <button
+                    type="button"
+                    onClick={isEditingPackName ? handlePackNameSave : () => { setPackNameDraft(currentPack.name); setIsEditingPackName(true); }}
+                    aria-label={isEditingPackName ? "保存图集名称" : "编辑图集名称"}
+                    className="w-10 h-10 flex items-center justify-center rounded-full text-[var(--c-icon)] active:scale-95 transition-transform bg-transparent border-none cursor-pointer"
+                >
+                    {isEditingPackName ? <Check size={20} /> : <Pencil size={18} />}
+                </button>
+            }
+            className="absolute inset-0 z-[100]"
+        >
             <div className="flex flex-col h-full bg-[var(--c-page-body-bg)]">
-                {/* Pack metadata section */}
-                <div className="px-6 pt-5 pb-2 shrink-0">
-                    <div className="text-[calc(12px*var(--app-text-scale,1))] font-bold text-[var(--c-text)] opacity-60 uppercase mb-3 px-1 tracking-[0.1em]">图集信息</div>
-                    <div className="flex flex-col gap-3">
-                        <input
-                            type="text"
-                            value={packNameDraft}
-                            onChange={e => setPackNameDraft(e.target.value)}
-                            placeholder="图集名称"
-                            className="ui-input"
-                            maxLength={STICKER_PACK_NAME_MAX}
-                        />
-                        <textarea
-                            value={packNoteDraft}
-                            onChange={e => setPackNoteDraft(e.target.value)}
-                            placeholder="备注这套表情包的来源、整理进度等（可选）"
-                            className="ui-input min-h-[72px] resize-y"
-                            maxLength={STICKER_PACK_NOTE_MAX}
-                            rows={2}
-                        />
-                        <button
-                            type="button"
-                            onClick={handleSavePackInfo}
-                            disabled={!packNameDraft.trim() || !packInfoChanged}
-                            className="ui-btn ui-btn-primary self-end"
-                        >保存图集信息</button>
-                    </div>
+                {/* 备注：默认折叠成一行，点开才出编辑区（改名挪去了标题栏的铅笔按钮） */}
+                <div className="px-6 pt-4 pb-1 shrink-0">
+                    <button
+                        type="button"
+                        onClick={() => setIsNoteExpanded(prev => !prev)}
+                        aria-expanded={isNoteExpanded}
+                        className="w-full flex items-center justify-between px-1 py-1.5 text-left text-[var(--c-text)] bg-transparent border-none cursor-pointer"
+                    >
+                        <span className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[calc(12px*var(--app-text-scale,1))] font-bold opacity-60 uppercase tracking-[0.1em] shrink-0">备注</span>
+                            <span
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => { e.stopPropagation(); setShowNoteInfo(true); }}
+                                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); setShowNoteInfo(true); } }}
+                                className="flex items-center justify-center text-[var(--c-icon)] opacity-50 active:opacity-100 transition-opacity shrink-0"
+                                aria-label="备注说明"
+                            >
+                                <Info size={14} />
+                            </span>
+                            {!isNoteExpanded && currentPack.note?.trim() ? (
+                                <span className="ts-11 opacity-50 truncate">{currentPack.note.trim()}</span>
+                            ) : null}
+                        </span>
+                        {isNoteExpanded ? <ChevronDown size={17} className="shrink-0" /> : <ChevronRight size={17} className="shrink-0" />}
+                    </button>
+                    {isNoteExpanded && (
+                        <div className="flex flex-col gap-2 px-1 pt-1">
+                            <textarea
+                                value={packNoteDraft}
+                                maxLength={STICKER_PACK_NOTE_MAX}
+                                onChange={e => setPackNoteDraft(e.target.value)}
+                                placeholder="备注这套表情包的来源、整理进度等（可选）"
+                                className="ui-input min-h-[72px] resize-y"
+                                rows={2}
+                            />
+                            <div className="flex items-center justify-between">
+                                <span className="ts-11 text-[var(--c-text)] opacity-50">{packNoteDraft.length}/{STICKER_PACK_NOTE_MAX}</span>
+                                <button type="button" onClick={handleNoteSave} disabled={!noteChanged} className="ui-btn ui-btn-primary ts-12">保存</button>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Character assignment section */}
@@ -541,6 +597,18 @@ function PackEditor({ pack, onBack }: { pack: StickerPack; onBack: () => void })
                     packId={pack.id}
                     onDone={() => { setShowBatchDialog(false); refreshPack(); }}
                     onCancel={() => setShowBatchDialog(false)}
+                />,
+                document.querySelector(".phone-shell") ?? document.body
+            )}
+
+            {showNoteInfo && createPortal(
+                <ConfirmDialog
+                    title="备注说明"
+                    message="备注仅供自己整理使用，不会进入提示词——角色和助手小卷都看不到。"
+                    confirmLabel="我知道了"
+                    cancelLabel=""
+                    onConfirm={() => setShowNoteInfo(false)}
+                    onCancel={() => setShowNoteInfo(false)}
                 />,
                 document.querySelector(".phone-shell") ?? document.body
             )}

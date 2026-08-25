@@ -9,14 +9,16 @@ import { generateChatCompletion, flattenCompletionResult } from "@/lib/chat-engi
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { cancelFollowUp } from "@/lib/follow-up-service";
 import { createSTTSession, type STTSession } from "@/lib/stt-service";
-import { resolveVoiceConfig, synthesizeSpeech, playAudioBlob } from "@/lib/tts-service";
+import { resolveVoiceConfig, synthesizeSpeech, playAudioBlob, playAudioBlobViaMediaElement, setCallAudioSessionActive } from "@/lib/tts-service";
+import { isCallRecordingSupported, resolveCloudSttConfig } from "@/lib/stt-cloud";
+import { useHoldToTalk } from "./use-hold-to-talk";
 import { suspendKeepAliveForCall, resumeKeepAliveAfterCall } from "@/lib/use-weixin-bridge";
 import { BilingualTextBlock } from "./message-bubble";
 import { splitBilingualText } from "@/lib/bilingual-text";
 import type { Character } from "@/lib/character-types";
 import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
-import { isAndroidBrowser } from "./voice-input-platform";
+import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
 import { CallVolumeControl } from "./call-volume-control";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
 
@@ -54,8 +56,17 @@ function stripBilingualForSpeech(text: string): string {
 // ── Component ───────────────────────────────────────
 
 export function VideoCallScreen({ session, character, onEnd, onConnect, initiator = "user" }: VideoCallScreenProps) {
-    const androidTextInputOnlyRef = useRef(isAndroidBrowser());
+    // 同 voice-call-screen：iOS 保留 Web Speech 免提 + Web Audio 播放；
+    // 其余设备改按住说话 + 云端转写，播放走媒体元素。没配识别时回落旧行为。
+    const iosDeviceRef = useRef(isIOSDevice());
+    const iosDevice = iosDeviceRef.current;
+    const holdToTalkRef = useRef(
+        !iosDeviceRef.current && isCallRecordingSupported() && resolveCloudSttConfig(session.contactId) !== null,
+    );
+    const holdToTalk = holdToTalkRef.current;
+    const androidTextInputOnlyRef = useRef(isAndroidBrowser() && !holdToTalkRef.current);
     const androidTextInputOnly = androidTextInputOnlyRef.current;
+    const playCallAudio = iosDevice ? playAudioBlob : playAudioBlobViaMediaElement;
     const keyboardOffsetStyle = useCallKeyboardOffsetStyle();
     const [callState, setCallState] = useState<CallState>("CONNECTING");
     const hasConnectedRef = useRef(false);
@@ -404,7 +415,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                     const audioBlob = await synthesizeSpeech(speechText, voiceConfig);
                     if (stateRef.current === "ENDED") return;
                     if (audioBlob && !isSpeakerMutedRef.current) {
-                        const { promise, abort } = playAudioBlob(audioBlob);
+                        const { promise, abort } = playCallAudio(audioBlob);
                         audioAbortRef.current = abort;
                         await promise;
                         audioAbortRef.current = null;
@@ -419,11 +430,12 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                 setCallState("IDLE");
             }
         }
-    }, [session, processAIResponse, captureCameraFrame]);
+    }, [session, processAIResponse, captureCameraFrame, playCallAudio]);
 
     // ── Auto-listen ────────────────────────────────
 
     const startListening = useCallback(() => {
+        if (holdToTalk) return; // 按住说话模式不用 Web Speech 自动监听
         if (androidTextInputOnly) {
             setInputMode("text");
             return;
@@ -469,9 +481,10 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
             sttRef.current = null;
             showSttCompatibilityWarning();
         }
-    }, [androidTextInputOnly, runConversationTurn, session.contactId, showSttCompatibilityWarning]);
+    }, [androidTextInputOnly, holdToTalk, runConversationTurn, session.contactId, showSttCompatibilityWarning]);
 
     useEffect(() => {
+        if (holdToTalk) return; // 按住说话模式无自动监听
         if (inputMode === "text" && sttRef.current) {
             sttRef.current.abort();
             sttRef.current = null;
@@ -482,7 +495,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
             return () => clearTimeout(timer);
         }
         if (isMuted && sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
-    }, [androidTextInputOnly, callState, isMuted, inputMode, startListening]);
+    }, [androidTextInputOnly, holdToTalk, callState, isMuted, inputMode, startListening]);
 
     const handleInputModeToggle = useCallback(() => {
         if (androidTextInputOnly) {
@@ -510,6 +523,25 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         runConversationTurn(text);
     }, [typedText, callState, runConversationTurn]);
 
+    // 按住说话（非 iOS）：按下录音，松开转写后走对话轮
+    const holdInput = useHoldToTalk({
+        characterId: session.contactId,
+        canStart: () => stateRef.current === "IDLE",
+        onRecordingStart: () => {
+            setInterimText("");
+            if (stateRef.current === "IDLE") setCallState("USER_SPEAKING");
+        },
+        onTranscribeStart: () => {
+            if (stateRef.current === "USER_SPEAKING") setCallState("PROCESSING");
+        },
+        onTranscript: (text) => { void runConversationTurn(text); },
+        onError: () => {
+            if (stateRef.current === "USER_SPEAKING" || stateRef.current === "PROCESSING") {
+                setCallState("IDLE");
+            }
+        },
+    });
+
     // ── Hangup ──────────────────────────────────────
 
     const handleHangup = useCallback(() => {
@@ -527,6 +559,18 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         messagesRef.current = [...messagesRef.current, endMsg];
         setTimeout(() => onEnd(), 1500);
     }, [session.id, callDuration, onEnd, stopCameraStream]);
+
+    // 通话音频会话 + 卸载兜底：不经挂断键退出时释放识别与在途播放，
+    // 防止识别自动重启循环在后台无限自我重启、麦克风永不归还（详见 voice-call-screen）。
+    useEffect(() => {
+        setCallAudioSessionActive(true);
+        return () => {
+            stateRef.current = "ENDED";
+            if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
+            if (audioAbortRef.current) { audioAbortRef.current(); audioAbortRef.current = null; }
+            setCallAudioSessionActive(false);
+        };
+    }, []);
 
     // ── Render ──────────────────────────────────────
 
@@ -690,6 +734,15 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                 </form>
             )}
 
+            {/* 按住说话提示/错误行 */}
+            {holdToTalk && inputMode === "voice" && callState !== "CONNECTING" && callState !== "ENDED" && (
+                <div className="text-center ts-12 opacity-80 px-5 relative z-[1]">
+                    {holdInput.recState === "recording" ? "松开发送"
+                        : holdInput.recState === "transcribing" ? "识别中…"
+                        : holdInput.error || "按住麦克风说话"}
+                </div>
+            )}
+
             {/* Bottom controls */}
             <div className={callState !== "ENDED" && callState !== "CONNECTING" && !androidTextInputOnly ? "videocall-controls-gradient videocall-controls-grid" : "videocall-controls-gradient"}>
                 {callState !== "ENDED" && callState !== "CONNECTING" ? androidTextInputOnly ? (
@@ -743,41 +796,72 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                     </div>
                 ) : (
                     <>
-                        {/* Row 1: mic mute / mic interrupt / camera toggle */}
-                        <button
-                            onClick={() => setIsMuted(!isMuted)}
-                            className="ui-call-btn ui-call-btn-sm ui-call-btn-muted"
-                            {...(isMuted ? { "data-checked": "" } : {})}
-                            aria-label={isMuted ? "取消静音麦克风" : "静音麦克风"}
-                            title={isMuted ? "麦克风已静音" : "麦克风开启"}
-                        >
-                            {isMuted ? (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <line x1="1" y1="1" x2="23" y2="23" />
-                                    <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
-                                    <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.48-.35 2.15" />
-                                    <line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" />
-                                </svg>
-                            ) : (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                    <line x1="12" y1="19" x2="12" y2="22" />
-                                </svg>
-                            )}
-                        </button>
+                        {/* Row 1: mic mute (按住说话模式下改为 Aa 切换) / mic interrupt / camera toggle */}
+                        {holdToTalk ? (
+                            <button
+                                onClick={handleInputModeToggle}
+                                className="ui-call-btn ui-call-btn-sm ui-call-btn-muted"
+                                aria-label={inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"}
+                            >
+                                {inputMode === "voice" ? (
+                                    <span className="ui-call-input-text-icon">Aa</span>
+                                ) : (
+                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                                        <line x1="12" y1="19" x2="12" y2="22" />
+                                    </svg>
+                                )}
+                            </button>
+                        ) : (
+                            <button
+                                onClick={() => setIsMuted(!isMuted)}
+                                className="ui-call-btn ui-call-btn-sm ui-call-btn-muted"
+                                {...(isMuted ? { "data-checked": "" } : {})}
+                                aria-label={isMuted ? "取消静音麦克风" : "静音麦克风"}
+                                title={isMuted ? "麦克风已静音" : "麦克风开启"}
+                            >
+                                {isMuted ? (
+                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <line x1="1" y1="1" x2="23" y2="23" />
+                                        <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+                                        <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.48-.35 2.15" />
+                                        <line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" />
+                                    </svg>
+                                ) : (
+                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                                        <line x1="12" y1="19" x2="12" y2="22" />
+                                    </svg>
+                                )}
+                            </button>
+                        )}
 
                         <button
-                            onClick={handleInputModeToggle}
                             className="ui-call-mic"
+                            {...(holdToTalk && inputMode === "voice" ? { style: { touchAction: "none" as const } } : {})}
                             data-state={
                                 inputMode === "text" ? "text"
+                                    : holdToTalk
+                                        ? (holdInput.recState === "recording" ? "speaking" : callState === "IDLE" ? "idle" : "busy")
                                     : callState === "USER_SPEAKING" ? "speaking"
                                     : callState === "IDLE" ? (isMuted ? "idle-muted" : "idle")
                                     : "busy"
                             }
-                            aria-label={androidTextInputOnly ? "文字输入" : inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"}
-                            title={androidTextInputOnly ? "安卓浏览器使用文字输入" : inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"}
+                            aria-label={
+                                holdToTalk
+                                    ? (inputMode === "text" ? "切换到语音输入" : "按住说话")
+                                    : androidTextInputOnly ? "文字输入" : inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"
+                            }
+                            title={
+                                holdToTalk
+                                    ? (inputMode === "text" ? "切换到语音输入" : "按住说话")
+                                    : androidTextInputOnly ? "安卓浏览器使用文字输入" : inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"
+                            }
+                            {...(holdToTalk && inputMode === "voice"
+                                ? holdInput.pressHandlers
+                                : { onClick: handleInputModeToggle })}
                         >
                             {inputMode === "text" ? (
                                 <span className="ui-call-input-text-icon">Aa</span>

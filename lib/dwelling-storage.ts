@@ -123,6 +123,17 @@ export async function loadDwellingLayout(characterId: string): Promise<CachedLay
     return null;
 }
 
+/** List every character's dwelling layout (for storage-space scanning/cleanup). */
+export async function listDwellingLayouts(): Promise<Array<{ characterId: string; layout: DwellingLayout }>> {
+    try {
+        const rows = await db.layouts.toArray();
+        return rows.map((row) => ({ characterId: row.characterId, layout: row.data }));
+    } catch (e) {
+        console.warn("[DwellingStorage] listLayouts error:", e);
+        return [];
+    }
+}
+
 export async function saveDwellingLayout(characterId: string, layout: DwellingLayout): Promise<void> {
     const updatedAt = new Date().toISOString();
     _layoutCache.set(characterId, { layout, updatedAt });

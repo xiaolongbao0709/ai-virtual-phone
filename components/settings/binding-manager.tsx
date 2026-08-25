@@ -200,6 +200,11 @@ export function BindingManager() {
             let dirty = false;
             const [gd, gChanged] = cleanSlot(prev.globalDefaults);
             if (gChanged) dirty = true;
+            // 全局三项「所见即所得」：不允许未设置，缺省/悬空清理后落位为实际兜底值
+            // （API=第一个配置、预设=内置、身份=第一条），界面显示的就是实际生效的
+            if (apiConfigs.length > 0 && !gd.apiConfigId) { gd.apiConfigId = apiConfigs[0].id; dirty = true; }
+            if (presets.length > 0 && !gd.presetId) { gd.presetId = (presets.find(p => p.builtIn) ?? presets[0]).id; dirty = true; }
+            if (identities.length > 0 && !gd.userIdentityId) { gd.userIdentityId = identities[0].id; dirty = true; }
             const newAppDefaults: Record<string, BindingSlot> = {};
             for (const [appId, slot] of Object.entries(prev.appDefaults ?? {})) {
                 if (!slot) continue;
@@ -627,12 +632,18 @@ export function BindingManager() {
         renderBindingSlotCards(currentSlot, inheritLabel, setActiveSlotSheetField)
     );
 
+    // 全局层不允许"未设置"的三项（API/预设/身份）：留空只会触发静默兜底，
+    // 直接把兜底值落进存储并去掉未设置选项，所见即所得
+    const isRequiredGlobalField = (field: BindingField): boolean =>
+        field === "apiConfigId" || field === "presetId" || field === "userIdentityId";
+
     const renderGlobalPickerSheet = () => {
         if (!activeGlobalSheetField) return null;
         const field = activeGlobalSheetField;
         const label = getBindingFieldLabel(field);
         const options = getBindingFieldOptions(field);
         const isMulti = isMultiBindingField(field);
+        const hideUnsetOption = isRequiredGlobalField(field);
         const selectedIds = isMulti ? (config.globalDefaults[field] || []).filter(id => options.some(item => item.id === id)) : [];
         const selectedValue = !isMulti ? config.globalDefaults[field] : undefined;
 
@@ -682,15 +693,17 @@ export function BindingManager() {
                     </div>
                     <div className="binding-picker-body">
                         <div className="binding-sheet-list">
-                            <button
-                                type="button"
-                                className="binding-sheet-option"
-                                data-selected={isMulti ? selectedIds.length === 0 : !selectedValue}
-                                onClick={clearSelection}
-                            >
-                                <span className="binding-sheet-check">{(isMulti ? selectedIds.length === 0 : !selectedValue) && <Check size={15} />}</span>
-                                <span className="binding-sheet-option-text">未设置</span>
-                            </button>
+                            {!hideUnsetOption && (
+                                <button
+                                    type="button"
+                                    className="binding-sheet-option"
+                                    data-selected={isMulti ? selectedIds.length === 0 : !selectedValue}
+                                    onClick={clearSelection}
+                                >
+                                    <span className="binding-sheet-check">{(isMulti ? selectedIds.length === 0 : !selectedValue) && <Check size={15} />}</span>
+                                    <span className="binding-sheet-option-text">未设置</span>
+                                </button>
+                            )}
                             {options.length === 0 ? (
                                 <div className="binding-sheet-empty">暂无可选{label}，请先在对应设置页面创建。</div>
                             ) : (
@@ -781,15 +794,18 @@ export function BindingManager() {
                     </div>
                     <div className="binding-picker-body">
                         <div className="binding-sheet-list">
-                            <button
-                                type="button"
-                                className="binding-sheet-option"
-                                data-selected={isMulti ? selectedIds.length === 0 : !selectedValue}
-                                onClick={clearSelection}
-                            >
-                                <span className="binding-sheet-check">{(isMulti ? selectedIds.length === 0 : !selectedValue) && <Check size={15} />}</span>
-                                <span className="binding-sheet-option-text">{emptyLabel}</span>
-                            </button>
+                            {/* 全局层的 API/预设/身份不提供"未设置"（角色/应用层保留"跟随上级"） */}
+                            {!(level === "global" && isRequiredGlobalField(field)) && (
+                                <button
+                                    type="button"
+                                    className="binding-sheet-option"
+                                    data-selected={isMulti ? selectedIds.length === 0 : !selectedValue}
+                                    onClick={clearSelection}
+                                >
+                                    <span className="binding-sheet-check">{(isMulti ? selectedIds.length === 0 : !selectedValue) && <Check size={15} />}</span>
+                                    <span className="binding-sheet-option-text">{emptyLabel}</span>
+                                </button>
+                            )}
                             {options.length === 0 ? (
                                 <div className="binding-sheet-empty">暂无可选{label}，请先在对应设置页面创建。</div>
                             ) : (

@@ -17,6 +17,7 @@ import { CHAT_APP_CSS_EXAMPLE } from "@/lib/css-examples";
 import { Toggle } from "@/components/ui/form";
 import { StickerManager } from "./sticker-manager";
 import { ChatPluginManager } from "./chat-plugin-manager";
+import { ChatPluginPageBoundary } from "./chat-plugin-page-boundary";
 import { WalletPanel } from "./wallet-panel";
 import { loadMomentsConfig, saveMomentsConfig, DEFAULT_MOMENTS_CONFIG, type MomentsInteractionConfig, getAllPosts } from "@/lib/moments-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
@@ -24,11 +25,20 @@ import { loadCharacters } from "@/lib/character-storage";
 import { triggerImmediatePost } from "@/lib/moments-engine";
 import type { Character } from "@/lib/character-types";
 import { requestNotificationPermission } from "@/lib/browser-notification";
+import { disableOfflinePush, enableOfflinePush, getOfflinePushState, isShellEnvironment, loadPushQuietHours, savePushQuietHours, sendTestOfflinePush, type OfflinePushState } from "@/lib/push-client";
+import { isPersonalPushCloudActive, setPersonalPushCloudScheduled } from "@/lib/personal-push-cloud";
+import { loadPushCloudScheduled, savePushCloudScheduled } from "@/lib/cloud-deploy-status";
+import { armIdleReconnectBailout, armTimedWakeBailout, cancelBailoutKey, cancelBailoutPrefix } from "@/lib/push-bailout-client";
+import { loadTimedWakeSchedules, makeTimedWakeId, removeTimedWakeSchedule, saveTimedWakeSchedule, type TimedWakeSchedule } from "@/lib/timed-wake-storage";
+import { IDLE_RECONNECT_MAX_CONSECUTIVE, loadIdleReconnectRules, removeIdleReconnectRule, upsertIdleReconnectRule, type IdleReconnectRule } from "@/lib/idle-reconnect-storage";
+import { addChatContact, createOrGetSession } from "@/lib/chat-storage";
 import { kvGet, kvSet, kvRemove } from "@/lib/kv-db";
 import { formatWalletAmount, getWalletBalance, loadWalletState, WALLET_UPDATED_EVENT } from "@/lib/wallet-storage";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 import {
+    Loader2,
     Bell,
+    CloudUpload,
     ChevronRight,
     Clock,
     FileCode2,
@@ -41,7 +51,10 @@ import {
     Vibrate,
     Radio,
     RotateCcw,
+    Moon,
+    Satellite,
     Send,
+    X,
     SlidersHorizontal,
     Sticker,
     ThumbsUp,
@@ -146,6 +159,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const [notifEnabled, setNotifEnabled] = useState(false);
     const [notifHint, setNotifHint] = useState<string | null>(null);
     const [notifChecking, setNotifChecking] = useState(false);
+    const [showPushSettings, setShowPushSettings] = useState(false);
     const [enterToSendEnabled, setEnterToSendEnabled] = useState(false);
     const [callVibrationEnabled, setCallVibrationEnabled] = useState(true);
     const [userStats, setUserStats] = useState({ chats: 0, moments: 0, visitors: 1234 });
@@ -239,6 +253,16 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     if (showFollowUpEditor) {
         return <FollowUpSettingsEditor onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowFollowUpEditor(false); }} />;
     }
+    if (showPushSettings) {
+        return <OfflinePushSettingsPage onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowPushSettings(false); }} />;
+    }
+    if (showPluginManager) {
+        return (
+            <ChatPluginPageBoundary page="扩展插件" onClose={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowPluginManager(false); }}>
+                <ChatPluginManager onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowPluginManager(false); }} />
+            </ChatPluginPageBoundary>
+        );
+    }
     if (showApiLog) {
         return <ApiLogViewer onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowApiLog(false); }} />;
     }
@@ -247,9 +271,6 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     }
     if (showStickerManager) {
         return <StickerManager onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowStickerManager(false); }} />;
-    }
-    if (showPluginManager) {
-        return <ChatPluginManager onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowPluginManager(false); }} />;
     }
     if (showMomentsSettings) {
         return <InlineMomentsSettings onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowMomentsSettings(false); }} />;
@@ -391,6 +412,14 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                             <div className="flex flex-col flex-1 text-left gap-0.5">
                                 <span className="ts-14 font-semibold text-[var(--c-text-title)]">追发规则与延迟控制</span>
                                 <span className="ts-11 text-[var(--c-text)] opacity-70">设定角色的主动回复频率与时间间隔</span>
+                            </div>
+                            <ChevronRight size={16} className="text-[var(--c-icon)] opacity-50" />
+                        </button>
+                        <button className="flex items-center gap-3 py-3.5 w-full" onClick={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: true })); setShowPushSettings(true); }}>
+                            <Satellite size={18} className="text-[var(--c-icon)] opacity-70" strokeWidth={1.25}/>
+                            <div className="flex flex-col flex-1 text-left gap-0.5">
+                                <span className="ts-14 font-semibold text-[var(--c-text-title)]">离线推送与定时消息</span>
+                                <span className="ts-11 text-[var(--c-text)] opacity-70">关掉后台也能收到推送、安静时段、定时主动消息</span>
                             </div>
                             <ChevronRight size={16} className="text-[var(--c-icon)] opacity-50" />
                         </button>
@@ -1035,5 +1064,438 @@ function InlineMomentsSettings({ onBack }: { onBack: () => void }) {
                 </div>
             )}
         </PageShell>
+    );
+}
+
+/* ══════════════════════════════════════════
+   Offline Push & Timed Messages (sub-page)
+   ══════════════════════════════════════════ */
+function OfflinePushSettingsPage({ onBack }: { onBack: () => void }) {
+    const [offlinePushState, setOfflinePushState] = useState<OfflinePushState>("unsupported");
+    const [isShellApp, setIsShellApp] = useState(false);
+    const [offlinePushBusy, setOfflinePushBusy] = useState(false);
+    const [offlinePushHint, setOfflinePushHint] = useState<string | null>(null);
+    const [personalCloudActive, setPersonalCloudActive] = useState(false);
+    const [pushCloudScheduled, setPushCloudScheduled] = useState(() => loadPushCloudScheduled());
+    const [pushScheduleBusy, setPushScheduleBusy] = useState(false);
+    const [pushScheduleHint, setPushScheduleHint] = useState("");
+
+    const handleTogglePushCloudSchedule = async (enabled: boolean) => {
+        if (pushScheduleBusy) return;
+        setPushScheduleBusy(true);
+        setPushScheduleHint("");
+        try {
+            await setPersonalPushCloudScheduled(enabled);
+            savePushCloudScheduled(enabled);
+            setPushCloudScheduled(enabled);
+            setPushScheduleHint(enabled ? "云端任务已开启。" : "云端任务已停用，零配额消耗；重新打开即可恢复。");
+        } catch (error) {
+            setPushScheduleHint(error instanceof Error ? error.message : String(error));
+        } finally {
+            setPushScheduleBusy(false);
+        }
+    };
+    const storedQuiet = loadPushQuietHours().match(/^(\d{1,2}):(\d{2})\s*[-~—]\s*(\d{1,2}):(\d{2})$/);
+    const [quietEnabled, setQuietEnabled] = useState(Boolean(storedQuiet));
+    const [quietStart, setQuietStart] = useState(storedQuiet ? `${storedQuiet[1].padStart(2, "0")}:${storedQuiet[2]}` : "23:00");
+    const [quietEnd, setQuietEnd] = useState(storedQuiet ? `${storedQuiet[3].padStart(2, "0")}:${storedQuiet[4]}` : "08:00");
+    const [timedSchedules, setTimedSchedules] = useState<TimedWakeSchedule[]>([]);
+    const [idleRules, setIdleRules] = useState<IdleReconnectRule[]>([]);
+    const [tmMode, setTmMode] = useState<"idle" | "once">("idle");
+    const [tmCharId, setTmCharId] = useState("");
+    const [tmValue, setTmValue] = useState("60");
+    const [tmUnit, setTmUnit] = useState<"minute" | "hour" | "day">("minute");
+    const [tmIdleValue, setTmIdleValue] = useState("5");
+    const [tmIdleUnit, setTmIdleUnit] = useState<"minute" | "hour" | "day">("minute");
+    const [tmHint, setTmHint] = useState<string | null>(null);
+    const [tmBusy, setTmBusy] = useState(false);
+
+    const refreshTimedSchedules = () => {
+        setTimedSchedules(loadTimedWakeSchedules().slice().sort((a, b) => a.fireAt - b.fireAt));
+        setIdleRules(loadIdleReconnectRules().slice().sort((a, b) => a.createdAt - b.createdAt));
+    };
+
+    useEffect(() => {
+        setIsShellApp(isShellEnvironment());
+        setPersonalCloudActive(isPersonalPushCloudActive());
+        void getOfflinePushState().then(setOfflinePushState);
+        refreshTimedSchedules();
+    }, []);
+
+    const handleOfflinePushToggle = async (enabled: boolean) => {
+        if (offlinePushBusy) return;
+        setOfflinePushBusy(true);
+        setOfflinePushHint(enabled ? "正在开启..." : null);
+        try {
+            if (enabled) {
+                const result = await enableOfflinePush();
+                if (result.ok) {
+                    setOfflinePushState("on");
+                    setOfflinePushHint("已开启。可点「测试」验证通道是否连通。");
+                } else {
+                    setOfflinePushState("off");
+                    setOfflinePushHint(result.error || "开启失败。");
+                }
+            } else {
+                await disableOfflinePush();
+                setOfflinePushState("off");
+                setOfflinePushHint("已关闭，本设备不再接收离线推送。");
+            }
+        } finally {
+            setOfflinePushBusy(false);
+        }
+    };
+
+    const handleOfflinePushTest = async () => {
+        if (offlinePushBusy) return;
+        setOfflinePushBusy(true);
+        setOfflinePushHint("已安排测试推送：现在就杀掉后台，约 6 秒后送达。");
+        try {
+            const result = await sendTestOfflinePush();
+            if (!result.ok) setOfflinePushHint(result.error || "发送失败。");
+        } finally {
+            setOfflinePushBusy(false);
+        }
+    };
+
+    const persistQuietHours = (enabled: boolean, start: string, end: string) => {
+        savePushQuietHours(enabled && start && end ? `${start}-${end}` : "");
+    };
+
+    const UNIT_MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
+    const UNIT_LABEL = { minute: "分钟", hour: "小时", day: "天" } as const;
+
+    const handleCreateIdleRule = async () => {
+        if (tmBusy) return;
+        if (!tmCharId) { setTmHint("请选择角色。"); return; }
+        const amount = Number(tmIdleValue);
+        if (!Number.isFinite(amount) || amount <= 0) { setTmHint("请填写有效的沉默时长。"); return; }
+        const totalMinutes = Math.max(1, Math.round(amount * UNIT_MS[tmIdleUnit] / 60000));
+        if (totalMinutes < 1) { setTmHint("沉默阈值至少 1 分钟。"); return; }
+        if (totalMinutes > 72 * 60) { setTmHint("最长 72 小时。"); return; }
+        addChatContact(tmCharId);
+        const session = createOrGetSession(tmCharId);
+        const rule: IdleReconnectRule = {
+            id: `idle_${tmCharId}_${Date.now().toString(36)}`,
+            characterId: tmCharId,
+            sessionId: session.id,
+            intervalMinutes: totalMinutes,
+            intent: "",
+            consecutiveCount: 0,
+            createdAt: Date.now(),
+        };
+        upsertIdleReconnectRule(rule);
+        setTmBusy(true);
+        setTmHint("已保存本地规则，正在预约离线推送...");
+        const armResult = await armIdleReconnectBailout(rule);
+        setTmBusy(false);
+        setTmHint(armResult.ok
+            ? `已创建：超过 ${amount}${UNIT_LABEL[tmIdleUnit]}没消息时，TA 会主动来找你；服务端离线推送已预约。`
+            : `已创建本地规则，但离线推送未预约成功：${armResult.reason}`);
+        refreshTimedSchedules();
+    };
+
+    const handleDeleteIdleRule = (rule: IdleReconnectRule) => {
+        removeIdleReconnectRule(rule.id);
+        void cancelBailoutPrefix(`idle:${rule.id}:`);
+        refreshTimedSchedules();
+    };
+
+    const handleCreateTimedMsg = async () => {
+        if (tmBusy) return;
+        if (!tmCharId) { setTmHint("请选择角色。"); return; }
+        const amount = Number(tmValue);
+        if (!Number.isFinite(amount) || amount <= 0) { setTmHint("请填写有效的时间间隔。"); return; }
+        const delayMs = amount * UNIT_MS[tmUnit];
+        if (delayMs < 60_000) { setTmHint("间隔至少 1 分钟。"); return; }
+        if (delayMs > 7 * 86_400_000) { setTmHint("间隔最长 7 天。"); return; }
+        addChatContact(tmCharId);
+        const session = createOrGetSession(tmCharId);
+        const now = Date.now();
+        const schedule: TimedWakeSchedule = {
+            id: makeTimedWakeId(session.id),
+            sessionId: session.id,
+            characterId: tmCharId,
+            createdAt: now,
+            fireAt: now + delayMs,
+            delayMinutes: Math.max(1, Math.round(delayMs / 60000)),
+            intent: "主动联系",
+            source: "user",
+        };
+        saveTimedWakeSchedule(schedule);
+        setTmBusy(true);
+        setTmHint("已保存本地定时，正在预约离线推送...");
+        const armResult = await armTimedWakeBailout(schedule);
+        setTmBusy(false);
+        setTmHint(armResult.ok
+            ? `已创建：${amount}${UNIT_LABEL[tmUnit]}后 TA 会主动来找你；服务端离线推送已预约。`
+            : `已创建本地定时，但离线推送未预约成功：${armResult.reason}`);
+        refreshTimedSchedules();
+    };
+
+    const handleDeleteTimedMsg = (schedule: TimedWakeSchedule) => {
+        removeTimedWakeSchedule(schedule.id);
+        cancelBailoutKey(`timedwake:${schedule.id}`);
+        refreshTimedSchedules();
+    };
+
+    const formatFireAt = (fireAt: number) => {
+        const remainMinutes = Math.max(0, Math.round((fireAt - Date.now()) / 60000));
+        const remain = remainMinutes >= 1440
+            ? `${Math.round(remainMinutes / 1440 * 10) / 10} 天后`
+            : remainMinutes >= 60
+                ? `${Math.round(remainMinutes / 60 * 10) / 10} 小时后`
+                : `${remainMinutes} 分钟后`;
+        const absolute = new Date(fireAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        return `${remain}（${absolute}）`;
+    };
+
+    return (
+      <>
+        <PageShell title="离线推送" onBack={onBack} className="absolute inset-0 z-[100]">
+            <div className="page-menu profile-settings-menu">
+                {(
+                    <>
+                        <p className="menu-group-desc mx-2">运行位置</p>
+                        <div className="menu-group">
+                            <div className="menu-item" style={{ alignItems: "stretch", flexDirection: "column", gap: 10 }}>
+                                <div className="flex items-start gap-3">
+                                    <ProfileSettingsIcon icon={CloudUpload} color={BINDING_ACCENTS.api} />
+                                    <div className="menu-label-group">
+                                        <span className="menu-label">部署到我的 Supabase</span>
+                                        <span className="menu-desc">离线预约、生成和回传使用你自己的 Supabase</span>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${personalCloudActive ? "bg-green-500" : "bg-black/20"}`} />
+                                    <span className="menu-label flex-1">{personalCloudActive ? "已部署" : "未部署"}</span>
+                                    <button
+                                        type="button"
+                                        className="ui-btn ui-btn-outline shrink-0 whitespace-nowrap !gap-1.5 !px-3 !text-[12px]"
+                                        onClick={() => {
+                                            sessionStorage.setItem("mascot-settings-mode", "cloud");
+                                            window.dispatchEvent(new CustomEvent("mascot-navigate", { detail: { app: "settings", mode: "cloud" } }));
+                                        }}
+                                    >
+                                        <CloudUpload size={14} /> {personalCloudActive ? "重新部署" : "去部署"}
+                                    </button>
+                                </div>
+                                {personalCloudActive && (
+                                    <div className="flex items-center gap-3">
+                                        <div className="flex-1 flex flex-col">
+                                            <span className="menu-label">云端任务</span>
+                                            <span className="menu-desc !mt-0">开着才会派发离线预约；关掉零配额消耗</span>
+                                        </div>
+                                        {pushScheduleBusy
+                                            ? <Loader2 size={18} className="animate-spin shrink-0" />
+                                            : (
+                                                <Toggle
+                                                    checked={pushCloudScheduled}
+                                                    onChange={v => void handleTogglePushCloudSchedule(v)}
+                                                />
+                                            )}
+                                    </div>
+                                )}
+                                {pushScheduleHint && (
+                                    <span className="menu-desc !mt-0">{pushScheduleHint}</span>
+                                )}
+                            </div>
+                        </div>
+                        <p className="menu-group-desc mx-2">系统推送</p>
+                        <div className="menu-group">
+                            <div className="menu-item">
+                                <ProfileSettingsIcon icon={Satellite} color={BINDING_ACCENTS.api} />
+                                <div className="menu-label-group">
+                                    <span className="menu-label">离线推送</span>
+                                    <span className="menu-desc">关掉后台后仍由系统推送通知（本设备）</span>
+                                </div>
+                                <div className="menu-right flex items-center gap-2">
+                                    {(offlinePushState === "on" || isShellApp) && (
+                                        <button className="ui-btn ui-btn-outline py-1 px-2 ts-11" style={{ whiteSpace: "nowrap" }} onClick={() => void handleOfflinePushTest()} disabled={offlinePushBusy}>测试</button>
+                                    )}
+                                    <Toggle
+                                        checked={offlinePushState === "on" || isShellApp}
+                                        disabled={offlinePushBusy || isShellApp || offlinePushState === "unsupported"}
+                                        onChange={enabled => void handleOfflinePushToggle(enabled)}
+                                    />
+                                </div>
+                            </div>
+                            <div className="menu-item">
+                                <ProfileSettingsIcon icon={Moon} color={BINDING_ACCENTS.memory} />
+                                <div className="menu-label-group">
+                                    <span className="menu-label">安静时段</span>
+                                    <span className="menu-desc">时段内角色不主动推送，回复你的消息不受影响</span>
+                                </div>
+                                <Toggle
+                                    checked={quietEnabled}
+                                    onChange={enabled => { setQuietEnabled(enabled); persistQuietHours(enabled, quietStart, quietEnd); }}
+                                />
+                            </div>
+                            {quietEnabled && (
+                                <div className="menu-item">
+                                    <div className="menu-label-group">
+                                        <span className="menu-label">时段</span>
+                                    </div>
+                                    <div className="menu-right flex items-center gap-1">
+                                        <input
+                                            type="time"
+                                            className="border-none outline-none bg-transparent ts-13 text-[var(--c-text)]"
+                                            value={quietStart}
+                                            onChange={e => { setQuietStart(e.target.value); persistQuietHours(true, e.target.value, quietEnd); }}
+                                        />
+                                        <span className="ts-13 opacity-60">至</span>
+                                        <input
+                                            type="time"
+                                            className="border-none outline-none bg-transparent ts-13 text-[var(--c-text)]"
+                                            value={quietEnd}
+                                            onChange={e => { setQuietEnd(e.target.value); persistQuietHours(true, quietStart, e.target.value); }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <p className="menu-group-desc mx-2">
+                            {offlinePushHint || (isShellApp
+                                ? "App 版自带推送通道，已自动接管离线推送；保持系统通知权限开启即可，可点「测试」验证。"
+                                : offlinePushState === "unsupported" ? "当前环境不支持。iOS 请先添加到主屏幕，从主屏幕打开后再开启。" : "")}
+                        </p>
+                    </>
+                )}
+                <p className="menu-group-desc mx-2">定时主动消息</p>
+                <div className="menu-group">
+                    <div className="menu-item">
+                        <ProfileSettingsIcon icon={Send} color={BINDING_ACCENTS.preset} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">触发方式</span>
+                        </div>
+                        <div className="menu-right">
+                            <select
+                                className="text-right border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                value={tmMode}
+                                onChange={e => setTmMode(e.target.value as "idle" | "once")}
+                            >
+                                <option value="idle">长时间没消息时（可重复）</option>
+                                <option value="once">固定时间后（一次）</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div className="menu-item">
+                        <ProfileSettingsIcon icon={User} color={BINDING_ACCENTS.identity} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">角色</span>
+                        </div>
+                        <div className="menu-right">
+                            <select
+                                className="text-right border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                value={tmCharId}
+                                onChange={e => setTmCharId(e.target.value)}
+                            >
+                                <option value="">选择角色...</option>
+                                {loadCharacters().map(character => (
+                                    <option key={character.id} value={character.id}>{character.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                    {tmMode === "once" ? (
+                        <div className="menu-item">
+                            <ProfileSettingsIcon icon={Clock} color={BINDING_ACCENTS.voice} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">多久之后</span>
+                            </div>
+                            <div className="menu-right flex items-center gap-1">
+                                <input
+                                    type="number"
+                                    min={1}
+                                    className="w-[64px] text-right border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                    value={tmValue}
+                                    onChange={e => setTmValue(e.target.value)}
+                                />
+                                <select
+                                    className="border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                    value={tmUnit}
+                                    onChange={e => setTmUnit(e.target.value as "minute" | "hour" | "day")}
+                                >
+                                    <option value="minute">分钟</option>
+                                    <option value="hour">小时</option>
+                                    <option value="day">天</option>
+                                </select>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="menu-item">
+                            <ProfileSettingsIcon icon={Clock} color={BINDING_ACCENTS.voice} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">沉默超过</span>
+                            </div>
+                            <div className="menu-right flex items-center gap-1 ts-13">
+                                <input
+                                    type="number"
+                                    min={1}
+                                    className="w-[64px] text-right border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                    value={tmIdleValue}
+                                    onChange={e => setTmIdleValue(e.target.value)}
+                                />
+                                <select
+                                    className="border-none outline-none ts-13 text-[var(--c-text)] bg-transparent"
+                                    value={tmIdleUnit}
+                                    onChange={e => setTmIdleUnit(e.target.value as "minute" | "hour" | "day")}
+                                >
+                                    <option value="minute">分钟</option>
+                                    <option value="hour">小时</option>
+                                    <option value="day">天</option>
+                                </select>
+                            </div>
+                        </div>
+                    )}
+                    <div className="menu-item" style={{ alignItems: "stretch", flexDirection: "column", gap: 8 }}>
+                        <button className="ui-btn ui-btn-soft-action w-full" onClick={tmMode === "idle" ? handleCreateIdleRule : handleCreateTimedMsg} disabled={tmBusy}>
+                            {tmBusy ? "创建中..." : "创建"}
+                        </button>
+                    </div>
+                </div>
+                <p className="menu-group-desc mx-2">
+                    {tmHint || (tmMode === "idle"
+                        ? `你长时间不发消息时 TA 会主动来找你；不回复最多连发 ${IDLE_RECONNECT_MAX_CONSECUTIVE} 次，回复后重新开始计。每个角色一条规则。`
+                        : "每个角色同时仅保留一条，新建会替换旧的。关掉后台由服务端接管生成并推送（需开启离线推送）。")}
+                </p>
+
+                {(timedSchedules.length > 0 || idleRules.length > 0) && (
+                    <>
+                        <p className="menu-group-desc mx-2">已排期</p>
+                        <div className="menu-group">
+                            {idleRules.map(rule => {
+                                const charName = loadCharacters().find(c => c.id === rule.characterId)?.name ?? "未知角色";
+                                const hours = Math.floor(rule.intervalMinutes / 60);
+                                const minutes = rule.intervalMinutes % 60;
+                                const intervalLabel = `${hours ? `${hours}小时` : ""}${minutes ? `${minutes}分钟` : hours ? "" : "0分钟"}`;
+                                return (
+                                    <div key={rule.id} className="menu-item">
+                                        <div className="menu-label-group" style={{ minWidth: 0, flex: 1 }}>
+                                            <span className="menu-label">{charName} · 沉默超过 {intervalLabel}（连发 {rule.consecutiveCount}/{IDLE_RECONNECT_MAX_CONSECUTIVE}）</span>
+                                            <span className="menu-desc" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>长时间没消息时主动来找你</span>
+                                        </div>
+                                        <button className="ui-btn ui-btn-outline py-1 px-3 ts-12" style={{ whiteSpace: "nowrap", color: "var(--c-danger)" }} onClick={() => handleDeleteIdleRule(rule)}>删除</button>
+                                    </div>
+                                );
+                            })}
+                            {timedSchedules.map(schedule => {
+                                const charName = loadCharacters().find(c => c.id === schedule.characterId)?.name ?? "未知角色";
+                                return (
+                                    <div key={schedule.id} className="menu-item">
+                                        <div className="menu-label-group" style={{ minWidth: 0, flex: 1 }}>
+                                            <span className="menu-label">{charName} · {formatFireAt(schedule.fireAt)}</span>
+                                            <span className="menu-desc" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>固定时间后主动来找你</span>
+                                        </div>
+                                        <button className="ui-btn ui-btn-outline py-1 px-3 ts-12" style={{ whiteSpace: "nowrap", color: "var(--c-danger)" }} onClick={() => handleDeleteTimedMsg(schedule)}>删除</button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </>
+                )}
+            </div>
+        </PageShell>
+      </>
     );
 }

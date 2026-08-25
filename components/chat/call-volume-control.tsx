@@ -14,14 +14,25 @@ export function CallVolumeControl() {
   const [open, setOpen] = useState(false);
   const [volume, setVolume] = useState(1);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 上次通话把音量拖到 0 会被永久记忆，控件又默认折叠，用户往往不知道
+  // 通话为什么无声。不强制改用户的设置：进通话时若记忆是静音，把滑杆
+  // 主动弹出来让用户看到、自己调，首次展示多停留几秒再收起。
+  const mutedIntroRef = useRef(false);
 
   useEffect(() => {
-    setVolume(getTtsVolume());
+    const v = getTtsVolume();
+    setVolume(v);
+    if (v <= 0.001) {
+      mutedIntroRef.current = true;
+      setOpen(true);
+    }
   }, []);
 
   const scheduleHide = useCallback(() => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setOpen(false), 2800);
+    const delay = mutedIntroRef.current ? 8000 : 2800;
+    mutedIntroRef.current = false;
+    hideTimer.current = setTimeout(() => setOpen(false), delay);
   }, []);
 
   useEffect(() => {

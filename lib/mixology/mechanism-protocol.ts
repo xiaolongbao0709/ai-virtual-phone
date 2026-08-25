@@ -38,9 +38,18 @@ export type MixHookPayload = {
     userName: string;
     /** 落杯前：玩家这一句；出杯后：模型这一段正文 */
     text?: string;
-    /** 出杯后：这一轮的状态栏与小剧场原文 */
+    /** 出杯后：这一轮的状态栏与小剧场原文（多块并行时为第一块，全量见 ticketRaws/encoreRaws） */
     ticketRaw?: string;
     encoreRaw?: string;
+    /** 出杯后：这一轮全部状态栏/小剧场块的原文，按输出顺序 */
+    ticketRaws?: string[];
+    encoreRaws?: string[];
+    /**
+     * 出杯后专用：这次不是新生成，是玩家编辑了这一轮原文后手动要求的重跑。
+     * 玩家选「替换」时应用已先把 store 回滚到这一轮记账前（钩子照常当新一轮记）；
+     * 选「追加」则在现有 store 上再跑一遍。一般无需特殊处理，此标记仅供知情。
+     */
+    edited?: boolean;
 };
 
 /** 沙盒还回来的东西 */

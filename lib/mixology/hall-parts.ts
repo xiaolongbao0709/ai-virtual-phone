@@ -6,12 +6,10 @@
 // 逐字段重建，不做透传：形状不对、超长、越界的一概丢掉。
 // 抽成独立模块是为了能脱离路由单测——这段错了不会报错，只会让所有人的配方悄悄变形。
 
-/** 一格最多叠几件（与应用侧 MIX_SLOT_MAX 一致） */
-export const MAX_PARTS_PER_KIND = 3;
 /** 只能放一件的格：叠了也没意义，直接判非法，免得别人下载下来一脸问号 */
 export const SINGLE_PART_KINDS: readonly string[] = ["character", "persona"];
-/** 整份引用数组的条数上限：十格、单件格各 1、其余各 3 */
-export const MAX_RECIPE_PARTS = 30;
+/** 整份引用数组的条数上限：纯防滥用的护栏（正常配方远碰不到），不是玩法限制 */
+export const MAX_RECIPE_PARTS = 200;
 
 const COMPARE_OPS: readonly string[] = [">", ">=", "<", "<=", "=", "!="];
 
@@ -135,8 +133,7 @@ export function normalizeRecipeParts(
         if (!id || !name || !options.materialKinds.includes(kind)) return { error: "invalid_part" };
         if (builtin && !id.startsWith("mix_builtin_")) return { error: "invalid_builtin_part" };
         const used = kindCount.get(kind) ?? 0;
-        const limit = SINGLE_PART_KINDS.includes(kind) ? 1 : MAX_PARTS_PER_KIND;
-        if (used >= limit) return { error: "too_many_parts_in_kind" };
+        if (SINGLE_PART_KINDS.includes(kind) && used >= 1) return { error: "too_many_parts_in_kind" };
         kindCount.set(kind, used + 1);
         // 角色卡与面具不设条件；其余按白名单重建，非法就当没条件
         const when = SINGLE_PART_KINDS.includes(kind) ? undefined : normalizePartCondition(record.when);

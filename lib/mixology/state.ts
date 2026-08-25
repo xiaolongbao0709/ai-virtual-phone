@@ -45,15 +45,18 @@ export function extractMixVar(raw: string, name: string): MixStateValue | undefi
     return text;
 }
 
-/** 开局初值：小票里声明过初始值的项 */
-export function initialMixState(ticket: MixTicketMaterial | undefined): MixState {
+/** 开局初值：小票里声明过初始值的项。多张小票按槽位顺序合并，同名项先声明的优先 */
+export function initialMixState(ticket: MixTicketMaterial | MixTicketMaterial[] | undefined): MixState {
     const state: MixState = {};
-    for (const item of ticket?.vars ?? []) {
-        const name = item.name.trim();
-        if (!name) continue;
-        const initial = (item.initial ?? "").trim();
-        if (!initial) continue;
-        state[name] = /^[+-]?\d+(?:\.\d+)?$/.test(initial) ? Number(initial) : initial;
+    const tickets = Array.isArray(ticket) ? ticket : ticket ? [ticket] : [];
+    for (const one of tickets) {
+        for (const item of one.vars ?? []) {
+            const name = item.name.trim();
+            if (!name || state[name] !== undefined) continue;
+            const initial = (item.initial ?? "").trim();
+            if (!initial) continue;
+            state[name] = /^[+-]?\d+(?:\.\d+)?$/.test(initial) ? Number(initial) : initial;
+        }
     }
     return state;
 }
@@ -159,8 +162,8 @@ export function buildMixConditionContext(session: MixSession): MixConditionConte
 
 /**
  * 按生效条件筛出这一轮真正参与的材料。
- * 累加型的格保留全部命中的，择一型的格只留第一件命中的；
- * 角色卡与面具不设条件，直接过。
+ * 累加型的格保留全部命中的（小票/尾调也是——每件各自成块），
+ * 择一型的格（角色卡/面具）只留第一件命中的；角色卡与面具不设条件，直接过。
  */
 export function pickActiveMixMaterials(
     entries: Partial<Record<MixMaterialKind, { entry: MixSlotEntry; material: MixMaterial }[]>>,

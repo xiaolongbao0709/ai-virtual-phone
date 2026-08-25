@@ -402,7 +402,8 @@ export function ResourceHubApp({ onClose, onNotice }: { onClose: () => void; onN
         setBusyFile(path);
         setImportingTo(contactId ?? destination);
         try {
-            const message = await importResourceHubFile(source, path, destination, { contactId });
+            // authorName：条目投稿人署名，特调入柜时随材料带入（别的目的地忽略）
+            const message = await importResourceHubFile(source, path, destination, { contactId, authorName: activeEntry?.author?.trim() || undefined });
             onNotice?.(message);
         } catch (err) {
             onNotice?.(`导入失败：${err instanceof Error ? err.message : String(err)}`);
@@ -412,7 +413,7 @@ export function ResourceHubApp({ onClose, onNotice }: { onClose: () => void; onN
             setImportFile(null);
             setPickCharacterFor(null);
         }
-    }, [onNotice, source]);
+    }, [activeEntry, onNotice, source]);
 
     /** 第三步点下去：落盘并收尾。 */
     const runEntryImport = useCallback(async (anchorIdentifier: string | null) => {

@@ -15,8 +15,6 @@ import { permissionLabelWithContext } from "@/lib/custom-app-permission-labels";
 import { registerCustomAppToolExecutor, type CustomAppToolExecutorPayload } from "@/lib/custom-app-tool-runtime";
 import { updateInstalledCustomAppFromMarket } from "@/lib/custom-app-market-update";
 import { loadCharacters } from "@/lib/character-storage";
-import { OnlineRoomConnection, onlineCloudApi } from "@/lib/online-room-client";
-import { submitContentReport } from "@/lib/moderation-client";
 import { hydrateKvDb } from "@/lib/kv-db";
 import { ensureSettingsStorageHydrated } from "@/lib/settings-storage";
 import { getPwaHostedSafeArea, PWA_DISPLAY_MODE_CHANGED_EVENT } from "@/lib/pwa-display-mode";
@@ -50,6 +48,7 @@ import {
   loadCustomAppTasks,
   markCustomAppNotificationsRead,
   payCustomAppWallet,
+  readCustomAppBridgeState,
   readCustomAppCalendar,
   readCustomAppChatHistory,
   readCustomAppCharacterRelations,
@@ -70,6 +69,7 @@ import {
   runCustomAppAiClassify,
   runCustomAppAiEmbed,
   searchCustomAppMemory,
+  sendCustomAppBridgeOutbox,
   sendCustomAppTextMessage,
   scheduleCustomAppTask,
   sendCustomAppCard,
@@ -84,6 +84,9 @@ import {
   writeCustomAppCharacterState,
   writeCustomAppWorld,
 } from "@/lib/custom-app-host-api";
+import { REALITY_BRIDGE_APP_EVENT_NAME, REALITY_BRIDGE_DATA_EVENT } from "@/lib/reality-bridge/types";
+import { OnlineRoomConnection, onlineCloudApi } from "@/lib/online-room-client";
+import { submitContentReport } from "@/lib/moderation-client";
 
 type CustomAppRunnerProps = {
   app: InstalledCustomApp;
@@ -484,6 +487,10 @@ html, body { min-height: 100%; }
       get: function(){ return request('wallet.get'); },
       pay: function(payload){ return request('wallet.pay', payload || {}); }
     },
+    bridge: {
+      send: function(payload){ return request('bridge.send', payload || {}); },
+      readState: function(payload){ return request('bridge.readState', payload || {}); }
+    },
     room: {
       create: function(payload){ return request('room.create', payload || {}); },
       join: function(payload){ return request('room.join', payload || {}); },
@@ -645,6 +652,7 @@ function bridgeActionNeedsSettingsStorage(action: string): boolean {
 
 function bridgeActionNeedsKvStorage(action: string): boolean {
   return action.startsWith("db.")
+    || action.startsWith("bridge.")
     || action.startsWith("notifications.")
     || action.startsWith("tasks.")
     || action.startsWith("wallet.")
@@ -1084,6 +1092,7 @@ export function CustomAppRunner({
           notifications: ["create", "list", "markRead", "markAllRead", "getBadge", "setBadge", "incrementBadge", "clearBadge"],
           tasks: ["schedule", "list", "cancel"],
           wallet: ["get", "pay"],
+          bridge: ["send", "readState"],
           geo: ["get", "watch", "clearWatch"],
         },
       };
@@ -1821,6 +1830,15 @@ export function CustomAppRunner({
       return cancelCustomAppTask(app.id, String(record.id ?? ""));
     }
 
+    if (action === "bridge.send") {
+      requirePermission("bridge.send");
+      return sendCustomAppBridgeOutbox(record);
+    }
+    if (action === "bridge.readState") {
+      requirePermission("bridge.read");
+      return readCustomAppBridgeState(record);
+    }
+
     if (action === "wallet.get") {
       requirePermission("wallet.read");
       return getWalletSnapshot();
@@ -1850,6 +1868,25 @@ export function CustomAppRunner({
     };
     window.addEventListener(CHAT_MESSAGE_PUSHED_EVENT, handleChatMessagePushed);
     return () => window.removeEventListener(CHAT_MESSAGE_PUSHED_EVENT, handleChatMessagePushed);
+  }, [app, isBackgroundRunner, postHostEvent]);
+
+  // 现实桥 bridge.data 事件·前台通道：APP 正打开时直接投递给 iframe
+  //（后台拉起由 desktop-shell 的广播监听负责，那边会跳过正在前台的 APP）
+  useEffect(() => {
+    if (isBackgroundRunner) return undefined;
+    const handleBridgeData = (event: Event) => {
+      if (!subscribedEventsRef.current.has(REALITY_BRIDGE_APP_EVENT_NAME) && !subscribedEventsRef.current.has("*")) return;
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+      if (!detail || typeof detail !== "object") return;
+      postHostEvent(REALITY_BRIDGE_APP_EVENT_NAME, {
+        type: String(detail.type ?? ""),
+        payload: String(detail.payload ?? ""),
+        processed: String(detail.processed ?? ""),
+        receivedAt: String(detail.receivedAt ?? new Date().toISOString()),
+      });
+    };
+    window.addEventListener(REALITY_BRIDGE_DATA_EVENT, handleBridgeData);
+    return () => window.removeEventListener(REALITY_BRIDGE_DATA_EVENT, handleBridgeData);
   }, [app, isBackgroundRunner, postHostEvent]);
 
   useEffect(() => {

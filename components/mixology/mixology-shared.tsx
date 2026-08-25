@@ -126,19 +126,15 @@ export function MatCard({
     // 同尺寸的占位面），纯文本类（基底/文风/杯型/苦精）一律单列横条。
     if (mixKindHasCover(kind)) {
         return (
-            <div className="mix-mat-card" data-kind={kind} data-poster="true" onClick={onClick}>
+            <div className="mix-mat-card" data-kind={kind} data-poster="true" data-live={!cover && preview ? "true" : undefined} onClick={onClick}>
                 {cover ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img className="mix-mat-cover" src={cover} alt={name} />
+                ) : preview ? (
+                    // 自动封面走文档流：卡片高度=缩样实际高度，不垫占位纹（透明缩样底下不透图标）
+                    <div className="mix-poster-flow" aria-hidden="true">{preview}</div>
                 ) : (
-                    <>
-                        <div className="mix-poster-blank"><KindGlyph kind={kind} size={42} /></div>
-                        {preview ? (
-                            <div className="mix-poster-live" aria-hidden="true">
-                                <div className="mix-poster-live-inner">{preview}</div>
-                            </div>
-                        ) : null}
-                    </>
+                    <div className="mix-poster-blank"><KindGlyph kind={kind} size={42} /></div>
                 )}
                 {author ? <div className="mix-poster-author">@{author}</div> : null}
                 {badge ? <div className="mix-poster-badge">{badge}</div> : null}

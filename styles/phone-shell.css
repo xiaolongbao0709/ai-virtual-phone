@@ -1541,19 +1541,20 @@ html[data-zoom-fallback] .phone-shell-wrap {
   width: min(212px, 78%);
   border-radius: 30px;
   padding: 0;
-  /* 扁平材质：图标底色罩在面板底色(--c-home-card，即扁平组件的卡面)上，
-     两个颜色都跟装扮面板走；默认图标底色近乎透明时就是一张干净的组件卡 */
-  background:
-    linear-gradient(0deg, var(--c-desktop-icon-box, transparent), var(--c-desktop-icon-box, transparent)),
-    var(--c-home-card, #ffffff);
+  /* 扁平材质：面板底色直接用图标底色本身——文件夹是"放大的图标盒"，
+     材质与颜色都跟图标走（不再垫组件卡面 --c-home-card，那是组件的颜色）；
+     图标底色半透明时配 backdrop 模糊，透出的壁纸和图标盒同一种朦胧 */
+  background: var(--c-desktop-icon-box, #ffffff);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
   animation: folder-panel-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
   position: relative;
   overflow: hidden;
 }
 
-/* 扁平面板是实底卡片，成员标题用组件卡的文字色（桌面标题色可能是白字） */
+/* 面板即图标盒：成员标题用图标主色，与图标盒的对比关系天然成立 */
 .phone-shell[data-icon-effect="flat"] .folder-app .icon-label {
-  color: var(--c-home-text, #2f343b);
+  color: var(--c-desktop-icon, #2f343b);
 }
 
 @keyframes folder-panel-in {

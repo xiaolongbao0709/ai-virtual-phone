@@ -19,6 +19,10 @@ export type CloudBackupConfig = {
   keepCount: number;
   /** Strip images/multimedia from backups (local + cloud) to keep them small. */
   excludeMedia: boolean;
+  /** Project provisioned by AI Phone. Old/manual configs deliberately have no marker. */
+  managedProjectRef?: string;
+  /** Organization selected by the user when the managed project was created. */
+  managedOrganizationSlug?: string;
 };
 
 export const DEFAULT_CLOUD_BACKUP_CONFIG: CloudBackupConfig = {
@@ -49,6 +53,8 @@ export function loadCloudBackupConfig(): CloudBackupConfig {
       intervalHours: clampInterval(parsed.intervalHours),
       keepCount: clampKeepCount(parsed.keepCount),
       excludeMedia: parsed.excludeMedia !== false,
+      managedProjectRef: typeof parsed.managedProjectRef === "string" ? parsed.managedProjectRef : undefined,
+      managedOrganizationSlug: typeof parsed.managedOrganizationSlug === "string" ? parsed.managedOrganizationSlug : undefined,
     };
   } catch {
     return { ...DEFAULT_CLOUD_BACKUP_CONFIG };

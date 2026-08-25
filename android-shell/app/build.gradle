@@ -1,0 +1,55 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// 签名：CI 里通过环境变量注入 keystore（见 android-shell/README.md）；
+// 没有配置时 release 构建产出未签名 APK，debug 构建始终可直接安装测试。
+def ksFile = System.getenv("SHELL_KEYSTORE_FILE")
+def siteUrl = (System.getenv("SHELL_SITE_URL") ?: "https://example.invalid").replaceAll('/+$', '')
+
+android {
+    namespace 'app.floatphone.shell'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "app.floatphone.shell"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+        buildConfigField "String", "SITE_URL", "\"${siteUrl}\""
+    }
+
+    buildFeatures { buildConfig true }
+
+    if (ksFile) {
+        signingConfigs {
+            release {
+                storeFile file(ksFile)
+                storePassword System.getenv("SHELL_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("SHELL_KEY_ALIAS")
+                keyPassword System.getenv("SHELL_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (ksFile) signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.activity:activity-ktx:1.9.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}

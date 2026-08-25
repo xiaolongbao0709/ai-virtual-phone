@@ -203,10 +203,26 @@ export type MergedContribution = {
 
 /** 已采纳的社区贡献（只取已合并；审核中/未采纳一律不展示） */
 export async function fetchMergedContributions(): Promise<MergedContribution[]> {
-    const data = await ghPublic(
-        `/search/issues?q=${encodeURIComponent(`repo:${UPSTREAM_REPO} is:pr is:merged label:community`)}&sort=updated&order=desc&per_page=50`,
-    );
-    const items = Array.isArray(data.items) ? data.items as Array<Record<string, unknown>> : [];
+    // 上墙的两类：① 已合并的社区 PR；② 「设计被采纳、代码由维护侧移植」的 PR——
+    // 这类因分支基座过期没法直接合并，维护者按其设计在 main 重新实现后关闭原 PR
+    // 并打上「已采纳」标签。功劳同样算贡献者的，日期用关闭时间兜底（下方已有该回退）。
+    const searches = [
+        `repo:${UPSTREAM_REPO} is:pr is:merged label:community`,
+        `repo:${UPSTREAM_REPO} is:pr is:closed is:unmerged label:已采纳`,
+    ];
+    const results = await Promise.all(searches.map(q =>
+        ghPublic(`/search/issues?q=${encodeURIComponent(q)}&sort=updated&order=desc&per_page=50`),
+    ));
+    const seen = new Set<number>();
+    const items: Array<Record<string, unknown>> = [];
+    for (const data of results) {
+        for (const item of (Array.isArray(data.items) ? data.items as Array<Record<string, unknown>> : [])) {
+            const number = Number(item.number) || 0;
+            if (seen.has(number)) continue;
+            seen.add(number);
+            items.push(item);
+        }
+    }
     return items.map(item => {
         const body = String(item.body || "");
         const match = body.match(/^贡献者[:：]\s*([^\n（(]+)/m);
@@ -218,5 +234,5 @@ export async function fetchMergedContributions(): Promise<MergedContribution[]> 
             mergedAt: String((item.pull_request as Record<string, unknown> | undefined)?.merged_at || item.closed_at || ""),
             url: String(item.html_url || ""),
         };
-    });
+    }).sort((a, b) => (b.mergedAt || "").localeCompare(a.mergedAt || ""));
 }

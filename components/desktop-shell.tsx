@@ -19,8 +19,11 @@ import MusicFloat from "@/components/music/music-float";
 import MiniAppWindow from "@/components/music/mini-app-window";
 import { PhoneCalendarApp } from "@/components/calendar-app";
 import { PhoneQaApp } from "@/components/phone-qa-app";
+import { ChatPluginPageBoundary } from "@/components/chat/chat-plugin-page-boundary";
 import { ResourceHubApp } from "@/components/resource-hub/resource-hub-app";
 import "@/lib/qa-error-log";
+import { RealityBridgeApp } from "@/components/reality-bridge-app";
+import { REALITY_BRIDGE_APP_EVENT_NAME, REALITY_BRIDGE_DATA_EVENT } from "@/lib/reality-bridge/types";
 import { DiaryApp } from "@/components/diary/diary-app";
 import { XiaohongshuApp } from "@/components/xiaohongshu/xiaohongshu-app";
 import { StoryApp } from "@/components/story/story-app";
@@ -125,7 +128,7 @@ import type { DIYWidgetTemplate } from "@/lib/widget-types";
 import { DebugPromptPanel } from "@/components/debug-prompt-panel";
 import { QuickActionFloat } from "@/components/quick-action-float";
 import { CHAT_MESSAGE_PUSHED_EVENT, CHAT_REQUEST_REPLY_EVENT, hydrateChatStorage, loadChatSessions, loadChatMessages, pushChatMessage, type ChatMessage, type ChatSession } from "@/lib/chat-storage";
-import { resolveUserIdentity } from "@/lib/settings-storage";
+import { ensureGlobalBindingDefaults, resolveUserIdentity } from "@/lib/settings-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { generateChatCompletion, flattenCompletionResult } from "@/lib/chat-engine";
 import { parseAIResponse } from "@/lib/rich-message-parser";
@@ -516,21 +519,11 @@ function normalizeLayout(raw: unknown, widgets: WidgetInstance[], dockIds: Set<D
   for (const id of allDefaults) {
     if (allPlaced.has(id) || dockIds.has(id)) continue;
     const primaryPage = PAGE_1_DEFAULT.includes(id) ? 1 : PAGE_2_DEFAULT.includes(id) ? 2 : PAGE_3_DEFAULT.includes(id) ? 3 : 1;
-    const fallbackPages = getDesktopPageKeysForState(layout, widgets)
-      .map(getDesktopPageNumber)
-      .filter((page) => page !== primaryPage);
-    for (const page of [primaryPage, ...fallbackPages]) {
-      const pageKey = getDesktopPageKey(page);
-      ensureDesktopPage(layout, pageKey);
-      const widgetOcc = buildWidgetOccupancy(widgets.filter(w => w.page === page));
-      const usedCells = new Set(layout[pageKey].map(ic => `${ic.row},${ic.col}`));
-      const free = findNearestFreeCell(1, 1, widgetOcc, usedCells);
-      if (free) {
-        layout[pageKey] = [...layout[pageKey], { id, row: free.row, col: free.col }];
-        allPlaced.add(id);
-        break;
-      }
-    }
+    // placeIconOnAvailablePage 页满会顺延到下一页乃至新开一页——
+    // 曾经这里只在现有页里找空格，页面被图标和组件占满时就静默放弃，
+    // 图标（如外观）从此永久丢失且每次重启都救不回
+    placeIconOnAvailablePage(layout, widgets, { id, row: 1, col: 1 }, primaryPage);
+    allPlaced.add(id);
   }
 
   return trimEmptyTrailingPages(layout, widgets);
@@ -1569,7 +1562,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
 
   // 其他模块（如工坊 agent 装应用）请求把已安装应用的图标摆上桌面
   const handleInstallCustomAppToDesktopRef = useRef<((app: InstalledCustomApp) => void) | null>(null);
-  const handleThemeDesktopChangeRef = useRef<((next: { widgets: WidgetInstance[]; iconLayout: DesktopLayout; dock?: DesktopIconId[] }) => void) | null>(null);
+  const handleThemeDesktopChangeRef = useRef<((next: { widgets: WidgetInstance[]; iconLayout: DesktopLayout; dock?: DesktopIconId[]; folders?: DesktopFolderMap }) => void) | null>(null);
   const applyThemeRef = useRef<((next: ThemeProfile) => Promise<void>) | null>(null);
   useEffect(() => {
     const placeHandler = (e: Event) => {
@@ -1587,10 +1580,10 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   useEffect(() => {
     const onThemePackage = (e: Event) => {
       const detail = (e as CustomEvent).detail as
-        | { themeProfile?: ThemeProfile; iconLayout?: DesktopLayout; widgets?: WidgetInstance[]; dock?: DesktopIconId[] }
+        | { themeProfile?: ThemeProfile; iconLayout?: DesktopLayout; widgets?: WidgetInstance[]; dock?: DesktopIconId[]; folders?: DesktopFolderMap }
         | undefined;
       if (!detail?.themeProfile || !detail.iconLayout || !detail.widgets) return;
-      handleThemeDesktopChangeRef.current?.({ widgets: detail.widgets, iconLayout: detail.iconLayout, dock: detail.dock });
+      handleThemeDesktopChangeRef.current?.({ widgets: detail.widgets, iconLayout: detail.iconLayout, dock: detail.dock, folders: detail.folders });
       void applyThemeRef.current?.(detail.themeProfile);
     };
     window.addEventListener(THEME_PACKAGE_INSTALLED_EVENT, onThemePackage);
@@ -1701,6 +1694,60 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     return () => window.removeEventListener(CHAT_MESSAGE_PUSHED_EVENT, handleCustomAppBackgroundChatEvent);
   }, [activeApp, customApps]);
 
+  // 现实桥数据事件：广播给声明订阅了 bridge.data 的自定义 APP（含后台拉起）
+  useEffect(() => {
+    const handleBridgeDataEvent = (event: Event) => {
+      try {
+        const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+        if (!detail || typeof detail !== "object") return;
+        const payload = {
+          type: String(detail.type ?? ""),
+          payload: String(detail.payload ?? ""),
+          processed: String(detail.processed ?? ""),
+          receivedAt: String(detail.receivedAt ?? new Date().toISOString()),
+        };
+        const nextRuns = customApps
+          .map(app => ({
+            app,
+            subscription: customAppEventSubscriptions(app).find(item => (
+              item.background === true
+              && (item.event === REALITY_BRIDGE_APP_EVENT_NAME || item.event === "*")
+            )),
+          }))
+          .filter((item): item is { app: InstalledCustomApp; subscription: CustomAppEventRecord } => Boolean(item.subscription))
+          .filter(({ app }) => activeApp !== toCustomAppIconId(app.id))
+          .map(({ app, subscription }) => {
+            const id = `bg_${Date.now()}_${++backgroundRunSeqRef.current}_${app.id}`;
+            const entry = typeof subscription.entry === "string" ? subscription.entry : undefined;
+            const timeoutMs = customAppBackgroundTimeoutMs(subscription.timeoutMs);
+            return {
+              id,
+              app,
+              eventName: REALITY_BRIDGE_APP_EVENT_NAME,
+              payload,
+              timeoutMs,
+              launchContext: {
+                source: "background_event",
+                background: true,
+                eventName: REALITY_BRIDGE_APP_EVENT_NAME,
+                entry,
+                runId: id,
+                origin: "custom_app_background",
+                ...payload,
+              },
+            } satisfies CustomAppBackgroundEventRun;
+          });
+        if (nextRuns.length > 0) {
+          setCustomAppBackgroundRuns(prev => [...prev, ...nextRuns].slice(-12));
+        }
+      } catch (err) {
+        console.warn("[RealityBridge] failed to queue bridge.data event", err);
+      }
+    };
+    window.addEventListener(REALITY_BRIDGE_DATA_EVENT, handleBridgeDataEvent);
+    return () => window.removeEventListener(REALITY_BRIDGE_DATA_EVENT, handleBridgeDataEvent);
+  }, [activeApp, customApps]);
+
   useEffect(() => {
     let canceled = false;
     const runTasks = () => {
@@ -1756,6 +1803,10 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       // (if the user closed the browser while AI was generating, the flag would be stuck forever)
       kvKeysWithPrefix("chat-generating:").forEach(k => kvRemove(k));
 
+      // 全局绑定「所见即所得」归一化：API/预设/身份未设置或悬空时落位为实际兜底值，
+      // 绑定界面显示的即实际生效的，消灭静默兜底
+      ensureGlobalBindingDefaults();
+
       // One-time cleanup of the orphaned folder-backup handle DB. The removed
       // auto-backup feature opened (and thus created) AiPhoneBackupHandleDB on
       // every launch even though it never had a UI to select a folder.
@@ -1771,6 +1822,12 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       const stopWeixinCloudRealtimeSync = startWeixinCloudRealtimeSync();
       servicesStarted = true;
       cleanupWeixinCloudRealtimeSync = stopWeixinCloudRealtimeSync;
+      // 离线推送回端合并：拉取服务端兜底生成的消息并落进聊天记录
+      void import("@/lib/push-outbox-client").then(m => m.installServerOutboxConsumer()).catch(() => undefined);
+      // 现实桥离线联动：规则/快照同步器（规则变更、切后台时刷新服务端快照）
+      void import("@/lib/push-bridge-sync").then(m => m.installBridgeServerSync()).catch(() => undefined);
+      // 定时唤醒/经期关怀兜底：切后台时刷新快照预约
+      void import("@/lib/push-bailout-client").then(m => m.installScheduledBailoutRefresher()).catch(() => undefined);
     })();
 
     return () => {
@@ -1871,6 +1928,68 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       window.removeEventListener("incoming-call-dismiss", onDismiss);
     };
   }, []);
+
+  // ── 离线来电（AI 在离线消息里输出【拨打电话】）──
+  // 三个入口汇到同一处：SW 转发的来电推送、通知点击冷启动的 ?ring= 参数、
+  // 安卓壳全屏来电接听后的 #incoming-call=（answered=1 直接进通话）。
+  // 超过有效期视为未接：不振铃，正文已照常合并进聊天。
+  useEffect(() => {
+    if (!desktopReady) return;
+    const CALL_VALID_MS = 120_000;
+    const trigger = (sessionId: string, callTs: number, answered: boolean) => {
+      if (!sessionId) return;
+      if (callTs > 0 && Date.now() - callTs > CALL_VALID_MS) return;
+      if (answered) {
+        // 壳上已经按过接听：跳过横幅，直接开聊天进通话屏（同横幅接听键的路径）
+        setActiveApp("chat" as IconId);
+        setChatInitSessionId(sessionId);
+        window.setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("ai-call-trigger", {
+            detail: { sessionId, type: "voice", __fromBar: true },
+          }));
+        }, 600);
+        return;
+      }
+      window.dispatchEvent(new CustomEvent("ai-call-trigger", { detail: { sessionId, type: "voice" } }));
+    };
+    const onSwMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; sessionId?: string; callTs?: number } | null;
+      if (!data || data.type !== "incoming_call_push") return;
+      trigger(String(data.sessionId || ""), Number(data.callTs) || 0, false);
+    };
+    try { navigator.serviceWorker?.addEventListener("message", onSwMessage); } catch { /* 无 SW 环境 */ }
+    const consumeCallHash = () => {
+      const hashMatch = window.location.hash.match(/incoming-call=([^&]+)(?:&rt=(\d+))?(?:&answered=(1))?/);
+      if (!hashMatch) return;
+      const url = new URL(window.location.href);
+      window.history.replaceState(null, "", url.pathname + url.search);
+      trigger(decodeURIComponent(hashMatch[1]), Number(hashMatch[2]) || 0, hashMatch[3] === "1");
+    };
+    // 冷启动参数：等聊天数据水合后再触发（找不到会话时 onTrigger 自会静默放弃）
+    const bootTimer = window.setTimeout(() => {
+      try {
+        const url = new URL(window.location.href);
+        const ring = url.searchParams.get("ring");
+        const rt = Number(url.searchParams.get("rt")) || 0;
+        if (ring) {
+          url.searchParams.delete("ring");
+          url.searchParams.delete("rt");
+          window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+          trigger(decodeURIComponent(ring), rt, false);
+        } else {
+          consumeCallHash();
+        }
+      } catch { /* 参数解析失败按无来电处理 */ }
+    }, 1200);
+    // 热启动：壳 App 已在运行时接听 → loadUrl 只改 hash，走 hashchange
+    const onHashChange = () => { try { consumeCallHash(); } catch { /* ignore */ } };
+    window.addEventListener("hashchange", onHashChange);
+    return () => {
+      try { navigator.serviceWorker?.removeEventListener("message", onSwMessage); } catch { /* ignore */ }
+      window.clearTimeout(bootTimer);
+      window.removeEventListener("hashchange", onHashChange);
+    };
+  }, [desktopReady]);
 
   useEffect(() => {
     const ids = collectThemeAssetIds(draftTheme);
@@ -3141,7 +3260,13 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     const isMergeDrop = Boolean(drag.active && drag.itemType === "icon"
       && drag.mergeArmed && drag.mergeTargetIconId && drag.mergeTargetPage);
     const hasTarget = drag.active && (drag.targetPage || isMergeDrop);
-    if (isMergeDrop && commitMergeDrop(drag)) {
+    // 入组落库若抛异常，绝不能让拖拽预览态（dock 已被摘掉图标）成为终局——
+    // 按取消处理整体还原，图标回到原位而不是凭空消失
+    let mergeCommitted = false;
+    if (isMergeDrop) {
+      try { mergeCommitted = commitMergeDrop(drag); } catch { mergeCommitted = false; }
+    }
+    if (mergeCommitted) {
       // 已合并入组 — 状态在 commitMergeDrop 里整体写好
     } else if (!hasTarget || isMergeDrop) {
       // 无落点，或合并目标中途失效 → 全部还原（含文件夹成员）
@@ -3375,27 +3500,49 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     setCurrentPageIndex((index) => Math.min(index, Math.max(0, trimmedPageCount - 1)));
   }
 
-  function handleThemeDesktopChange(next: { widgets: WidgetInstance[]; iconLayout: DesktopLayout; dock?: DesktopIconId[] }): void {
+  function handleThemeDesktopChange(next: { widgets: WidgetInstance[]; iconLayout: DesktopLayout; dock?: DesktopIconId[]; folders?: DesktopFolderMap }): void {
     const normalizedWidgets = sanitizeWidgetsForLayout(next.iconLayout, next.widgets);
-    // dock：恢复默认时传入出厂 dock；主题包导入不含 dock 时保留当前。
-    // 新布局里明确摆放的图标从 dock 去重（一个图标只能存在于一处）。
+    // 对账快照：用户此刻拥有的全部图标（页面 ∪ dock ∪ 文件夹成员）。
+    // 导入/恢复默认是整桌替换，替换完谁没了着落就补回页面——
+    // 图标只许挪位置，不许凭空消失（曾经的坑：包里没带 dock/文件夹，
+    // 被拖出 dock 的图标和折进文件夹的成员一导入就没了）。
+    const ownedBefore = new Set<DesktopIconId>([
+      ...getDesktopIconLayoutItems(layoutRef.current).map(ic => ic.id).filter(id => !isFolderIconId(id)),
+      ...dockRef.current,
+      ...Object.values(foldersRef.current).flatMap(f => f.icons),
+    ]);
+    // 新主题带文件夹表就用它（成员已按本机安装过滤）；旧包没有 = 无文件夹
+    const nextFolders: DesktopFolderMap = next.folders ?? {};
+    const folderMemberIds = new Set<DesktopIconId>(Object.values(nextFolders).flatMap(f => f.icons));
+    // dock：恢复默认/新包传入的优先；旧包保留当前。新布局里明确摆放的
+    // 和收进文件夹的图标从 dock 去重（一个图标只能存在于一处）。
     const placedIds = new Set<DesktopIconId>(getDesktopIconLayoutItems(next.iconLayout).map(ic => ic.id));
-    const nextDock = normalizeDock(next.dock ?? dockRef.current).filter(id => !placedIds.has(id));
+    const nextDock = normalizeDock(next.dock ?? dockRef.current).filter(id => !placedIds.has(id) && !folderMemberIds.has(id));
+    const normalizedLayout = normalizeLayout(next.iconLayout, normalizedWidgets, new Set(nextDock), nextFolders);
+    // 文件夹一致性收拾（空夹解散、成员与页面/dock 去重、无 tile 的夹补 tile）
+    const sane = sanitizeDesktopFolders(nextFolders, normalizedLayout, nextDock, normalizedWidgets);
+    // 损失对账：导入前拥有、导入后哪儿都不在的已知图标，就近铺回页面
+    const customIconIds = getInstalledCustomIconIds();
+    const placedAfter = new Set<DesktopIconId>([
+      ...getDesktopIconLayoutItems(sane.layout).map(ic => ic.id),
+      ...nextDock,
+      ...Object.values(sane.folders).flatMap(f => f.icons),
+    ]);
+    for (const id of ownedBefore) {
+      if (placedAfter.has(id)) continue;
+      if (!(id in ICONS) && !customIconIds.has(id)) continue;
+      placeIconOnAvailablePage(sane.layout, normalizedWidgets, { id, row: 1, col: 1 }, 1);
+    }
     dockRef.current = nextDock;
     setDock(nextDock);
     writeDockLayout(nextDock);
-    const normalizedLayout = normalizeLayout(next.iconLayout, normalizedWidgets, new Set(nextDock));
-    // 主题包定义的是一张完整桌面，旧文件夹全部解散；成员图标由
-    // normalizeLayout 的默认兜底 + appendMissingCustomAppIcons 重新铺回页面。
-    if (Object.keys(foldersRef.current).length > 0) {
-      setFolders({});
-      writeDesktopFolders({});
-    }
+    setFolders(sane.folders);
+    writeDesktopFolders(sane.folders);
     setOpenFolderId(null);
     setWidgets(normalizedWidgets);
-    setLayout(normalizedLayout);
+    setLayout(sane.layout);
     saveWidgets(normalizedWidgets);
-    kvSet(ICON_LAYOUT_STORAGE_KEY, JSON.stringify(normalizedLayout));
+    kvSet(ICON_LAYOUT_STORAGE_KEY, JSON.stringify(sane.layout));
   }
 
   handleThemeDesktopChangeRef.current = handleThemeDesktopChange;
@@ -3908,8 +4055,15 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     if (activeApp === "calendar") {
       return <PhoneCalendarApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
     }
+    if (activeApp === "realitybridge") {
+      return <RealityBridgeApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
+    }
     if (activeApp === "qa") {
-      return <PhoneQaApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
+      return (
+        <ChatPluginPageBoundary page="工坊" onClose={() => setActiveApp(null)}>
+          <PhoneQaApp onClose={() => setActiveApp(null)} onNotice={setNotice} />
+        </ChatPluginPageBoundary>
+      );
     }
     if (activeApp === "resource_hub") {
       return <ResourceHubApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
