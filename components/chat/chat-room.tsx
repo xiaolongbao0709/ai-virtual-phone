@@ -783,10 +783,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                 }}
                 onFocus={(e) => {
                     if (panelOpen) {
-                        e.target.blur();
                         onClosePanels();
-                        const target = e.target as HTMLTextAreaElement;
-                        requestAnimationFrame(() => requestAnimationFrame(() => target.focus()));
                     }
                     setSuggestClosed(false);
                 }}
@@ -987,10 +984,7 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
                 }}
                 onFocus={(e) => {
                     if (showEmojiPanel) {
-                        e.target.blur();
                         onCloseEmojiPanel();
-                        const target = e.target as HTMLTextAreaElement;
-                        requestAnimationFrame(() => requestAnimationFrame(() => target.focus()));
                     }
                 }}
                 onKeyDown={e => {
