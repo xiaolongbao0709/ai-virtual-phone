@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, type RefObject } from "react";
+import { isMobileShell } from "@/lib/mobile-shell";
 
 const CHAT_BOTTOM_RESERVE_CSS_VAR = "--chat-bottom-reserve";
 const STICK_TO_BOTTOM_THRESHOLD = 120;
@@ -36,6 +37,10 @@ export function useChatBottomReserve<TWrapper extends HTMLElement, TScroll exten
                 if (el) el.scrollTop = el.scrollHeight;
             });
         };
+
+        // Android 设备在 Chrome PWA 下 visualViewport 事件会误触发，导致输入框消失
+        // 参考 use-call-keyboard-offset.ts 的处理，Android 只用 ResizeObserver
+        const isAndroidMobile = /Android/i.test(navigator.userAgent) && isMobileShell();
 
         let lastHeight = 0;
         const measure = () => {
@@ -82,16 +87,21 @@ export function useChatBottomReserve<TWrapper extends HTMLElement, TScroll exten
 
         measure();
         window.addEventListener("resize", requestMeasure);
-        window.visualViewport?.addEventListener("resize", requestMeasure);
-        window.visualViewport?.addEventListener("scroll", requestMeasure);
+        // Android 设备不监听 visualViewport，避免输入框弹跳问题
+        if (!isAndroidMobile) {
+            window.visualViewport?.addEventListener("resize", requestMeasure);
+            window.visualViewport?.addEventListener("scroll", requestMeasure);
+        }
 
         return () => {
             if (frame) window.cancelAnimationFrame(frame);
             if (bottomScrollFrame) window.cancelAnimationFrame(bottomScrollFrame);
             observer?.disconnect();
             window.removeEventListener("resize", requestMeasure);
-            window.visualViewport?.removeEventListener("resize", requestMeasure);
-            window.visualViewport?.removeEventListener("scroll", requestMeasure);
+            if (!isAndroidMobile) {
+                window.visualViewport?.removeEventListener("resize", requestMeasure);
+                window.visualViewport?.removeEventListener("scroll", requestMeasure);
+            }
         };
     }, [wrapperRef, scrollRef, refreshKey]);
 }
