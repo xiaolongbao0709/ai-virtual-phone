@@ -110,6 +110,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     const [promptViewerEnabled, setPromptViewerEnabled] = useState(false);
     const [quickActionEnabled, setQuickActionEnabled] = useState(false);
     const [keepAlive, setKeepAlive] = useState(false);
+    const [notificationsEnabled, setNotificationsEnabled] = useState(false);
     // 角色电脑：施工中弹窗（返回 / 仍要看看）
     const pageBodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -242,6 +243,34 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         onNotice(next ? "已开启后台保活" : "已关闭后台保活");
     }, [onNotice]);
 
+    const handleNotificationsChange = useCallback(async (next: boolean) => {
+        if (next) {
+            const { requestNotificationPermission, registerPushSubscription } = await import("@/lib/browser-notification");
+            const granted = await requestNotificationPermission();
+            if (granted) {
+                setNotificationsEnabled(true);
+                const chatSettings = loadChatAppSettings();
+                saveChatAppSettings({ ...chatSettings, browserNotificationsEnabled: true });
+                onNotice("通知权限已开通");
+                
+                const pushRegistered = await registerPushSubscription();
+                if (pushRegistered) {
+                    onNotice("通知权限已开通，离线推送已注册");
+                } else {
+                    onNotice("通知权限已开通，但离线推送注册失败");
+                }
+            } else {
+                setNotificationsEnabled(false);
+                onNotice("无法获取通知权限");
+            }
+        } else {
+            setNotificationsEnabled(false);
+            const chatSettings = loadChatAppSettings();
+            saveChatAppSettings({ ...chatSettings, browserNotificationsEnabled: false });
+            onNotice("已关闭浏览器通知");
+        }
+    }, [onNotice]);
+
     const imageGenerationItem = SETTINGS_MENU.find(i => i.id === "imageGeneration")!;
     const imageGenerationFeaturedItem: FeaturedCardItem = {
         id: imageGenerationItem.id,
@@ -331,6 +360,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         setPromptViewerEnabled(settings.promptViewerEnabled === true);
         setQuickActionEnabled(settings.quickActionEnabled === true);
         setKeepAlive(loadKeepAlive());
+        setNotificationsEnabled(settings.browserNotificationsEnabled === true);
     }, []);
 
     // Listen for mascot navigation mode (e.g. jump to worldbook/regex tab)
@@ -421,6 +451,16 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                     <div className="card-featured-desc">切到后台时尽量保持网页运行，主动消息与轮询不中断</div>
                                 </div>
                                 <Toggle checked={keepAlive} onChange={handleKeepAliveChange} className="settings-toggle-control" />
+                            </div>
+                            <div className="app-card card-featured settings-toggle-card">
+                                <span className="card-icon card-icon-glass">
+                                    <GlassIcon name="prompt-viewer" />
+                                </span>
+                                <div className="card-featured-body">
+                                    <div className="card-featured-label">浏览器通知</div>
+                                    <div className="card-featured-desc">允许浏览器消息通知，支持离线消息推送功能</div>
+                                </div>
+                                <Toggle checked={notificationsEnabled} onChange={handleNotificationsChange} className="settings-toggle-control" />
                             </div>
                         </div>
                         {isAdmin ? (
