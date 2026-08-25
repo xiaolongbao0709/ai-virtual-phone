@@ -462,6 +462,36 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                 </div>
                                 <Toggle checked={notificationsEnabled} onChange={handleNotificationsChange} className="settings-toggle-control" />
                             </div>
+                            {notificationsEnabled && (
+                                <div className="mt-[-6px] mb-[10px] flex justify-end px-4">
+                                    <button 
+                                        type="button"
+                                        onClick={async () => {
+                                            try {
+                                                const res = await fetch('/api/push/send', {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({
+                                                        title: "离线推送测试 💬",
+                                                        body: "这是一条测试推送！请在 3 秒内锁屏或切出网页查看效果 🍜",
+                                                        url: "/"
+                                                    })
+                                                });
+                                                if (res.ok) {
+                                                    onNotice("测试消息已发出，请在3秒内锁屏或切出网页！");
+                                                } else {
+                                                    onNotice("发送测试失败，请检查密钥配置。");
+                                                }
+                                            } catch {
+                                                onNotice("发送测试请求失败");
+                                            }
+                                        }}
+                                        className="ui-btn ui-btn-outline py-1 px-3 ts-12 rounded-[20px]"
+                                    >
+                                        发送测试消息
+                                    </button>
+                                </div>
+                            )}
                         </div>
                         {isAdmin ? (
                             <div className="settings-moderation-section">
