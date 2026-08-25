@@ -37,11 +37,13 @@ export function useChatBottomReserve<TWrapper extends HTMLElement, TScroll exten
             });
         };
 
+        let lastHeight = 0;
         const measure = () => {
             frame = 0;
             const overlay = findBottomOverlay(wrapper);
             if (!overlay) {
                 wrapper.style.removeProperty(CHAT_BOTTOM_RESERVE_CSS_VAR);
+                lastHeight = 0;
                 return;
             }
 
@@ -50,6 +52,13 @@ export function useChatBottomReserve<TWrapper extends HTMLElement, TScroll exten
                 ? el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_BOTTOM_THRESHOLD
                 : false;
             const height = Math.ceil(overlay.getBoundingClientRect().height);
+
+            // 防止 Chrome Android 在点击非输入区域时错误触发 resize 导致输入框消失
+            // 如果高度没变化且不为 0，跳过本次更新
+            if (height > 0 && height === lastHeight) {
+                return;
+            }
+            lastHeight = height;
 
             if (height > 0) {
                 wrapper.style.setProperty(CHAT_BOTTOM_RESERVE_CSS_VAR, `${height}px`);
