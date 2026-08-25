@@ -645,7 +645,7 @@
   left: 0;
   right: 0;
   z-index: 10;
-  padding: 8px 16px max(8px, env(safe-area-inset-bottom, 0px));
+  padding: 8px 16px max(18px, env(safe-area-inset-bottom, 18px));
   background: color-mix(in srgb, var(--c-input, var(--c-page-body-bg)) 55%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -956,7 +956,7 @@
 }
 
 .chat-offline-generating {
-  padding: 10px 14px 12px 18px;
+  padding: 10px 14px max(18px, env(safe-area-inset-bottom, 18px)) 18px;
   border-top: 1px solid color-mix(in srgb, var(--c-card-border) 22%, transparent);
   color: var(--c-icon);
   font-size: calc(13px*var(--app-text-scale,1));
