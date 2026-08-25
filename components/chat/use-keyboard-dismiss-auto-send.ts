@@ -181,8 +181,12 @@ export function useKeyboardDismissAutoSend(
         };
         const handleFocusOut = () => requestMeasure();
 
-        viewport?.addEventListener("resize", requestMeasure);
-        viewport?.addEventListener("scroll", requestMeasure);
+        const isAndroidMobile = /Android/i.test(navigator.userAgent) && isMobileShell();
+
+        if (!isAndroidMobile) {
+            viewport?.addEventListener("resize", requestMeasure);
+            viewport?.addEventListener("scroll", requestMeasure);
+        }
         window.addEventListener("resize", requestMeasure);
         document.addEventListener("focusin", handleFocusIn);
         document.addEventListener("focusout", handleFocusOut);
@@ -190,8 +194,10 @@ export function useKeyboardDismissAutoSend(
 
         return () => {
             if (frame) cancelAnimationFrame(frame);
-            viewport?.removeEventListener("resize", requestMeasure);
-            viewport?.removeEventListener("scroll", requestMeasure);
+            if (!isAndroidMobile) {
+                viewport?.removeEventListener("resize", requestMeasure);
+                viewport?.removeEventListener("scroll", requestMeasure);
+            }
             window.removeEventListener("resize", requestMeasure);
             document.removeEventListener("focusin", handleFocusIn);
             document.removeEventListener("focusout", handleFocusOut);
