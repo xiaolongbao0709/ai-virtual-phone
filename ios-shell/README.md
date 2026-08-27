@@ -92,19 +92,26 @@ PWA 现成的 `public/icon-512.png`（气球+云朵那张），从 20×20 到 10
 **不需要**额外勾选 Push Notifications、Background Modes、App Groups、iCloud
 这些 Capability（真推送走的是 Bark，不需要苹果自己的 APNs 证书/权限，见下文）。
 
-工程里已经加了一个 Capability：**Associated Domains**（`FloatShell.entitlements`
-里的 `applinks:mianmianfloat.duckdns.org`），配合网站根目录的
-`public/.well-known/apple-app-site-association` 文件，用来实现"点击 Bark
-推送里的链接，直接跳进这个 App，而不是打开 Safari"（即 Universal Links）。
+工程里预留了一个 Capability：**Associated Domains**（用来实现"点击 Bark
+推送里的链接，直接跳进这个 App，而不是打开 Safari"，即 Universal Links），
+但**默认是关闭的**——`FloatShell.entitlements` 里这段被注释掉了。
 
-**这个功能现在还没有完全生效**，还差两步，都需要你知道真实 Team ID 之后才能做：
+**为什么默认关闭**：这项能力要求签名用的证书/描述文件本身支持它，很多基础档位
+的重签名服务（包括不少"全能签"类工具）不支持，签出来的包一装就闪退或者
+卡白屏（现象详见下方"已知限制"和一次真实踩坑记录）。默认关闭是为了保证
+"打开 App 能看到网站"这个最基本的需求先能稳定跑通。
 
-1. 打开 `public/.well-known/apple-app-site-association`（在仓库根目录的
-   `public/` 里，不是 `ios-shell/` 里面），把里面的占位符
+**想开启这个功能**，需要：
+
+1. 确认你用的签名服务/证书支持 Associated Domains 这项能力（问一下商家）；
+2. 打开 `FloatShell.entitlements`，取消注释里面的 `com.apple.developer.associated-domains` 那几行；
+3. 打开 `public/.well-known/apple-app-site-association`（仓库根目录的
+   `public/` 里，不是 `ios-shell/` 里面），把占位符
    `TEAMID.com.mianmian.floatphone` 换成 `<你的真实 Team ID>.com.mianmian.floatphone`；
-2. 把改动过的网站重新部署到生产环境（这一步我不会替你做，需要你自己确认后执行）。
+4. 把改动过的网站重新部署到生产环境（这一步我不会替你做，需要你自己确认后执行）；
+5. 重新走一遍 GitHub 云端编译 + 重签名。
 
-在完成这两步之前，Bark 推送里的链接依然可以正常点开，只是会跳到 **Safari**，
+在开启之前，Bark 推送里的链接依然可以正常点开，只是会跳到 **Safari**，
 而不是这个 App——不影响基本可用性，只是体验上少了"直接跳回 App"这一层。
 
 ## 数据存储与云备份行为说明（务必告知最终用户）

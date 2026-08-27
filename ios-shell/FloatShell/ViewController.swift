@@ -131,6 +131,32 @@ extension ViewController: WKNavigationDelegate {
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
         download.delegate = self
     }
+
+    // 加载失败时至少弹个提示——WKWebView 跟 Safari 不一样，默认失败了界面什么反应
+    // 都没有（不像 Safari 会显示"无法打开该页面"），不加这个的话任何加载失败
+    // 在用户看来都是"一直白屏"，完全没法排查是哪里出的问题。
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        showLoadError(error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        showLoadError(error)
+    }
+
+    private func showLoadError(_ error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return }
+        let alert = UIAlertController(
+            title: "加载失败",
+            message: nsError.localizedDescription,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "重试", style: .default) { [weak self] _ in
+            guard let self else { return }
+            self.webView.load(URLRequest(url: Self.siteURL))
+        })
+        present(alert, animated: true)
+    }
 }
 
 // MARK: - 下载：Content-Disposition 附件走系统分享面板，落地由用户选择保存位置
