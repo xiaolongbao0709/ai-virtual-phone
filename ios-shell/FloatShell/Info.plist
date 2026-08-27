@@ -86,5 +86,12 @@
 	<!-- 仅使用标准 HTTPS/TLS，未使用需要出口合规申报的专有加密算法 -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+
+	<!-- 灵动岛"角色陪伴"功能需要的声明：允许本 App 发起 Live Activity。
+	     只是声明能力，不代表一定会用——window.NativeLiveActivity.start() 不
+	     调用就永远不会真的出现灵动岛；iOS 15 设备上这个键被系统忽略，不影响
+	     App 正常运行。 -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 </dict>
 </plist>

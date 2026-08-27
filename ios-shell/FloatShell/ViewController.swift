@@ -3,6 +3,9 @@ import WebKit
 import AVFoundation
 import CoreLocation
 import Network
+#if canImport(ActivityKit)
+import ActivityKit
+#endif
 
 /// Float 小手机 iOS 壳：全屏 WKWebView 直接加载线上站点。
 /// 与 android-shell/MainActivity.kt 保持同构：站内导航留在壳内，外链/自定义协议交给系统，
@@ -44,6 +47,12 @@ final class ViewController: UIViewController {
         return formatter
     }()
 
+    // ── 灵动岛"角色陪伴"：window.NativeLiveActivity.* 桥用到的状态 ──
+    // 类型擦成 Any?（而不是直接声明成 iOS 16.1+ 专属的 Activity<FloatCompanionAttributes>?），
+    // 避免在部署目标 iOS 15.0 的类里放一个高版本专属类型的 stored property；
+    // 用的时候在 @available(iOS 16.1, *) 方法里再 as? 向下转型，更稳妥。
+    private var currentLiveActivity: Any?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
@@ -77,6 +86,14 @@ final class ViewController: UIViewController {
               getLocation: function() { return window.webkit.messageHandlers.device.postMessage({ action: 'location' }); },
               getUsageToday: function() { return window.webkit.messageHandlers.device.postMessage({ action: 'usage' }); },
             };
+            window.NativeLiveActivity = {
+              isSupported: function() { return window.webkit.messageHandlers.liveactivity.postMessage({ action: 'isSupported' }); },
+              isEnabled: function() { return window.webkit.messageHandlers.liveactivity.postMessage({ action: 'isEnabled' }); },
+              setEnabled: function(value) { return window.webkit.messageHandlers.liveactivity.postMessage({ action: 'setEnabled', value: !!value }); },
+              start: function(characterName, avatarBase64, statusText) { return window.webkit.messageHandlers.liveactivity.postMessage({ action: 'start', characterName: characterName, avatar: avatarBase64, statusText: statusText }); },
+              update: function(statusText) { return window.webkit.messageHandlers.liveactivity.postMessage({ action: 'update', statusText: statusText }); },
+              end: function() { return window.webkit.messageHandlers.liveactivity.postMessage({ action: 'end' }); },
+            };
             """,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
@@ -84,6 +101,7 @@ final class ViewController: UIViewController {
         config.userContentController.addUserScript(bootstrap)
         config.userContentController.add(self, name: "haptics")
         config.userContentController.add(self, contentWorld: .page, name: "device")
+        config.userContentController.add(self, contentWorld: .page, name: "liveactivity")
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.translatesAutoresizingMaskIntoConstraints = false
@@ -370,7 +388,11 @@ extension ViewController: WKScriptMessageHandlerWithReply {
         replyHandler: @escaping (Any?, String?) -> Void
     ) {
         guard message.name == "device" else {
-            replyHandler(nil, "unknown message handler")
+            if message.name == "liveactivity" {
+                handleLiveActivityMessage(message.body as? [String: Any], replyHandler: replyHandler)
+            } else {
+                replyHandler(nil, "unknown message handler")
+            }
             return
         }
         let action = (message.body as? [String: Any])?["action"] as? String
@@ -463,5 +485,137 @@ extension ViewController: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         pendingLocationReply?(nil, error.localizedDescription)
         pendingLocationReply = nil
+    }
+}
+
+// MARK: - 灵动岛"角色陪伴"：window.NativeLiveActivity.* 桥（ActivityKit 本地 start/update/end）
+//
+// 只用本地 Activity.request/update/end，不申请 pushType（那需要 ActivityKit Push
+// Type 高阶权限 + APNs 服务器基础设施，本项目刻意不引入任何需要付费 Apple
+// Developer 高阶权限或服务器推送证书的方案）。这意味着：
+//   1. 只有 App 在前台/刚退后台不久时，网页调用 update() 才能真的更新灵动岛；
+//      App 被系统或用户彻底杀掉之后就没法再更新了，这是可接受的预期限制。
+//   2. iOS 系统本身规定一次 Live Activity 最多存活 8 小时，到点自动收掉，
+//      这是苹果的硬限制，不是本工程能绕开的，也不需要在这里做额外处理。
+// iOS 16.1 以下设备：所有方法静默返回"不支持"，不崩溃、不报错、UI 侧自然不出现。
+extension ViewController {
+
+    private static let liveActivityEnabledKey = "float.liveActivityEnabled"
+
+    /// 用户是否愿意开启这个功能。默认是开启（true），网页侧可以在设置界面里
+    /// 调用 `NativeLiveActivity.setEnabled(false)` 关掉——关掉后 start() 直接
+    /// no-op，正在跑的会立即 end()。这是"灵动岛要不要用"这件事在壳层面唯一
+    /// 的开关来源；要不要在网页设置界面里放一个可见的开关 UI，由网页侧决定，
+    /// 本壳只负责"问了就答、关了就真的关"，跟 README 里 NativeDevice 电量/
+    /// 网络那两个能力的开放原则一致。
+    private var liveActivityEnabled: Bool {
+        get {
+            let defaults = UserDefaults.standard
+            if defaults.object(forKey: Self.liveActivityEnabledKey) == nil { return true }
+            return defaults.bool(forKey: Self.liveActivityEnabledKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: Self.liveActivityEnabledKey) }
+    }
+
+    func handleLiveActivityMessage(_ body: [String: Any]?, replyHandler: @escaping (Any?, String?) -> Void) {
+        guard #available(iOS 16.1, *) else {
+            switch body?["action"] as? String {
+            case "isSupported":
+                replyHandler(["supported": false, "reason": "ios_version"], nil)
+            case "isEnabled":
+                replyHandler(liveActivityEnabled, nil)
+            case "setEnabled":
+                liveActivityEnabled = (body?["value"] as? Bool) ?? true
+                replyHandler(nil, nil)
+            default:
+                // start/update/end 在旧系统上全部静默成功地什么都不做，
+                // 网页侧不需要为"这台设备是不是 iOS 16.1+"单独写分支处理。
+                replyHandler(nil, nil)
+            }
+            return
+        }
+        handleLiveActivityMessageAvailable(body, replyHandler: replyHandler)
+    }
+
+    @available(iOS 16.1, *)
+    private func handleLiveActivityMessageAvailable(_ body: [String: Any]?, replyHandler: @escaping (Any?, String?) -> Void) {
+        switch body?["action"] as? String {
+        case "isSupported":
+            let info = ActivityAuthorizationInfo()
+            replyHandler([
+                "supported": info.areActivitiesEnabled,
+                "reason": info.areActivitiesEnabled ? NSNull() : ("system_disabled" as Any),
+            ], nil)
+
+        case "isEnabled":
+            replyHandler(liveActivityEnabled, nil)
+
+        case "setEnabled":
+            let value = (body?["value"] as? Bool) ?? true
+            liveActivityEnabled = value
+            if !value { endLiveActivity() }
+            replyHandler(nil, nil)
+
+        case "start":
+            guard liveActivityEnabled else {
+                replyHandler(nil, "disabled_by_user")
+                return
+            }
+            guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+                replyHandler(nil, "system_disabled")
+                return
+            }
+            let characterName = (body?["characterName"] as? String) ?? "Float"
+            let avatarBase64 = body?["avatar"] as? String
+            let statusText = (body?["statusText"] as? String) ?? ""
+            let attributes = FloatCompanionAttributes(characterName: characterName, avatarBase64: avatarBase64)
+            let state = FloatCompanionAttributes.ContentState(statusText: statusText)
+            do {
+                // 开始前先收掉上一个（如果网页忘了 end() 就又调用了 start()），
+                // 避免同时挂着两个灵动岛角色陪伴 Activity。
+                // 特意用 iOS 16.1 就有的 contentState: 版本 API（而不是 iOS 16.2
+                // 才加入的 content: ActivityContent<...> / staleDate 版本），
+                // 跟"灵动岛专属 API 只要求 16.1+"这条硬约束保持一致。
+                endLiveActivity()
+                let activity = try Activity<FloatCompanionAttributes>.request(
+                    attributes: attributes,
+                    contentState: state,
+                    pushType: nil
+                )
+                currentLiveActivity = activity
+                replyHandler(nil, nil)
+            } catch {
+                replyHandler(nil, error.localizedDescription)
+            }
+
+        case "update":
+            guard liveActivityEnabled else {
+                replyHandler(nil, "disabled_by_user")
+                return
+            }
+            guard let activity = currentLiveActivity as? Activity<FloatCompanionAttributes> else {
+                replyHandler(nil, "not_started")
+                return
+            }
+            let statusText = (body?["statusText"] as? String) ?? ""
+            Task {
+                await activity.update(using: .init(statusText: statusText))
+                replyHandler(nil, nil)
+            }
+
+        case "end":
+            endLiveActivity()
+            replyHandler(nil, nil)
+
+        default:
+            replyHandler(nil, "unknown action")
+        }
+    }
+
+    @available(iOS 16.1, *)
+    private func endLiveActivity() {
+        guard let activity = currentLiveActivity as? Activity<FloatCompanionAttributes> else { return }
+        currentLiveActivity = nil
+        Task { await activity.end(dismissalPolicy: .immediate) }
     }
 }

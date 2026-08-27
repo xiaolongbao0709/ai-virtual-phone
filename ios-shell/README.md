@@ -65,10 +65,46 @@
 设置界面决定何时调用这些方法，本壳只负责"问了就答"。**定位是唯一真正需要
 用户同意的一项**，用户可以随时在系统设置里单独关闭这个 App 的定位权限。
 
-这两个对象只是**壳提供的能力**，网页代码目前还没有在任何地方调用
-`NativeHaptics` / `NativeDevice`——要在具体交互（发送消息、收到回复、角色
-"查岗"话术等）上用起来，需要另外改网页代码接上这些调用，属于后续的网页侧
-改动，不在这次壳工程改动范围内。
+- `window.NativeLiveActivity`——灵动岛/锁屏"角色陪伴"能力，收起态是一个有
+  呼吸感的小光点（只营造"角色在"的氛围，不追求信息量），长按展开显示角色
+  当前"在干嘛"的一句状态文字（比如"在睡觉""在等你"，这句话由网页侧根据
+  角色已有的"作息"设定自己算出来）：
+  - `await NativeLiveActivity.isSupported()` → `{ supported: bool, reason?: string }`——
+    设备是否支持（iOS 16.1+ 且用户没在系统设置里关掉 Live Activities）。
+  - `await NativeLiveActivity.isEnabled()` → `bool`——用户是否愿意开启这个
+    功能，默认为 `true`（开启）。
+  - `await NativeLiveActivity.setEnabled(bool)`——网页侧设置界面可以调用这个
+    来给用户一个"要不要用灵动岛陪伴"的开关；关掉后 `start()` 会直接
+    no-op，正在跑的会立即收掉。**这是壳层面对这个功能唯一的开关来源**——
+    要不要在网页设置界面里放一个可见的开关 UI、默认怎么引导用户，由网页侧
+    决定，本壳只负责"问了就答、关了就真的关"，跟下面 `NativeDevice` 电量/
+    网络那两个能力"要不要给用户开关由网页侧决定"的原则一致。
+  - `NativeLiveActivity.start(characterName, avatarBase64, statusText)`——
+    开始一个 Live Activity。`avatarBase64` 建议网页侧先把头像压缩到很小的
+    尺寸（比如 64×64）再转 base64 传进来，传 `undefined`/`null` 时灵动岛
+    只显示呼吸光点、不显示头像。
+  - `NativeLiveActivity.update(statusText)`——更新当前状态文字。
+  - `NativeLiveActivity.end()`——手动收起。
+  - **硬性限制（苹果系统规则，本工程无法绕开）**：
+    1. 一次 Live Activity 苹果规定最多存活 **8 小时**，到点系统自动收掉，
+       没法做成"永久在线"。
+    2. 只用本地 `start`/`update`/`end`，**没有接入 ActivityKit 推送更新**
+       （那需要 ActivityKit Push Type 高阶权限 + 自建 APNs 推送服务器，
+       跟整个项目"不需要付费 Apple Developer 高阶权限、不需要服务器推送
+       证书"的原则冲突，刻意没做）。意味着只有 App 在前台/刚退后台不久时
+       调用 `update()` 才会真的生效，App 被彻底杀掉之后灵动岛内容就不会
+       再变了，这是可接受的预期限制。
+    3. 承载灵动岛 UI 的是一个新增的 Widget Extension Target
+       （`FloatShellWidgetExtension`，见下方目录结构），它的部署目标单独
+       设成 iOS 16.1+；主 App 的部署目标依然是 iOS 15.0 不变。iOS 15
+       设备上 `NativeLiveActivity` 的所有方法都会静默返回"不支持"/什么都
+       不做，不崩溃、不报错。
+
+这几个对象只是**壳提供的能力**，网页代码目前还没有在任何地方调用
+`NativeHaptics` / `NativeDevice` / `NativeLiveActivity`——要在具体交互
+（发送消息、收到回复、角色"查岗"话术、角色作息状态等）上用起来，需要
+另外改网页代码接上这些调用，属于后续的网页侧改动，不在这次壳工程改动
+范围内。
 
 ## 目录结构
 
@@ -77,13 +113,20 @@ ios-shell/
 ├── FloatShell.xcodeproj/
 │   ├── project.pbxproj
 │   └── xcshareddata/xcschemes/FloatShell.xcscheme   # 已包含共享 Scheme，签名方无需手动创建
-├── FloatShell/
+├── FloatShell/                     # 主 App Target（部署目标 iOS 15.0，不变）
 │   ├── AppDelegate.swift
 │   ├── SceneDelegate.swift
-│   ├── ViewController.swift        # 核心壳逻辑，见文件内注释
-│   ├── Info.plist
+│   ├── ViewController.swift        # 核心壳逻辑 + 灵动岛桥的 start/update/end 实现，见文件内注释
+│   ├── Info.plist                  # 含 NSSupportsLiveActivities = true
 │   ├── Assets.xcassets/AppIcon.appiconset/   # 只有 Contents.json，真实图标 PNG 需要签名方/你自行放入
 │   └── Base.lproj/LaunchScreen.storyboard
+├── FloatShellWidget/                # Widget Extension Target（部署目标单独设成 iOS 16.1+）
+│   ├── FloatShellWidgetBundle.swift  # Extension 入口（@main）
+│   ├── FloatCompanionLiveActivity.swift  # 灵动岛 UI：收起态呼吸光点 + 展开态状态文字
+│   └── Info.plist                    # NSExtensionPointIdentifier = com.apple.widgetkit-extension
+├── Shared/
+│   └── FloatCompanionAttributes.swift  # 主 App 和 Widget Extension 都编译这份文件，
+│                                        # 定义灵动岛显示数据的形状（ActivityAttributes）
 ├── Config.xcconfig                 # 唯一需要改的构建配置：Bundle ID / Team ID / 部署目标
 ├── ExportOptions.example.plist     # xcodebuild -exportArchive 用的导出配置模板
 └── README.md                       # 本文件
@@ -118,9 +161,16 @@ PWA 现成的 `public/icon-512.png`（气球+云朵那张），从 20×20 到 10
 - `UISupportedInterfaceOrientations`（iPhone）/ `~ipad`：支持横竖屏。
 - `ITSAppUsesNonExemptEncryption = false`：只用标准 HTTPS/TLS，跳过出口合规
   问卷（如果之后加了自定义加密逻辑要相应改成 true 并如实申报）。
+- `NSSupportsLiveActivities = true`：灵动岛"角色陪伴"功能需要的声明。只是
+  声明能力，不代表一定会用——网页侧不调用 `window.NativeLiveActivity.start()`
+  就永远不会真的出现灵动岛；iOS 15 设备上这个键被系统忽略。
 
 **不需要**额外勾选 Push Notifications、Background Modes、App Groups、iCloud
-这些 Capability（真推送走的是 Bark，不需要苹果自己的 APNs 证书/权限，见下文）。
+这些 Capability（真推送走的是 Bark，不需要苹果自己的 APNs 证书/权限，见下文；
+灵动岛也只用本地 `start`/`update`/`end`，同样不需要 ActivityKit Push Type
+这个高阶权限）。新增的 `FloatShellWidgetExtension` Target 本身也**没有**
+勾选任何 Capability、没有单独的 `.entitlements` 文件——主 App 和 Widget
+Extension 之间靠 ActivityKit 自动同步数据，不需要 App Groups。
 
 工程里预留了一个 Capability：**Associated Domains**（用来实现"点击 Bark
 推送里的链接，直接跳进这个 App，而不是打开 Safari"，即 Universal Links），
@@ -307,6 +357,21 @@ Developer 账号、没有证书的机器上跑，适合作为 CI 的编译烟雾
 3. **没有签名过任何 `.ipa`**——GitHub 云端编译（见上文）能产出未签名的
    `.app`/`.ipa`，但"签名"这一步涉及你自己的证书身份，只能由你自己或
    第三方签名方在拿到证书/描述文件之后完成，不是本项目能替你做的事。
+4. **灵动岛"角色陪伴"（`NativeLiveActivity`）的限制**，详细原理见上文
+   "网页可选调用的原生桥"一节，这里只列结论：
+   - 一次最多存活 8 小时，到点系统自动收掉，苹果的硬限制，绕不开。
+   - 只支持本地 `start`/`update`/`end`，不支持推送更新；App 被彻底杀掉后
+     灵动岛内容就不会再变，这是刻意的取舍（避免引入 ActivityKit Push Type
+     高阶权限 + APNs 服务器基础设施）。
+   - 只有 iOS 16.1+ 设备能看到，iOS 15 设备上这个功能自动静默不可用，
+     不影响主 App 本身的正常使用。
+   - 承载灵动岛 UI 的 `FloatCompanionLiveActivity.swift`（Widget Extension
+     里）用了 SwiftUI 的 `repeatForever` 动画做呼吸光点效果——这是本次
+     交付里**没有真机验证过**的一点（当前环境没有 Mac/真机），原理上
+     应该能跑，但灵动岛的 UI 由系统渲染服务定期"快照"驱动，Widget
+     Extension 进程不会一直常驻后台，如果拿到签名包后实测呼吸动画不够
+     流畅，可以考虑换成 SwiftUI 原生支持"系统驱动动画"的
+     `ProgressView`/`Text(timerInterval:)` 系列组件，代码里也留了对应注释。
 
 ## 本次改动涉及的文件
 
@@ -335,3 +400,23 @@ public/.well-known/apple-app-site-association                         新增（�
 > `components/chat/user-profile-panel.tsx`、`components/desktop-shell.tsx`、
 > `docs/push-supabase.sql` / `docs/personal-push-supabase.sql` 等文件——这部分不属于
 > iOS 壳工程本身，具体清单以对话里给你的最终汇总为准。
+
+### 灵动岛"角色陪伴"功能涉及的文件（后续追加）
+
+```
+ios-shell/FloatShellWidget/FloatShellWidgetBundle.swift        新增（Widget Extension 入口）
+ios-shell/FloatShellWidget/FloatCompanionLiveActivity.swift    新增（灵动岛/锁屏 UI）
+ios-shell/FloatShellWidget/Info.plist                          新增（Widget Extension 专属 Info.plist）
+ios-shell/Shared/FloatCompanionAttributes.swift                新增（主 App / Widget Extension 共享的数据类型）
+ios-shell/FloatShell/ViewController.swift                      修改（新增 NativeLiveActivity 桥的实现）
+ios-shell/FloatShell/Info.plist                                修改（新增 NSSupportsLiveActivities）
+ios-shell/Config.xcconfig                                      修改（新增 WIDGET_BUNDLE_IDENTIFIER）
+ios-shell/FloatShell.xcodeproj/project.pbxproj                 修改（新增 FloatShellWidgetExtension Target
+                                                                     及其内嵌/依赖关系）
+ios-shell/README.md                                             修改（本节及上文相关小节）
+```
+
+同样没有改动任何网页代码——`window.NativeLiveActivity` 只是壳提供的能力，
+要在具体交互（角色作息状态怎么算、什么时候调用 `start`/`update`/`end`、
+设置界面里要不要放一个可见的开关）上真正用起来，需要额外改网页代码接上
+这些调用，这部分留给你确认后再动。

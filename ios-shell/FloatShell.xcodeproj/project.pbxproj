@@ -12,7 +12,38 @@
 		FA0000FA0000FA0000000015 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0000FA0000FA0000000014 /* ViewController.swift */; };
 		FA0000FA0000FA0000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FA0000FA0000FA0000000016 /* Assets.xcassets */; };
 		FA0000FA0000FA0000000019 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = FA0000FA0000FA0000000018 /* LaunchScreen.storyboard */; };
+		FB0000FB0000FB0000000003 /* FloatCompanionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000002 /* FloatCompanionAttributes.swift */; };
+		FB0000FB0000FB0000000004 /* FloatCompanionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000002 /* FloatCompanionAttributes.swift */; };
+		FB0000FB0000FB0000000012 /* FloatShellWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000011 /* FloatShellWidgetBundle.swift */; };
+		FB0000FB0000FB0000000014 /* FloatCompanionLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000013 /* FloatCompanionLiveActivity.swift */; };
+		FB0000FB0000FB0000000023 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000021 /* WidgetKit.framework */; };
+		FB0000FB0000FB0000000024 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000022 /* SwiftUI.framework */; };
+		FB0000FB0000FB0000000052 /* FloatShellWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000030 /* FloatShellWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		FB0000FB0000FB0000000050 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FA0000FA0000FA0000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FB0000FB0000FB0000000040;
+			remoteInfo = FloatShellWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		FB0000FB0000FB0000000053 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FB0000FB0000FB0000000052 /* FloatShellWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		FA0000FA0000FA0000000006 /* FloatShell.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FloatShell.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -24,6 +55,13 @@
 		FA0000FA0000FA000000001B /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		FA0000FA0000FA000000001C /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = SOURCE_ROOT; };
 		FA0000FA0000FA000000001D /* FloatShell.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FloatShell.entitlements; sourceTree = "<group>"; };
+		FB0000FB0000FB0000000002 /* FloatCompanionAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatCompanionAttributes.swift; sourceTree = "<group>"; };
+		FB0000FB0000FB0000000011 /* FloatShellWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatShellWidgetBundle.swift; sourceTree = "<group>"; };
+		FB0000FB0000FB0000000013 /* FloatCompanionLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatCompanionLiveActivity.swift; sourceTree = "<group>"; };
+		FB0000FB0000FB0000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		FB0000FB0000FB0000000021 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		FB0000FB0000FB0000000022 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		FB0000FB0000FB0000000030 /* FloatShellWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FloatShellWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -34,6 +72,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FB0000FB0000FB0000000032 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FB0000FB0000FB0000000023 /* WidgetKit.framework in Frameworks */,
+				FB0000FB0000FB0000000024 /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -41,7 +88,10 @@
 			isa = PBXGroup;
 			children = (
 				FA0000FA0000FA0000000004 /* FloatShell */,
+				FB0000FB0000FB0000000010 /* FloatShellWidget */,
+				FB0000FB0000FB0000000001 /* Shared */,
 				FA0000FA0000FA000000001C /* Config.xcconfig */,
+				FB0000FB0000FB0000000020 /* Frameworks */,
 				FA0000FA0000FA0000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -50,6 +100,7 @@
 			isa = PBXGroup;
 			children = (
 				FA0000FA0000FA0000000006 /* FloatShell.app */,
+				FB0000FB0000FB0000000030 /* FloatShellWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -68,6 +119,33 @@
 			path = FloatShell;
 			sourceTree = "<group>";
 		};
+		FB0000FB0000FB0000000001 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				FB0000FB0000FB0000000002 /* FloatCompanionAttributes.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		FB0000FB0000FB0000000010 /* FloatShellWidget */ = {
+			isa = PBXGroup;
+			children = (
+				FB0000FB0000FB0000000011 /* FloatShellWidgetBundle.swift */,
+				FB0000FB0000FB0000000013 /* FloatCompanionLiveActivity.swift */,
+				FB0000FB0000FB0000000015 /* Info.plist */,
+			);
+			path = FloatShellWidget;
+			sourceTree = "<group>";
+		};
+		FB0000FB0000FB0000000020 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				FB0000FB0000FB0000000021 /* WidgetKit.framework */,
+				FB0000FB0000FB0000000022 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -78,15 +156,34 @@
 				FA0000FA0000FA0000000009 /* Frameworks */,
 				FA0000FA0000FA0000000007 /* Sources */,
 				FA0000FA0000FA0000000008 /* Resources */,
+				FB0000FB0000FB0000000053 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				FB0000FB0000FB0000000051 /* PBXTargetDependency */,
 			);
 			name = FloatShell;
 			productName = FloatShell;
 			productReference = FA0000FA0000FA0000000006 /* FloatShell.app */;
 			productType = "com.apple.product-type.application";
+		};
+		FB0000FB0000FB0000000040 /* FloatShellWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FB0000FB0000FB0000000041 /* Build configuration list for PBXNativeTarget "FloatShellWidgetExtension" */;
+			buildPhases = (
+				FB0000FB0000FB0000000032 /* Frameworks */,
+				FB0000FB0000FB0000000031 /* Sources */,
+				FB0000FB0000FB0000000033 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FloatShellWidgetExtension;
+			productName = FloatShellWidgetExtension;
+			productReference = FB0000FB0000FB0000000030 /* FloatShellWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -98,6 +195,9 @@
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
 					FA0000FA0000FA0000000005 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					FB0000FB0000FB0000000040 = {
 						CreatedOnToolsVersion = 15.0;
 					};
 				};
@@ -116,6 +216,7 @@
 			projectRoot = "";
 			targets = (
 				FA0000FA0000FA0000000005 /* FloatShell */,
+				FB0000FB0000FB0000000040 /* FloatShellWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -130,6 +231,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FB0000FB0000FB0000000033 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -140,10 +248,29 @@
 				FA0000FA0000FA0000000011 /* AppDelegate.swift in Sources */,
 				FA0000FA0000FA0000000013 /* SceneDelegate.swift in Sources */,
 				FA0000FA0000FA0000000015 /* ViewController.swift in Sources */,
+				FB0000FB0000FB0000000003 /* FloatCompanionAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FB0000FB0000FB0000000031 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FB0000FB0000FB0000000012 /* FloatShellWidgetBundle.swift in Sources */,
+				FB0000FB0000FB0000000014 /* FloatCompanionLiveActivity.swift in Sources */,
+				FB0000FB0000FB0000000004 /* FloatCompanionAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		FB0000FB0000FB0000000051 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FB0000FB0000FB0000000040 /* FloatShellWidgetExtension */;
+			targetProxy = FB0000FB0000FB0000000050 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		FA0000FA0000FA0000000018 /* LaunchScreen.storyboard */ = {
@@ -227,6 +354,50 @@
 			};
 			name = Release;
 		};
+		FB0000FB0000FB0000000042 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = FA0000FA0000FA000000001C /* Config.xcconfig */;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FloatShellWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(WIDGET_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		FB0000FB0000FB0000000043 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = FA0000FA0000FA000000001C /* Config.xcconfig */;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FloatShellWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(WIDGET_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -244,6 +415,15 @@
 			buildConfigurations = (
 				FA0000FA0000FA000000000E /* Debug */,
 				FA0000FA0000FA000000000F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FB0000FB0000FB0000000041 /* Build configuration list for PBXNativeTarget "FloatShellWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FB0000FB0000FB0000000042 /* Debug */,
+				FB0000FB0000FB0000000043 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

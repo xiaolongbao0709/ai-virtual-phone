@@ -28,3 +28,9 @@ CURRENT_PROJECT_VERSION = 1
 CODE_SIGN_STYLE = Automatic
 TARGETED_DEVICE_FAMILY = 1,2
 SWIFT_VERSION = 5.0
+
+// Widget Extension（灵动岛/Live Activity 承载体）的 Bundle ID：主 App Bundle ID
+// 加 .widget 后缀，不需要单独填写——改了上面的 PRODUCT_BUNDLE_IDENTIFIER 这里
+// 会自动跟着变。这个 Extension 在 project.pbxproj 里也引用了本文件，但它自己的
+// IPHONEOS_DEPLOYMENT_TARGET 单独写死成 16.1，不受上面 15.0 那行影响。
+WIDGET_BUNDLE_IDENTIFIER = $(PRODUCT_BUNDLE_IDENTIFIER).widget
