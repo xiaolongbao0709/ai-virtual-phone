@@ -1,11 +1,11 @@
 import UIKit
 import WebKit
 import AVFoundation
-import UniformTypeIdentifiers
 
 /// Float 小手机 iOS 壳：全屏 WKWebView 直接加载线上站点。
 /// 与 android-shell/MainActivity.kt 保持同构：站内导航留在壳内，外链/自定义协议交给系统，
-/// 网页每次部署即时生效，壳本身只负责原生能力（文件选择、下载、麦克风/摄像头授权、外链跳转）。
+/// 网页每次部署即时生效，壳本身只负责原生能力（下载、麦克风/摄像头授权、外链跳转；
+/// 文件选择由 iOS 系统自动处理，不需要壳插手）。
 final class ViewController: UIViewController {
 
     static let version = "1.0.0"
@@ -21,7 +21,6 @@ final class ViewController: UIViewController {
     }()
 
     private var webView: WKWebView!
-    private var openPanelCompletion: (([URL]?) -> Void)?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -189,21 +188,9 @@ extension ViewController: WKUIDelegate {
         decisionHandler(.grant)
     }
 
-    // <input type="file">：交给系统文件 App（含「浏览」里的照片/iCloud Drive/第三方网盘）
-    func webView(
-        _ webView: WKWebView,
-        runOpenPanelWith parameters: WKOpenPanelParameters,
-        initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping ([URL]?) -> Void
-    ) {
-        openPanelCompletion?(nil)
-        openPanelCompletion = completionHandler
-
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
-        picker.allowsMultipleSelection = parameters.allowsMultipleSelection
-        picker.delegate = self
-        present(picker, animated: true)
-    }
+    // <input type="file">：不需要实现任何方法——WKOpenPanelParameters/runOpenPanelWith
+    // 是 WebKit 在 macOS 上给 WKUIDelegate 加的方法，iOS 上根本不存在这个 API。
+    // iOS 15+ 的 WKWebView 会自己弹出系统原生的文件/照片选择器，全自动，不用壳插手。
 
     // target="_blank" / window.open：站内继续用同一个 WebView 打开，不额外开窗口
     func webView(
@@ -216,18 +203,5 @@ extension ViewController: WKUIDelegate {
             webView.load(URLRequest(url: url))
         }
         return nil
-    }
-}
-
-extension ViewController: UIDocumentPickerDelegate {
-
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        openPanelCompletion?(urls)
-        openPanelCompletion = nil
-    }
-
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-        openPanelCompletion?(nil)
-        openPanelCompletion = nil
     }
 }

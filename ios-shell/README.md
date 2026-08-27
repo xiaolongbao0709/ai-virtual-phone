@@ -33,7 +33,7 @@
 | --- | --- | --- |
 | 加载方式 | 全屏 `WebView` 加载 `BuildConfig.SITE_URL` | 全屏 `WKWebView` 加载 `Info.plist` 里的 `FLOAT_SITE_URL` |
 | 站内导航 vs 外链 | `shouldOverrideUrlLoading` 按 host 判断 | `decidePolicyFor navigationAction` 按 host 判断 |
-| 文件上传（`<input type=file>`） | 系统文件选择器 Intent | `WKUIDelegate.runOpenPanelWith` → `UIDocumentPickerViewController` |
+| 文件上传（`<input type=file>`） | 系统文件选择器 Intent | iOS 15+ 的 WKWebView 内置支持，系统自动弹出选择器，壳不需要写任何代码 |
 | 文件下载 | `DownloadManager` 落到「下载」目录 | `WKDownloadDelegate` 落到临时目录后弹系统分享面板，用户选择保存位置 |
 | 麦克风/摄像头（语音消息、通话） | 转授系统运行时权限给 WebView | `requestMediaCapturePermissionFor` 转授系统权限给 WKWebView |
 | Cookie/LocalStorage/IndexedDB | WebView 默认持久化存储 | `WKWebsiteDataStore.default()`（持久化，非隐私模式） |
@@ -262,20 +262,14 @@ Developer 账号、没有证书的机器上跑，适合作为 CI 的编译烟雾
    现实桥的"通知点击运行"和"屏幕速聊"这两个功能**不依赖**这条推送链路，
    它们是通过 iOS 系统通知/辅助触控 + 快捷指令实现的，在 Safari 和本壳里
    都能正常使用，不受影响。
-2. **App 内文件选择走系统「文件」App**，不是原生相册选择器。这样可以同时
-   覆盖 Files、iCloud Drive、第三方网盘和"浏览"里的照片，但交互上比原生
-   PHPicker 多一层。如果之后想要更贴近系统相册的选择体验，可以在
-   `ViewController.swift` 的 `runOpenPanelWith` 里换成 `PHPickerViewController`
-   （仅处理图片/视频场景）。
-3. **App 图标资源未提供真实 PNG**，需要签名方或你自己补充（见上文占位项）。
-4. **未做 App Store 上架相关的合规资料**（隐私清单 `PrivacyInfo.xcprivacy`、
+2. **未做 App Store 上架相关的合规资料**（隐私清单 `PrivacyInfo.xcprivacy`、
    截图、App Store 描述等）——如果目标是 Ad Hoc/企业签内测分发，可以忽略；
    如果要上架 App Store，需要额外准备这些材料，且需要评估"内嵌 WebView 加载
    远程网站"是否符合当前 App Store 审核指南（历史上苹果对"套壳网页"的 App
    审核较严格，需要有明显原生功能增量）。
-5. **没有生成也没有签名任何 `.ipa`**——当前执行环境不是 macOS，无法运行
-   Xcode 工具链。以上"生成 Archive / 导出 IPA"章节的命令需要在真正的
-   macOS + Xcode 环境里执行。
+3. **没有签名过任何 `.ipa`**——GitHub 云端编译（见上文）能产出未签名的
+   `.app`/`.ipa`，但"签名"这一步涉及你自己的证书身份，只能由你自己或
+   第三方签名方在拿到证书/描述文件之后完成，不是本项目能替你做的事。
 
 ## 本次改动涉及的文件
 
