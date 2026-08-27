@@ -1,6 +1,8 @@
 import UIKit
 import WebKit
 import AVFoundation
+import CoreLocation
+import Network
 
 /// Float 小手机 iOS 壳：全屏 WKWebView 直接加载线上站点。
 /// 与 android-shell/MainActivity.kt 保持同构：站内导航留在壳内，外链/自定义协议交给系统，
@@ -22,6 +24,26 @@ final class ViewController: UIViewController {
 
     private var webView: WKWebView!
 
+    // ── "查岗"能力：电量 / 网络 / 位置 / Float 自身使用时长 ──
+    private lazy var locationManager: CLLocationManager = {
+        let manager = CLLocationManager()
+        manager.delegate = self
+        return manager
+    }()
+    private var pendingLocationReply: ((Any?, String?) -> Void)?
+    private let networkMonitor = NWPathMonitor()
+    private var currentNetworkPath: NWPath?
+    private var sessionStartTime: Date?
+
+    private static let usageSecondsKey = "float.usageSecondsToday"
+    private static let usageDateKey = "float.usageDateStamp"
+    private static let dayStampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = .current
+        return formatter
+    }()
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
@@ -37,6 +59,10 @@ final class ViewController: UIViewController {
         // 同时挂上 window.NativeHaptics，网页可选调用来触发系统震动反馈（发消息、
         // 收到回复、解锁角色卡等场景）；在非本壳环境里这个对象不存在，网页侧需要
         // 自行判断 `window.NativeHaptics?.impact?.()` 再调用，不调用也完全不影响功能。
+        // window.NativeDevice.* 都返回 Promise（WKScriptMessageHandlerWithReply 自动把
+        // native 回调包成 Promise），网页侧用 await 拿结果、用 try/catch 处理拒绝的情况
+        // （比如用户在系统弹窗里拒绝了定位权限）。电量/网络这两个 iOS 不设防、不会弹
+        // 权限框——要不要用、要不要给用户一个开关，由网页侧自己决定并控制调用时机。
         let bootstrap = WKUserScript(
             source: """
             window.IOSShell = { platform: 'ios', version: '\(Self.version)' };
@@ -45,12 +71,19 @@ final class ViewController: UIViewController {
               notify: function(kind) { try { window.webkit.messageHandlers.haptics.postMessage({ type: 'notify', style: kind || 'success' }); } catch (e) {} },
               selection: function() { try { window.webkit.messageHandlers.haptics.postMessage({ type: 'selection' }); } catch (e) {} },
             };
+            window.NativeDevice = {
+              getBatteryInfo: function() { return window.webkit.messageHandlers.device.postMessage({ action: 'battery' }); },
+              getNetworkType: function() { return window.webkit.messageHandlers.device.postMessage({ action: 'network' }); },
+              getLocation: function() { return window.webkit.messageHandlers.device.postMessage({ action: 'location' }); },
+              getUsageToday: function() { return window.webkit.messageHandlers.device.postMessage({ action: 'usage' }); },
+            };
             """,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         )
         config.userContentController.addUserScript(bootstrap)
         config.userContentController.add(self, name: "haptics")
+        config.userContentController.add(self, contentWorld: .page, name: "device")
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.translatesAutoresizingMaskIntoConstraints = false
@@ -67,6 +100,55 @@ final class ViewController: UIViewController {
         ])
 
         webView.load(URLRequest(url: Self.siteURL))
+
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            self?.currentNetworkPath = path
+        }
+        networkMonitor.start(queue: .main)
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appWillResignActive),
+            name: UIApplication.willResignActiveNotification, object: nil
+        )
+    }
+
+    // ── Float 自身使用时长：不是系统"屏幕使用时间"（那个第三方 App 拿不到，
+    // 苹果只给特批的家长监控类 App），这里统计的是"这台设备今天在 Float 前台待了多久"，
+    // 按自然日累计，跨天自动清零。 ──
+    @objc private func appDidBecomeActive() {
+        sessionStartTime = Date()
+    }
+
+    @objc private func appWillResignActive() {
+        guard let start = sessionStartTime else { return }
+        sessionStartTime = nil
+        accumulateUsage(seconds: Date().timeIntervalSince(start))
+    }
+
+    private func accumulateUsage(seconds: TimeInterval) {
+        guard seconds > 0 else { return }
+        let defaults = UserDefaults.standard
+        let todayStamp = Self.dayStampFormatter.string(from: Date())
+        if defaults.string(forKey: Self.usageDateKey) != todayStamp {
+            defaults.set(todayStamp, forKey: Self.usageDateKey)
+            defaults.set(0.0, forKey: Self.usageSecondsKey)
+        }
+        let total = defaults.double(forKey: Self.usageSecondsKey) + seconds
+        defaults.set(total, forKey: Self.usageSecondsKey)
+    }
+
+    private func usageSecondsToday() -> Int {
+        let defaults = UserDefaults.standard
+        let todayStamp = Self.dayStampFormatter.string(from: Date())
+        let stored = defaults.string(forKey: Self.usageDateKey) == todayStamp
+            ? defaults.double(forKey: Self.usageSecondsKey)
+            : 0
+        let liveSession = sessionStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        return Int(stored + liveSession)
     }
 
     /// Universal Link 入口（点开推送里的生产站点链接直接跳回 App）：
@@ -276,5 +358,110 @@ extension ViewController: WKScriptMessageHandler {
         default:
             break
         }
+    }
+}
+
+// MARK: - "查岗"桥：window.NativeDevice.* 请求/回复（带返回值，走 WKScriptMessageHandlerWithReply）
+extension ViewController: WKScriptMessageHandlerWithReply {
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage,
+        replyHandler: @escaping (Any?, String?) -> Void
+    ) {
+        guard message.name == "device" else {
+            replyHandler(nil, "unknown message handler")
+            return
+        }
+        let action = (message.body as? [String: Any])?["action"] as? String
+
+        switch action {
+        case "battery":
+            UIDevice.current.isBatteryMonitoringEnabled = true
+            let level = UIDevice.current.batteryLevel
+            guard level >= 0 else {
+                replyHandler(nil, "battery info unavailable")
+                return
+            }
+            let state = UIDevice.current.batteryState
+            replyHandler([
+                "level": Int((level * 100).rounded()),
+                "charging": state == .charging || state == .full,
+            ], nil)
+
+        case "network":
+            let path = currentNetworkPath
+            let type: String
+            if path == nil {
+                type = "unknown"
+            } else if path?.status != .satisfied {
+                type = "offline"
+            } else if path?.usesInterfaceType(.wifi) == true {
+                type = "wifi"
+            } else if path?.usesInterfaceType(.cellular) == true {
+                type = "cellular"
+            } else {
+                type = "other"
+            }
+            replyHandler(["type": type], nil)
+
+        case "location":
+            requestLocation(reply: replyHandler)
+
+        case "usage":
+            replyHandler(["seconds": usageSecondsToday()], nil)
+
+        default:
+            replyHandler(nil, "unknown action")
+        }
+    }
+}
+
+// MARK: - 位置："查岗"里唯一需要系统权限弹窗的一项，用户随时可在系统设置里关掉
+extension ViewController: CLLocationManagerDelegate {
+
+    private func requestLocation(reply: @escaping (Any?, String?) -> Void) {
+        // 同一时间只服务一个待处理请求，简单可靠；网页侧本身也不会并发调用这个接口。
+        pendingLocationReply = reply
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            locationManager.requestWhenInUseAuthorization()
+        case .denied, .restricted:
+            pendingLocationReply = nil
+            reply(nil, "permission_denied")
+        default:
+            locationManager.requestLocation()
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            if pendingLocationReply != nil { manager.requestLocation() }
+        case .denied, .restricted:
+            pendingLocationReply?(nil, "permission_denied")
+            pendingLocationReply = nil
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last, let reply = pendingLocationReply else { return }
+        pendingLocationReply = nil
+        CLGeocoder().reverseGeocodeLocation(location) { placemarks, _ in
+            let place = placemarks?.first
+            let name = [place?.locality, place?.subLocality].compactMap { $0 }.joined(separator: " ")
+            reply([
+                "latitude": location.coordinate.latitude,
+                "longitude": location.coordinate.longitude,
+                "placemark": name.isEmpty ? NSNull() : name,
+            ], nil)
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        pendingLocationReply?(nil, error.localizedDescription)
+        pendingLocationReply = nil
     }
 }

@@ -54,9 +54,21 @@
   - `NativeHaptics.notify('success' | 'warning' | 'error')`
   - `NativeHaptics.selection()`
 
+- `window.NativeDevice`——"查岗"类能力，四个方法都返回 Promise：
+  - `await NativeDevice.getBatteryInfo()` → `{ level: 0-100, charging: bool }`
+  - `await NativeDevice.getNetworkType()` → `{ type: 'wifi' | 'cellular' | 'offline' | 'other' | 'unknown' }`
+  - `await NativeDevice.getLocation()` → `{ latitude, longitude, placemark }`，会触发系统定位授权框（首次调用），用户拒绝则 Promise 被 reject（`error: "permission_denied"`）
+  - `await NativeDevice.getUsageToday()` → `{ seconds }`，**这是"今天用了多久 Float"，不是系统整体屏幕使用时间**——iOS 不允许普通 App 读取系统级 Screen Time 数据（那是苹果特批给家长监控类 App 的能力），这里统计的只是本 App 自己的前台时长，按自然日累计、跨天清零
+
+**电量和网络类型不会触发任何系统授权框**——iOS 对这两项完全不设防，任何 App
+随时能读。是否要把这两个暴露给用户、要不要做一个"开关"，由网页侧自己的
+设置界面决定何时调用这些方法，本壳只负责"问了就答"。**定位是唯一真正需要
+用户同意的一项**，用户可以随时在系统设置里单独关闭这个 App 的定位权限。
+
 这两个对象只是**壳提供的能力**，网页代码目前还没有在任何地方调用
-`NativeHaptics`——要在具体交互（发送消息、收到回复等）上触发震动，需要另外
-改网页代码接上这个调用，属于后续的网页侧改动，不在这次壳工程改动范围内。
+`NativeHaptics` / `NativeDevice`——要在具体交互（发送消息、收到回复、角色
+"查岗"话术等）上用起来，需要另外改网页代码接上这些调用，属于后续的网页侧
+改动，不在这次壳工程改动范围内。
 
 ## 目录结构
 

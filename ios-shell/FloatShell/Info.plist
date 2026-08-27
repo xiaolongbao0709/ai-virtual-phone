@@ -78,6 +78,11 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>用于保存图片到相册</string>
 
+	<!-- 可选的"查岗"定位能力：网页侧调用 window.NativeDevice.getLocation() 时才会触发，
+	     用户可随时在系统设置里关闭，不调用则永远不会弹出这个授权框 -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>用于让角色知道你所在的大致位置</string>
+
 	<!-- 仅使用标准 HTTPS/TLS，未使用需要出口合规申报的专有加密算法 -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
