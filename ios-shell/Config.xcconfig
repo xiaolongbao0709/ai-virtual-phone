@@ -17,10 +17,11 @@ IPHONEOS_DEPLOYMENT_TARGET = 15.0
 
 // ── 一般不需要改的项 ─────────────────────────────────────────
 // 生产站点地址：这是公开域名，不是密钥，可以安全提交到仓库。
-// 注意：xcconfig 文件把 "//" 当成注释起始符，直接写 https://... 会被从 // 处截断
-// （踩过的坑：真机上白屏，查编译产物发现 Info.plist 里的值只剩 "https:"）。
-// 用 $() 这个空宏插在两条斜杠中间可以绕开注释解析，运行时会正常展开成 "//"。
-FLOAT_SITE_URL = https:$()//mianmianfloat.duckdns.org
+// 注意：xcconfig 对注释的识别是按「文件原始文本里有没有相邻的两个斜杠」来判断的，
+// 不会管中间隔了什么宏——所以 $() 必须插在两条斜杠正中间，插在斜杠外侧
+// （比如 https:$()//...）文件里仍然连着两个斜杠，照样会被当成注释起点截断。
+// 踩过两次坑：真机白屏，编译产物 Info.plist 里的值只剩 "https:"。
+FLOAT_SITE_URL = https:/$()/mianmianfloat.duckdns.org
 
 MARKETING_VERSION = 1.0.0
 CURRENT_PROJECT_VERSION = 1
