@@ -152,6 +152,7 @@ final class ViewController: UIViewController {
     // 按自然日累计，跨天自动清零。 ──
     @objc private func appDidBecomeActive() {
         sessionStartTime = Date()
+        ensureDefaultLiveActivityIfNeeded()
     }
 
     @objc private func appWillResignActive() {
@@ -566,7 +567,15 @@ extension ViewController {
         case "setEnabled":
             let value = (body?["value"] as? Bool) ?? true
             liveActivityEnabled = value
-            if !value { endLiveActivity() }
+            if !value {
+                endLiveActivity()
+            } else {
+                // 开关一打开就应该有陪伴感，不用等网页选好角色再调用 start()——
+                // 没有具体角色数据时先用壳自己的默认身份兜底，之后网页真的调用
+                // start() 传入角色数据会覆盖掉这个默认的（start 里已经会先
+                // endLiveActivity() 再开一个新的）。
+                startDefaultCompanionIfNeeded()
+            }
             replyHandler(nil, nil)
 
         case "start":
@@ -630,6 +639,35 @@ extension ViewController {
         guard let activity = currentLiveActivity as? Activity<FloatCompanionAttributes> else { return }
         currentLiveActivity = nil
         Task { await activity.end(dismissalPolicy: .immediate) }
+    }
+
+    // 开关开着、但网页还没调用 start() 传入具体角色时的兜底身份。
+    // 头像先留空（灵动岛只显示呼吸光点，不显示头像圆圈）——具体默认头像用什么
+    // 图，还没最终定下来，等定了再把 avatarBase64 换成真实图片的 base64。
+    private static let defaultCompanionCharacterName = "Float"
+    private static let defaultCompanionStatusText = "在呢"
+
+    /// 供 `appDidBecomeActive` 这种非 @available 上下文调用的入口：自己做
+    /// #available 判断，iOS 16.1 以下直接安静地什么都不做。
+    private func ensureDefaultLiveActivityIfNeeded() {
+        guard #available(iOS 16.1, *) else { return }
+        startDefaultCompanionIfNeeded()
+    }
+
+    /// 开关打开、且当前没有任何 Live Activity 在跑时，用壳自己的默认身份兜底
+    /// 开一个——不依赖网页有没有选中角色。网页之后调用 start() 传入真实角色
+    /// 数据会覆盖掉这个默认的。
+    @available(iOS 16.1, *)
+    private func startDefaultCompanionIfNeeded() {
+        guard liveActivityEnabled, currentLiveActivity == nil,
+              ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        let attributes = FloatCompanionAttributes(characterName: Self.defaultCompanionCharacterName, avatarBase64: nil)
+        let state = FloatCompanionAttributes.ContentState(statusText: Self.defaultCompanionStatusText)
+        currentLiveActivity = try? Activity<FloatCompanionAttributes>.request(
+            attributes: attributes,
+            contentState: state,
+            pushType: nil
+        )
     }
 }
 

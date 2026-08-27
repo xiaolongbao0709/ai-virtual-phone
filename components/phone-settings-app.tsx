@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, createContext, type CSSProperties, type ReactNode } from "react";
-import { Activity, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X, CloudUpload } from "lucide-react";
+import { Activity, Battery, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, Link2, Loader2, LogOut, MapPin, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wifi, Wrench, X, CloudUpload } from "lucide-react";
 import { ConfirmDialog } from "./ui/modal";
 import { useAccount } from "@/lib/account-context";
 import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
@@ -28,7 +28,9 @@ import { GlassIcon } from "./ui/glass-icon";
 import { Toggle } from "./ui/form";
 import { loadChatAppSettings, saveChatAppSettings } from "@/lib/chat-storage";
 import { loadKeepAlive, saveKeepAlive } from "@/lib/weixin-storage";
+import { hasNativeLiveActivityBridge, isLiveActivitySupported, getLiveActivityEnabled, setLiveActivityEnabled } from "@/lib/native-live-activity";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
+import { triggerNativeSelectionHaptic } from "@/lib/native-haptics";
 
 export const SettingsContext = createContext<{
     setSubpageTitle: (title: string | null) => void;
@@ -104,6 +106,8 @@ const logoutIconStyle = {
     "--icon-color": "var(--c-danger)",
 } as CSSProperties;
 
+type NativeDeviceSettingKey = "nativeDeviceBatteryEnabled" | "nativeDeviceNetworkEnabled" | "nativeDeviceLocationEnabled";
+
 export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     const [currentPage, setCurrentPage] = useState<SubPage>("main");
     const [subpageTitle, setSubpageTitle] = useState<string | null>(null);
@@ -113,6 +117,12 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     const [promptViewerEnabled, setPromptViewerEnabled] = useState(false);
     const [quickActionEnabled, setQuickActionEnabled] = useState(false);
     const [keepAlive, setKeepAlive] = useState(false);
+    const [nativeDeviceBatteryEnabled, setNativeDeviceBatteryEnabled] = useState(false);
+    const [nativeDeviceNetworkEnabled, setNativeDeviceNetworkEnabled] = useState(false);
+    const [nativeDeviceLocationEnabled, setNativeDeviceLocationEnabled] = useState(false);
+    // 灵动岛陪伴：只有 ios-shell 里存在 window.NativeLiveActivity 这个桥才会显示这个开关
+    const [liveActivitySupported, setLiveActivitySupported] = useState(false);
+    const [liveActivityOn, setLiveActivityOn] = useState(true);
     // 角色电脑：施工中弹窗（返回 / 仍要看看）
     const pageBodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -245,6 +255,21 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         onNotice(next ? "已开启后台保活" : "已关闭后台保活");
     }, [onNotice]);
 
+    const handleNativeDeviceSettingChange = useCallback((key: NativeDeviceSettingKey, next: boolean, label: string) => {
+        triggerNativeSelectionHaptic();
+        if (key === "nativeDeviceBatteryEnabled") setNativeDeviceBatteryEnabled(next);
+        if (key === "nativeDeviceNetworkEnabled") setNativeDeviceNetworkEnabled(next);
+        if (key === "nativeDeviceLocationEnabled") setNativeDeviceLocationEnabled(next);
+        saveChatAppSettings({ ...loadChatAppSettings(), [key]: next });
+        onNotice(next ? `已允许角色感知${label}` : `已关闭角色感知${label}`);
+    }, [onNotice]);
+
+    const handleLiveActivityChange = useCallback((next: boolean) => {
+        setLiveActivityOn(next);
+        void setLiveActivityEnabled(next);
+        onNotice(next ? "已开启灵动岛陪伴" : "已关闭灵动岛陪伴");
+    }, [onNotice]);
+
     const imageGenerationItem = SETTINGS_MENU.find(i => i.id === "imageGeneration")!;
     const imageGenerationFeaturedItem: FeaturedCardItem = {
         id: imageGenerationItem.id,
@@ -346,6 +371,23 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         setPromptViewerEnabled(settings.promptViewerEnabled === true);
         setQuickActionEnabled(settings.quickActionEnabled === true);
         setKeepAlive(loadKeepAlive());
+        setNativeDeviceBatteryEnabled(settings.nativeDeviceBatteryEnabled === true);
+        setNativeDeviceNetworkEnabled(settings.nativeDeviceNetworkEnabled === true);
+        setNativeDeviceLocationEnabled(settings.nativeDeviceLocationEnabled === true);
+    }, []);
+
+    // 灵动岛陪伴开关：只在 ios-shell 里、且设备/系统层面真的支持时才显示这一行；
+    // 初始状态从原生侧读（壳自己持久化，不是网页存的）。
+    useEffect(() => {
+        if (!hasNativeLiveActivityBridge()) return;
+        let cancelled = false;
+        void (async () => {
+            const [support, enabled] = await Promise.all([isLiveActivitySupported(), getLiveActivityEnabled()]);
+            if (cancelled) return;
+            setLiveActivitySupported(support.supported);
+            setLiveActivityOn(enabled);
+        })();
+        return () => { cancelled = true; };
     }, []);
 
     // Listen for mascot navigation mode (e.g. jump to worldbook/regex tab)
@@ -441,6 +483,18 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                 </div>
                                 <Toggle checked={keepAlive} onChange={handleKeepAliveChange} className="settings-toggle-control" />
                             </div>
+                            {liveActivitySupported && (
+                                <div className="app-card card-featured settings-toggle-card">
+                                    <span className="card-icon card-icon-glass">
+                                        <GlassIcon name="widgets" />
+                                    </span>
+                                    <div className="card-featured-body">
+                                        <div className="card-featured-label">灵动岛陪伴</div>
+                                        <div className="card-featured-desc">开启后灵动岛默认显示角色陪伴，单次最长维持 8 小时</div>
+                                    </div>
+                                    <Toggle checked={liveActivityOn} onChange={handleLiveActivityChange} className="settings-toggle-control" />
+                                </div>
+                            )}
                         </div>
                         {isAdmin ? (
                             <div className="settings-moderation-section">
