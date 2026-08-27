@@ -52,6 +52,9 @@ final class ViewController: UIViewController {
     // 避免在部署目标 iOS 15.0 的类里放一个高版本专属类型的 stored property；
     // 用的时候在 @available(iOS 16.1, *) 方法里再 as? 向下转型，更稳妥。
     private var currentLiveActivity: Any?
+    // ⚠️ 临时调试专用：摇一摇测试灵动岛时记录摇了几次，验证完毕后跟"摇一摇触发
+    // 灵动岛测试"那个 extension 一起删掉。
+    private var shakeTestStep = 0
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -132,6 +135,16 @@ final class ViewController: UIViewController {
             self, selector: #selector(appWillResignActive),
             name: UIApplication.willResignActiveNotification, object: nil
         )
+    }
+
+    // ⚠️ 临时调试代码：验证完灵动岛能正常出现之后应该删掉，见文件末尾
+    // "摇一摇测试灵动岛" 那个 extension——这里只是让 ViewController 能收到
+    // 摇一摇产生的 motionEnded 事件。
+    override var canBecomeFirstResponder: Bool { true }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        becomeFirstResponder()
     }
 
     // ── Float 自身使用时长：不是系统"屏幕使用时间"（那个第三方 App 拿不到，
@@ -617,5 +630,75 @@ extension ViewController {
         guard let activity = currentLiveActivity as? Activity<FloatCompanionAttributes> else { return }
         currentLiveActivity = nil
         Task { await activity.end(dismissalPolicy: .immediate) }
+    }
+}
+
+// MARK: - ⚠️ 临时调试：摇一摇触发灵动岛测试
+//
+// 只是为了在没有 Mac/Safari 远程调试的情况下，能在真机上肉眼验证灵动岛能不能
+// 正常出现——跟网页、跟真实角色数据完全无关，用的是写死的测试文字。
+// 验证完之后应该把这个 extension、上面 viewDidLoad 里的 canBecomeFirstResponder /
+// viewDidAppear 这两处一起删掉。
+//
+// 用法：装好 App 之后，摇一摇手机——第一次摇触发 start()（出现灵动岛测试内容），
+// 过几秒再摇一次会 update() 换一句文字，第三次摇 end() 收起，之后循环。
+extension ViewController {
+
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        guard motion == .motionShake else { return }
+        triggerLiveActivityShakeTest()
+    }
+
+    private func triggerLiveActivityShakeTest() {
+        guard #available(iOS 16.1, *) else {
+            let alert = UIAlertController(
+                title: "灵动岛测试",
+                message: "这台设备系统版本低于 iOS 16.1，不支持灵动岛/Live Activity。",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "好", style: .default))
+            present(alert, animated: true)
+            return
+        }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            let alert = UIAlertController(
+                title: "灵动岛测试",
+                message: "系统里的 Live Activities 开关是关的（设置 → Face ID 与密码 → Live Activities，或设置 → Float → Live Activities），打开之后再摇一摇试试。",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "好", style: .default))
+            present(alert, animated: true)
+            return
+        }
+
+        if currentLiveActivity == nil {
+            let attributes = FloatCompanionAttributes(characterName: "Float 测试", avatarBase64: nil)
+            let state = FloatCompanionAttributes.ContentState(statusText: "灵动岛测试中，摇一摇切换文字～")
+            do {
+                let activity = try Activity<FloatCompanionAttributes>.request(
+                    attributes: attributes,
+                    contentState: state,
+                    pushType: nil
+                )
+                currentLiveActivity = activity
+                shakeTestStep = 0
+            } catch {
+                let alert = UIAlertController(title: "灵动岛测试失败", message: error.localizedDescription, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "好", style: .default))
+                present(alert, animated: true)
+            }
+            return
+        }
+
+        guard let activity = currentLiveActivity as? Activity<FloatCompanionAttributes> else { return }
+
+        shakeTestStep += 1
+        let messages = ["在等你摇第三下～", "再摇一下就收起来啦"]
+        if shakeTestStep > messages.count {
+            endLiveActivity()
+            return
+        }
+        let text = messages[shakeTestStep - 1]
+        Task { await activity.update(using: .init(statusText: text)) }
     }
 }
