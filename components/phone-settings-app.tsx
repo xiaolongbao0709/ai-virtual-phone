@@ -496,6 +496,42 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                 </div>
                             )}
                         </div>
+                        <div className="settings-device-section">
+                            <h3 className="settings-menu-section-title">查岗</h3>
+                            <p className="settings-tools-menu-desc mb-[10px]">仅在 iOS 原生壳子中生效；默认关闭，开启后只把对应线索提供给角色。</p>
+                            <div className="menu-group settings-tools-menu">
+                                <div className="menu-item settings-tools-menu-item">
+                                    <span className="card-icon card-icon-glass"><Battery size={22} strokeWidth={1.75} /></span>
+                                    <span className="settings-tools-menu-copy">
+                                        <span className="menu-label appearance-menu-item-label">允许角色感知电量</span>
+                                        <span className="menu-desc settings-tools-menu-desc">回复时可知道当前电量与是否正在充电</span>
+                                    </span>
+                                    <span className="menu-right settings-tools-menu-toggle">
+                                        <Toggle ariaLabel="允许角色感知电量" checked={nativeDeviceBatteryEnabled} onChange={next => handleNativeDeviceSettingChange("nativeDeviceBatteryEnabled", next, "电量")} className="settings-toggle-control" />
+                                    </span>
+                                </div>
+                                <div className="menu-item settings-tools-menu-item">
+                                    <span className="card-icon card-icon-glass"><Wifi size={22} strokeWidth={1.75} /></span>
+                                    <span className="settings-tools-menu-copy">
+                                        <span className="menu-label appearance-menu-item-label">允许角色感知网络类型</span>
+                                        <span className="menu-desc settings-tools-menu-desc">回复时可知道 Wi-Fi、蜂窝网络或离线状态</span>
+                                    </span>
+                                    <span className="menu-right settings-tools-menu-toggle">
+                                        <Toggle ariaLabel="允许角色感知网络类型" checked={nativeDeviceNetworkEnabled} onChange={next => handleNativeDeviceSettingChange("nativeDeviceNetworkEnabled", next, "网络类型")} className="settings-toggle-control" />
+                                    </span>
+                                </div>
+                                <div className="menu-item settings-tools-menu-item">
+                                    <span className="card-icon card-icon-glass"><MapPin size={22} strokeWidth={1.75} /></span>
+                                    <span className="settings-tools-menu-copy">
+                                        <span className="menu-label appearance-menu-item-label">允许角色感知你的位置</span>
+                                        <span className="menu-desc settings-tools-menu-desc">回复时可知道系统返回的大致位置，可能触发定位权限</span>
+                                    </span>
+                                    <span className="menu-right settings-tools-menu-toggle">
+                                        <Toggle ariaLabel="允许角色感知你的位置" checked={nativeDeviceLocationEnabled} onChange={next => handleNativeDeviceSettingChange("nativeDeviceLocationEnabled", next, "位置")} className="settings-toggle-control" />
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
                         {isAdmin ? (
                             <div className="settings-moderation-section">
                                 <h3 className="settings-menu-section-title">Moderation</h3>

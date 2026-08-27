@@ -86,6 +86,7 @@ import {
 import { parseOfflineResponse, type ParsedOfflineResponse } from "./chat-offline-storage";
 import { throwIfAborted } from "./abort-utils";
 import { armShortcutContinuation, type ShortcutContinuationHandle, type ShortcutContinuationStyle } from "./shortcut-continuation-client";
+import { getNativeDevicePromptContext } from "./native-device";
 
 
 
@@ -382,6 +383,7 @@ type ChatPromptBuildOptions = {
     activateAllWorldBooks?: boolean;
     toolsAllowed?: boolean;
     forceEnableTools?: boolean;
+    includeNativeDeviceContext?: boolean;
 };
 
 function matchesPromptProfileRef(prompt: { identifier: string; name?: string }, refs: Set<string>): boolean {
@@ -1873,11 +1875,12 @@ export async function buildChatPromptMessages(
         }
     }
 
-    const [memResults, coreResults, musicLocal, musicCloud] = await Promise.all([
+    const [memResults, coreResults, musicLocal, musicCloud, nativeDevicePrompt] = await Promise.all([
         retrieveMemoriesForPrompt(character.id, wbActivationContext, memConfig).catch(() => null),
         retrieveCoreMemoriesForPrompt(character.id, memConfig).catch(() => null),
         buildMusicLocalMacro(),
         buildMusicCloudMacro(),
+        options?.includeNativeDeviceContext === false ? Promise.resolve("") : getNativeDevicePromptContext(session.id),
     ]);
 
     const longTermMemories = memResults ? formatLongTermMemories(memResults) : "";
@@ -1950,6 +1953,9 @@ export async function buildChatPromptMessages(
         offlineSummaryTag: preset?.story_summary_tag?.trim() || "summary",
         nativeToolHistory: usesNativeActions,
     });
+    if (nativeDevicePrompt) {
+        llmMessages.push({ role: "system", content: nativeDevicePrompt });
+    }
     if (promptProfile?.output === "plain_text") {
         llmMessages.push({
             role: "system",
@@ -2773,7 +2779,10 @@ export async function previewPromptPayload(
     }
 
     // Use the SAME shared builder as generateChatCompletion
-    const { llmMessages, character, config, preset } = await buildChatPromptMessages(session, effectiveHistory, options);
+    const { llmMessages, character, config, preset } = await buildChatPromptMessages(session, effectiveHistory, {
+        ...options,
+        includeNativeDeviceContext: false,
+    });
 
     const apiMessages = previewMessagesForApi(config, preset, llmMessages);
 
@@ -2834,7 +2843,10 @@ export async function previewPromptRequestSnapshot(
         effectiveHistory = annotated;
     }
 
-    const { llmMessages, character, config, preset, userIdentity, toolsEnabled } = await buildChatPromptMessages(session, effectiveHistory, options);
+    const { llmMessages, character, config, preset, userIdentity, toolsEnabled } = await buildChatPromptMessages(session, effectiveHistory, {
+        ...options,
+        includeNativeDeviceContext: false,
+    });
     const requestMessages = toLlmRequestMessages(llmMessages);
     const enabledTools = toolsEnabled ? getEnabledTools(options?.appId ?? "chat") : [];
     const meta = { characterName: character.name, userName: userIdentity?.name };

@@ -79,6 +79,7 @@ import type { DebugPromptSnapshot } from "./debug-store";
 import { throwIfAborted } from "./abort-utils";
 import { buildCharacterTimeContext, buildGroupTimeContext } from "./character-time";
 import { getPromptTimestampOptionsForTimeContext } from "./prompt-time";
+import { getNativeDevicePromptContext } from "./native-device";
 
 function stripGroupFinancialActionsForMetadataRepair(text: string): string {
     return stripStateAndInnerForPrompt(text)
@@ -282,6 +283,7 @@ export type GroupChatPromptBuildOptions = {
     disableTools?: boolean;
     promptProfile?: CustomAppPromptProfile | null;
     apiConfigId?: string;
+    includeNativeDeviceContext?: boolean;
 };
 
 async function buildGroupChatPromptMessages(
@@ -413,7 +415,11 @@ async function buildGroupChatPromptMessages(
         ? `每个角色只能使用自己名下的表情包：\n${stickerRows.join("\n")}`
         : "无可用表情包，该功能不可用";
     const firstExample = members.map(m => getCustomStickerExample(m.character.id)).find(Boolean) || "";
-    const [musicLocal, musicCloud] = await Promise.all([buildMusicLocalMacro(), buildMusicCloudMacro()]);
+    const [musicLocal, musicCloud, nativeDevicePrompt] = await Promise.all([
+        buildMusicLocalMacro(),
+        buildMusicCloudMacro(),
+        options?.includeNativeDeviceContext === false ? Promise.resolve("") : getNativeDevicePromptContext(session.id),
+    ]);
     const activeMemberSchedules = members
         .map(m => ({ name: m.character.name, schedule: m.currentSchedule?.trim() || "" }))
         .filter(item => item.schedule && item.schedule !== "无");
@@ -489,6 +495,9 @@ async function buildGroupChatPromptMessages(
         offlineSummaryTag: preset?.story_summary_tag?.trim() || "summary",
         nativeToolHistory: usesNativeActions,
     });
+    if (nativeDevicePrompt) {
+        llmMessages.push({ role: "system", content: nativeDevicePrompt });
+    }
     if (promptProfile?.output === "plain_text") {
         llmMessages.push({
             role: "system",
@@ -773,6 +782,7 @@ export async function generateGroupChatCompletion(
         disableTools: options?.disableTools,
         promptProfile: options?.promptProfile,
         apiConfigId: options?.apiConfigId,
+        includeNativeDeviceContext: options?.includeNativeDeviceContext,
     });
     const chars = loadCharacters();
     const participantIds = session.participantIds || [];
@@ -1022,6 +1032,7 @@ export async function generateGroupRawCompletion(
             disableTools: true,
             promptProfile: options?.promptProfile,
             apiConfigId: options?.apiConfigId,
+            includeNativeDeviceContext: options?.includeNativeDeviceContext,
         },
     );
     const rawOutput = await sendLLMRequest(config, preset, llmMessages, regexes, {
@@ -1049,7 +1060,7 @@ export type GroupOfflineChatCompletionResult = ParsedOfflineResponse & {
 export async function generateGroupOfflineChatCompletion(
     session: ChatSession,
     history: ChatMessage[],
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; includeNativeDeviceContext?: boolean },
 ): Promise<GroupOfflineChatCompletionResult> {
     const { llmMessages, config, preset, regexes } = await buildGroupChatPromptMessages(
         session,
@@ -1058,6 +1069,7 @@ export async function generateGroupOfflineChatCompletion(
             appTags: ["group_chat", "offline"],
             excludeOfflineSessionId: session.id,
             disableTools: true,
+            includeNativeDeviceContext: options?.includeNativeDeviceContext,
         },
     );
     const summaryTag = preset?.story_summary_tag?.trim() || "summary";
@@ -1087,7 +1099,9 @@ export async function previewGroupPromptPayload(
     history: ChatMessage[],
 ): Promise<{ messages: LLMMessage[]; characterName: string; model: string; presetName: string }> {
     // Use the SAME shared builder as generateGroupChatCompletion
-    const { llmMessages, config, preset } = await buildGroupChatPromptMessages(session, history);
+    const { llmMessages, config, preset } = await buildGroupChatPromptMessages(session, history, {
+        includeNativeDeviceContext: false,
+    });
 
     const apiMessages = previewMessagesForApi(config, preset, llmMessages);
 
@@ -1104,7 +1118,10 @@ export async function previewGroupPromptRequestSnapshot(
     history: ChatMessage[],
     options?: GroupChatPromptBuildOptions,
 ): Promise<DebugPromptSnapshot> {
-    const { llmMessages, config, preset, memberNames, enabledTools, userName, appTags } = await buildGroupChatPromptMessages(session, history, options);
+    const { llmMessages, config, preset, memberNames, enabledTools, userName, appTags } = await buildGroupChatPromptMessages(session, history, {
+        ...options,
+        includeNativeDeviceContext: false,
+    });
     const requestMessages = toLlmRequestMessages(llmMessages);
     const meta = { characterName: `群聊:${session.groupName || "群聊"}`, userName };
 
