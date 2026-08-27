@@ -34,12 +34,23 @@ final class ViewController: UIViewController {
         config.mediaTypesRequiringUserActionForPlayback = []
 
         // 供网页侧做壳环境特征检测（对应 Android 的 window.AndroidShell），非必需但保留一致性。
+        // 同时挂上 window.NativeHaptics，网页可选调用来触发系统震动反馈（发消息、
+        // 收到回复、解锁角色卡等场景）；在非本壳环境里这个对象不存在，网页侧需要
+        // 自行判断 `window.NativeHaptics?.impact?.()` 再调用，不调用也完全不影响功能。
         let bootstrap = WKUserScript(
-            source: "window.IOSShell = { platform: 'ios', version: '\(Self.version)' };",
+            source: """
+            window.IOSShell = { platform: 'ios', version: '\(Self.version)' };
+            window.NativeHaptics = {
+              impact: function(style) { try { window.webkit.messageHandlers.haptics.postMessage({ type: 'impact', style: style || 'medium' }); } catch (e) {} },
+              notify: function(kind) { try { window.webkit.messageHandlers.haptics.postMessage({ type: 'notify', style: kind || 'success' }); } catch (e) {} },
+              selection: function() { try { window.webkit.messageHandlers.haptics.postMessage({ type: 'selection' }); } catch (e) {} },
+            };
+            """,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         )
         config.userContentController.addUserScript(bootstrap)
+        config.userContentController.add(self, name: "haptics")
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.translatesAutoresizingMaskIntoConstraints = false
@@ -229,5 +240,41 @@ extension ViewController: WKUIDelegate {
             webView.load(URLRequest(url: url))
         }
         return nil
+    }
+}
+
+// MARK: - 震动反馈：网页侧调用 window.NativeHaptics.* 触发系统触感反馈
+extension ViewController: WKScriptMessageHandler {
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "haptics", let body = message.body as? [String: Any] else { return }
+
+        switch body["type"] as? String {
+        case "impact":
+            let style: UIImpactFeedbackGenerator.FeedbackStyle
+            switch body["style"] as? String {
+            case "light": style = .light
+            case "heavy": style = .heavy
+            case "rigid": style = .rigid
+            case "soft": style = .soft
+            default: style = .medium
+            }
+            UIImpactFeedbackGenerator(style: style).impactOccurred()
+
+        case "notify":
+            let type: UINotificationFeedbackGenerator.FeedbackType
+            switch body["style"] as? String {
+            case "warning": type = .warning
+            case "error": type = .error
+            default: type = .success
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(type)
+
+        case "selection":
+            UISelectionFeedbackGenerator().selectionChanged()
+
+        default:
+            break
+        }
     }
 }

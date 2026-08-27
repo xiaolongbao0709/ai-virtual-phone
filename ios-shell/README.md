@@ -40,6 +40,24 @@
 | 离线推送 | 前台服务 + Supabase Realtime WebSocket 长连接（无需 GMS） | 走 Bark（第三方转发 App），见下方「已知限制」 |
 | 深色模式/安全区/横竖屏 | 系统默认支持 | 系统默认支持（`UIUserInterfaceStyle=Automatic`，WKWebView 自动适配安全区） |
 
+## 网页可选调用的原生桥
+
+壳启动时会往网页注入两个全局对象，网页侧**按需调用，不调用完全不影响功能**
+（这些对象只在本壳里存在，网页要用 `window.NativeHaptics?.impact?.()` 这种
+可选链写法做特征检测，别的环境下没有这个对象）：
+
+- `window.IOSShell = { platform: 'ios', version: '1.0.0' }`——环境识别，对应
+  Android 壳的 `window.AndroidShell`。
+- `window.NativeHaptics`——触发系统触感反馈（发消息、收到回复、解锁角色卡这类
+  时刻用震动增加"原生感"）：
+  - `NativeHaptics.impact('light' | 'medium' | 'heavy' | 'rigid' | 'soft')`
+  - `NativeHaptics.notify('success' | 'warning' | 'error')`
+  - `NativeHaptics.selection()`
+
+这两个对象只是**壳提供的能力**，网页代码目前还没有在任何地方调用
+`NativeHaptics`——要在具体交互（发送消息、收到回复等）上触发震动，需要另外
+改网页代码接上这个调用，属于后续的网页侧改动，不在这次壳工程改动范围内。
+
 ## 目录结构
 
 ```
