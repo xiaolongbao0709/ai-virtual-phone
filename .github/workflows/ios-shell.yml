@@ -1,0 +1,54 @@
+name: Build iOS Shell (unsigned)
+
+# 借 GitHub 提供的云端苹果电脑跑 Xcode，产出一个「未签名」的 FloatShell.app / .ipa。
+# 不涉及任何签名身份、证书或密钥——签名这一步留给你自己的重签名工具
+# （比如已经买好的「全能签」p12 证书 + 描述文件）在本地完成。
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios-shell]
+    paths: ["ios-shell/**", ".github/workflows/ios-shell.yml"]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build unsigned .app（跳过签名，只编译）
+        working-directory: ios-shell
+        run: |
+          xcodebuild build \
+            -project FloatShell.xcodeproj \
+            -scheme FloatShell \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ENABLE_BITCODE=NO
+
+      - name: 打包成 .ipa（Payload 目录直接压缩，不需要签名即可完成这一步）
+        working-directory: ios-shell
+        run: |
+          APP_PATH="build/Build/Products/Release-iphoneos/FloatShell.app"
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -r FloatShell-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload unsigned .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: FloatShell-unsigned-ipa
+          path: ios-shell/FloatShell-unsigned.ipa
+
+      - name: Upload raw .app（部分重签名工具直接吃 .app 而不是 .ipa，两个都留着）
+        uses: actions/upload-artifact@v4
+        with:
+          name: FloatShell-unsigned-app
+          path: ios-shell/build/Build/Products/Release-iphoneos/FloatShell.app

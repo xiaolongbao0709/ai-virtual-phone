@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 复制为 ExportOptions.plist 并按签名方式填写，用于 xcodebuild -exportArchive -->
+
+	<!-- method 可选: app-store-connect / ad-hoc / enterprise / development -->
+	<key>method</key>
+	<string>ad-hoc</string>
+
+	<!-- 替换成签名方自己的 Apple Developer Team ID -->
+	<key>teamID</key>
+	<string>REPLACE_WITH_TEAM_ID</string>
+
+	<key>signingStyle</key>
+	<string>automatic</string>
+
+	<key>compileBitcode</key>
+	<false/>
+
+	<key>stripSwiftSymbols</key>
+	<true/>
+</dict>
+</plist>

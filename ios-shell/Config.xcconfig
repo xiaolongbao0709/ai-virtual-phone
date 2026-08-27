@@ -1,0 +1,26 @@
+// Float 小手机 iOS 壳 · 签名方/构建者需要填写或确认的占位项
+// 用法：Xcode 打开 FloatShell.xcodeproj 后，Project 设置里已经引用了本文件
+// （或者在 Signing & Capabilities / Build Settings 里按下面的键手动核对）。
+//
+// 本文件不包含、也不应该包含任何 Supabase / 模型 API key 等真实密钥——
+// 这些密钥只在 Float 应用内部（网页端设置界面）配置，永远不写进壳工程。
+
+// ── 必填占位项 ──────────────────────────────────────────────
+// 第三方签名方自己的 Apple Developer Team ID（Apple Developer 后台 Membership 页可查）
+DEVELOPMENT_TEAM =
+
+// Bundle ID：默认建议值，如与已注册的 App ID 冲突请自行更换
+PRODUCT_BUNDLE_IDENTIFIER = com.mianmian.floatphone
+
+// 最低支持的 iOS 版本（用到了 WKDownload / requestMediaCapturePermission 等 iOS 15+ API）
+IPHONEOS_DEPLOYMENT_TARGET = 15.0
+
+// ── 一般不需要改的项 ─────────────────────────────────────────
+// 生产站点地址：这是公开域名，不是密钥，可以安全提交到仓库
+FLOAT_SITE_URL = https://mianmianfloat.duckdns.org
+
+MARKETING_VERSION = 1.0.0
+CURRENT_PROJECT_VERSION = 1
+CODE_SIGN_STYLE = Automatic
+TARGETED_DEVICE_FAMILY = 1,2
+SWIFT_VERSION = 5.0

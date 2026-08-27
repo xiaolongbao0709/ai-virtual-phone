@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Universal Links：让生产域名的普通 https 链接（比如 Bark 推送里带的跳转链接）
+	     点开后直接进这个 App，而不是丢给 Safari。生效还需要：
+	     1) 这里的域名要跟 Config.xcconfig 的 FLOAT_SITE_URL 对应；
+	     2) 网站根目录要能访问到 /.well-known/apple-app-site-association
+	        （见 public/.well-known/apple-app-site-association，里面的 TEAMID 占位符
+	        需要换成真实 Team ID 后重新部署网站才生效）。
+	     没有这两步配合，App 本身能正常签名安装，只是链接会退化成用 Safari 打开。 -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:mianmianfloat.duckdns.org</string>
+	</array>
+</dict>
+</plist>
