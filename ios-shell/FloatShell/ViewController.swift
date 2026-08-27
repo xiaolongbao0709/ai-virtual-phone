@@ -455,7 +455,7 @@ extension ViewController: CLLocationManagerDelegate {
             reply([
                 "latitude": location.coordinate.latitude,
                 "longitude": location.coordinate.longitude,
-                "placemark": name.isEmpty ? NSNull() : name,
+                "placemark": name.isEmpty ? (NSNull() as Any) : (name as Any),
             ], nil)
         }
     }
