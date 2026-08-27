@@ -87,6 +87,10 @@ private struct BreathingDot: View {
     }
 }
 
+/// 头像：网页传了角色头像就显示角色头像；没传（默认陪伴、或角色本身没设置
+/// 头像）就显示壳自带的像素小兔子占位形象（Assets.xcassets 里的
+/// DefaultCompanionAvatar，透明背景，去掉了生成时带的粉色底），并叠加一对
+/// 会眨眼的像素眼睛——真实头像不叠眼睛，眨眼是兔子占位形象专属的细节。
 private struct AvatarView: View {
     let base64: String?
 
@@ -98,10 +102,55 @@ private struct AvatarView: View {
                     .aspectRatio(contentMode: .fill)
                     .clipShape(Circle())
             } else {
-                Circle()
-                    .fill(Color.secondary.opacity(0.3))
+                DefaultBunnyAvatar()
             }
         }
+    }
+}
+
+private struct DefaultBunnyAvatar: View {
+    var body: some View {
+        Image("DefaultCompanionAvatar")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .overlay(BlinkingEyesOverlay())
+    }
+}
+
+/// 兔子脸上的两只眼睛：位置按兔子素材图的相对比例摆放（左眼水平 39%、右眼
+/// 56%，垂直 57%，眼睛本身宽高各占 7%），跟 y 轴缩放做"眨眼"——图片素材
+/// 本身是没有眼睛的空白脸，眼睛完全是代码画的两个小方块，这样才能单独
+/// 动它们而不用做多帧图片切换（多帧切图在 Live Activity 里不可靠，见
+/// BreathingDot 的注释）。眨眼节奏用跟呼吸光点一样的
+/// `repeatForever(autoreverses:)` 连续动画，不是"偶尔眨一下、大部分时间
+/// 睁眼"的自然节奏——那种需要一个持续跑的计时器来触发，Live Activity 的
+/// Widget Extension 进程不保证一直存活，计时器不可靠，所以退而求其次用
+/// 连续匀速的眨眼动画，这是跟连续呼吸动画同一套原理的取舍。
+private struct BlinkingEyesOverlay: View {
+    @State private var eyeScale: CGFloat = 1.0
+
+    var body: some View {
+        GeometryReader { geo in
+            let eyeSize = geo.size.width * 0.07
+            ZStack {
+                eye(size: eyeSize)
+                    .position(x: geo.size.width * 0.39, y: geo.size.height * 0.57)
+                eye(size: eyeSize)
+                    .position(x: geo.size.width * 0.56, y: geo.size.height * 0.57)
+            }
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
+                eyeScale = 0.12
+            }
+        }
+    }
+
+    private func eye(size: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 1)
+            .fill(Color(red: 0.16, green: 0.14, blue: 0.13))
+            .frame(width: size, height: size)
+            .scaleEffect(y: eyeScale)
     }
 }
 

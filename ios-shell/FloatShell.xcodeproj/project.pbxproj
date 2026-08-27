@@ -16,6 +16,7 @@
 		FB0000FB0000FB0000000004 /* FloatCompanionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000002 /* FloatCompanionAttributes.swift */; };
 		FB0000FB0000FB0000000012 /* FloatShellWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000011 /* FloatShellWidgetBundle.swift */; };
 		FB0000FB0000FB0000000014 /* FloatCompanionLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000013 /* FloatCompanionLiveActivity.swift */; };
+		FB0000FB0000FB0000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000016 /* Assets.xcassets */; };
 		FB0000FB0000FB0000000023 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000021 /* WidgetKit.framework */; };
 		FB0000FB0000FB0000000024 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000022 /* SwiftUI.framework */; };
 		FB0000FB0000FB0000000052 /* FloatShellWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FB0000FB0000FB0000000030 /* FloatShellWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -59,6 +60,7 @@
 		FB0000FB0000FB0000000011 /* FloatShellWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatShellWidgetBundle.swift; sourceTree = "<group>"; };
 		FB0000FB0000FB0000000013 /* FloatCompanionLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatCompanionLiveActivity.swift; sourceTree = "<group>"; };
 		FB0000FB0000FB0000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		FB0000FB0000FB0000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		FB0000FB0000FB0000000021 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		FB0000FB0000FB0000000022 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		FB0000FB0000FB0000000030 /* FloatShellWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FloatShellWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -132,6 +134,7 @@
 			children = (
 				FB0000FB0000FB0000000011 /* FloatShellWidgetBundle.swift */,
 				FB0000FB0000FB0000000013 /* FloatCompanionLiveActivity.swift */,
+				FB0000FB0000FB0000000016 /* Assets.xcassets */,
 				FB0000FB0000FB0000000015 /* Info.plist */,
 			);
 			path = FloatShellWidget;
@@ -235,6 +238,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FB0000FB0000FB0000000017 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
