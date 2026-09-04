@@ -1321,7 +1321,7 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
                                 {panels.length ? (
                                     <>
                                         <button type="button" className="mix-dock-chip" data-on={panelsHidden ? "true" : undefined} onClick={() => setPanelsHidden((v) => !v)}>
-                                            {panelsHidden ? "显示机括界面" : "暂时收起机括界面"}
+                                            {panelsHidden ? "显示机括界面" : "收起机括界面"}
                                         </button>
                                         <button type="button" className="mix-dock-chip" onClick={() => { resetPanelBoxes(); onToast("机括界面已归位。"); }}>
                                             界面归位
