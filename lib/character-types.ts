@@ -18,6 +18,10 @@ export type Character = {
   canvasRot?: number;
   canvasZIndex?: number;
   polaroidStyle?: number; // 用户选择的拍立得样式索引
+  polaroidSize?: "random" | "small" | "medium" | "large";
+  polaroidImageX?: number;
+  polaroidImageY?: number;
+  polaroidImageZoom?: number;
 };
 
 export type CanvasBgItem = {

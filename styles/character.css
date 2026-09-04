@@ -369,6 +369,105 @@
   display: block;
 }
 
+.char-wall-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 6px;
+  align-items: stretch;
+  padding: 4px 6px 6px;
+  border-bottom: 1px dashed var(--c-panel-border);
+}
+
+.char-wall-settings-options {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 8px;
+}
+
+.char-wall-settings-label {
+  margin-bottom: 4px;
+  color: var(--c-text);
+  font-family: inherit;
+  font-size: calc(8.1px * var(--app-text-scale, 1));
+  font-weight: 600;
+  text-transform: uppercase;
+  opacity: 0.68;
+}
+
+.char-wall-settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.char-wall-option {
+  min-width: 32px;
+  padding: 4px 5px;
+  border: 1px solid var(--c-input-border);
+  border-radius: 3px;
+  background: var(--c-input);
+  color: var(--c-text);
+  cursor: pointer;
+  font-size: calc(8px * var(--app-text-scale, 1));
+  line-height: 1.1;
+}
+
+.char-wall-option.is-active {
+  border-color: var(--c-text);
+  background: var(--c-text);
+  color: var(--c-page-body-bg);
+}
+
+.char-wall-preview {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: auto;
+  align-self: center;
+  justify-self: start;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid var(--c-panel-border);
+  background: var(--c-input);
+  cursor: grab;
+  touch-action: none;
+}
+
+.char-wall-preview.ratio-landscape {
+  width: 108px;
+}
+
+.char-wall-preview.ratio-16-9 {
+  width: 132px;
+}
+
+.char-wall-preview:active {
+  cursor: grabbing;
+}
+
+.char-wall-preview img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: auto;
+  height: auto;
+  min-width: 100%;
+  min-height: 100%;
+  max-width: none;
+  max-height: none;
+  display: block;
+  transform-origin: center;
+  user-select: none;
+  pointer-events: none;
+}
+
+.char-wall-preview.ratio-square { aspect-ratio: 1 / 1; }
+.char-wall-preview.ratio-portrait { aspect-ratio: 3 / 4; }
+.char-wall-preview.ratio-landscape { aspect-ratio: 4 / 3; }
+.char-wall-preview.ratio-16-9 { aspect-ratio: 16 / 9; }
+.char-wall-preview.ratio-9-16 { aspect-ratio: 9 / 16; }
+
 .char-polaroid-text {
   position: absolute;
   bottom: 8px;

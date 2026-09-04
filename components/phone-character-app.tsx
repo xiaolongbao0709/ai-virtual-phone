@@ -74,6 +74,40 @@ const CHARACTER_AVATAR_COMPRESSION_FALLBACKS = [
   { maxSize: 400, quality: 0.6 },
   { maxSize: 320, quality: 0.56 },
 ] as const;
+
+const POLAROID_RATIOS = [
+  { label: "1:1", className: "ratio-square" },
+  { label: "3:4", className: "ratio-portrait" },
+  { label: "4:3", className: "ratio-landscape" },
+  { label: "16:9", className: "ratio-16-9" },
+  { label: "9:16", className: "ratio-9-16" },
+] as const;
+
+const POLAROID_SIZE_WIDTHS = { small: 110, medium: 130, large: 150 } as const;
+
+function clampCharacterImageValue(value: number, min: number, max: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+
+function getCharacterImagePositionLimit(
+  zoom: number,
+  naturalWidth: number,
+  naturalHeight: number,
+  previewWidth: number,
+  previewHeight: number,
+): { x: number; y: number } {
+  if (!naturalWidth || !naturalHeight || !previewWidth || !previewHeight) {
+    return { x: 0, y: 0 };
+  }
+  const coverScale = Math.max(previewWidth / naturalWidth, previewHeight / naturalHeight) * zoom;
+  const renderedWidth = naturalWidth * coverScale;
+  const renderedHeight = naturalHeight * coverScale;
+  return {
+    x: Math.max(0, ((renderedWidth - previewWidth) / 2 / previewWidth) * 100),
+    y: Math.max(0, ((renderedHeight - previewHeight) / 2 / previewHeight) * 100),
+  };
+}
+
 function worldPanKey(worldId: string): string {
   return worldId === DEFAULT_CHARACTER_WORLD_ID ? PAN_STORAGE_BASE_KEY : `${PAN_STORAGE_BASE_KEY}_${worldId}`;
 }
@@ -1159,10 +1193,11 @@ function CharListView({
               const hash = char.id.charCodeAt(0) + idx * 17;
               const styleIdx = char.polaroidStyle ?? (hash % 5);
 
-              const sizeMod = (hash % 5);
-              const w = 110 + sizeMod * 10;
-              const ratioClassArray = ["ratio-square", "ratio-portrait", "ratio-landscape", "ratio-16-9", "ratio-9-16"];
-              const ratioClass = ratioClassArray[styleIdx % ratioClassArray.length];
+              const sizeMode = char.polaroidSize ?? "random";
+              const w = sizeMode === "random"
+                ? 110 + (hash % 5) * 10
+                : POLAROID_SIZE_WIDTHS[sizeMode];
+              const ratioClass = POLAROID_RATIOS[styleIdx % POLAROID_RATIOS.length].className;
 
               const tapeStyles = ["char-polaroid-tape-white", "char-polaroid-tape-red", "char-polaroid-tape-black"];
               const tapeMod = char.polaroidStyle !== undefined ? styleIdx % tapeStyles.length : hash % 3;
@@ -1196,7 +1231,16 @@ function CharListView({
                     </div>
                   )}
                   <div className="char-polaroid-img-wrapper" style={{ boxShadow: "inset 0 0 10px rgba(0,0,0,0.1)" }}>
-                    {char.avatar ? <img src={char.avatar} alt={char.name} className="char-polaroid-img" draggable={false} /> : <CharAvatarFallback name={char.name} size="100%" />}
+                    {char.avatar ? <img
+                      src={char.avatar}
+                      alt={char.name}
+                      className="char-polaroid-img"
+                      draggable={false}
+                      style={{
+                        objectPosition: `${100 - (char.polaroidImageX ?? 50)}% ${100 - (char.polaroidImageY ?? 50)}%`,
+                        transform: `scale(${char.polaroidImageZoom ?? 1})`,
+                      }}
+                    /> : <CharAvatarFallback name={char.name} size="100%" />}
                     <button
                       className="char-polaroid-menu-btn absolute top-1 right-1 w-6 h-6 bg-black/20 text-white rounded-full flex items-center justify-center cursor-pointer hover:bg-black/40 transition-colors z-10"
                       onClick={(e) => { e.stopPropagation(); setActiveMoveChar(char); }}
@@ -1657,6 +1701,9 @@ function DraggableNode({
   const dragStart = useRef({ cx: 0, cy: 0, startX: 0, startY: 0, moved: false });
 
   useEffect(() => { setPos({ x, y }); }, [x, y]);
+  useEffect(() => {
+    dragStart.current.moved = false;
+  }, [isEditing]);
 
   function handlePointerDown(e: React.PointerEvent) {
     if (pinchRef?.current) return;
@@ -1838,10 +1885,43 @@ function CharArchiveView({
   const [showTimeZonePicker, setShowTimeZonePicker] = useState(false);
   const [timeZoneSearch, setTimeZoneSearch] = useState(char.timeZone || "");
   const [avatar, setAvatar] = useState<string | null>(char.avatar || null);
+  const [polaroidStyle, setPolaroidStyle] = useState(char.polaroidStyle ?? 0);
+  const [polaroidSize, setPolaroidSize] = useState<Character["polaroidSize"]>(char.polaroidSize ?? "random");
+  const [polaroidImageX, setPolaroidImageX] = useState(char.polaroidImageX ?? 50);
+  const [polaroidImageY, setPolaroidImageY] = useState(char.polaroidImageY ?? 50);
+  const [polaroidImageZoom, setPolaroidImageZoom] = useState(char.polaroidImageZoom ?? 1);
+  const previewPointers = useRef(new Map<number, { x: number; y: number }>());
+  const previewGesture = useRef<{ distance: number; zoom: number } | null>(null);
+  const previewImageState = useRef({ x: polaroidImageX, y: polaroidImageY, zoom: polaroidImageZoom });
+  const previewRef = useRef<HTMLDivElement>(null);
+  const previewImageRef = useRef<HTMLImageElement>(null);
+  const [previewBoxSize, setPreviewBoxSize] = useState({ width: 0, height: 0 });
+  const [previewImageNaturalSize, setPreviewImageNaturalSize] = useState({ width: 0, height: 0 });
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useLayoutEffect(() => {
+    const element = previewRef.current;
+    if (!element) return;
+    const updateSize = () => {
+      const rect = element.getBoundingClientRect();
+      setPreviewBoxSize({ width: rect.width, height: rect.height });
+    };
+    updateSize();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateSize) : null;
+    observer?.observe(element);
+    return () => observer?.disconnect();
+  }, [polaroidStyle]);
+
+  useLayoutEffect(() => {
+    setPreviewImageNaturalSize({ width: 0, height: 0 });
+    const image = previewImageRef.current;
+    if (avatar && image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+      setPreviewImageNaturalSize({ width: image.naturalWidth, height: image.naturalHeight });
+    }
+  }, [isEditing, avatar, polaroidStyle]);
 
   // Send mascot page context (on mount + field changes)
   useEffect(() => {
@@ -1891,6 +1971,11 @@ function CharArchiveView({
     if (briefPersona !== (char.briefPersona || "")) return true;
     if (timeZone !== (char.timeZone || "")) return true;
     if (avatar !== (char.avatar || null)) return true;
+    if (polaroidStyle !== (char.polaroidStyle ?? 0)) return true;
+    if (polaroidSize !== (char.polaroidSize ?? "random")) return true;
+    if (polaroidImageX !== (char.polaroidImageX ?? 50)) return true;
+    if (polaroidImageY !== (char.polaroidImageY ?? 50)) return true;
+    if (polaroidImageZoom !== (char.polaroidImageZoom ?? 1)) return true;
     const origTags = char.tags || [];
     if (tags.length !== origTags.length || tags.some((t, i) => t !== origTags[i])) return true;
     return false;
@@ -1916,6 +2001,16 @@ function CharArchiveView({
       setShowTimeZonePicker(false);
       setTags(char.tags || []);
       setAvatar(char.avatar || null);
+      setPolaroidStyle(char.polaroidStyle ?? 0);
+      setPolaroidSize(char.polaroidSize ?? "random");
+      setPolaroidImageX(char.polaroidImageX ?? 50);
+      setPolaroidImageY(char.polaroidImageY ?? 50);
+      setPolaroidImageZoom(char.polaroidImageZoom ?? 1);
+      previewImageState.current = {
+        x: char.polaroidImageX ?? 50,
+        y: char.polaroidImageY ?? 50,
+        zoom: char.polaroidImageZoom ?? 1,
+      };
     }
   }, [isEditing, char]);
 
@@ -1970,7 +2065,12 @@ function CharArchiveView({
           : undefined,
         timeZone: normalizedTimeZone,
         tags,
-        avatar: avatar ?? null
+        avatar: avatar ?? null,
+        polaroidStyle,
+        polaroidSize,
+        polaroidImageX: clampCharacterImageValue(polaroidImageX, 0, 100, 50),
+        polaroidImageY: clampCharacterImageValue(polaroidImageY, 0, 100, 50),
+        polaroidImageZoom: clampCharacterImageValue(polaroidImageZoom, 1, 3, 1),
       }, createVersion);
     }
   }
@@ -2048,6 +2148,81 @@ function CharArchiveView({
     setTimeZoneSearch("");
     setShowTimeZonePicker(false);
   }
+
+  function handlePreviewPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    previewPointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (previewPointers.current.size === 2) {
+      const [first, second] = Array.from(previewPointers.current.values());
+      previewGesture.current = {
+        distance: Math.hypot(second.x - first.x, second.y - first.y),
+        zoom: previewImageState.current.zoom,
+      };
+    }
+  }
+
+  function handlePreviewPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!previewPointers.current.has(e.pointerId)) return;
+    e.preventDefault();
+    const previous = previewPointers.current.get(e.pointerId);
+    previewPointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const points = Array.from(previewPointers.current.values());
+    if (points.length >= 2 && previewGesture.current) {
+      const distance = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+      if (previewGesture.current.distance > 0) {
+        const zoom = clampCharacterImageValue(
+          previewGesture.current.zoom * distance / previewGesture.current.distance,
+          1,
+          3,
+          1,
+        );
+        previewImageState.current.zoom = zoom;
+        setPolaroidImageZoom(zoom);
+      }
+      return;
+    }
+    if (points.length === 1 && previous) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const dx = e.clientX - previous.x;
+      const dy = e.clientY - previous.y;
+      const previewRect = previewRef.current?.getBoundingClientRect();
+      const limit = getCharacterImagePositionLimit(
+        previewImageState.current.zoom,
+        previewImageNaturalSize.width,
+        previewImageNaturalSize.height,
+        previewRect?.width || 0,
+        previewRect?.height || 0,
+      );
+      const x = clampCharacterImageValue(previewImageState.current.x + (dx / rect.width) * 100, 50 - limit.x, 50 + limit.x, 50);
+      const y = clampCharacterImageValue(previewImageState.current.y + (dy / rect.height) * 100, 50 - limit.y, 50 + limit.y, 50);
+      previewImageState.current.x = x;
+      previewImageState.current.y = y;
+      setPolaroidImageX(x);
+      setPolaroidImageY(y);
+    }
+  }
+
+  function handlePreviewWheel(e: React.WheelEvent<HTMLDivElement>) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const zoom = clampCharacterImageValue(previewImageState.current.zoom - e.deltaY * 0.005, 1, 3, 1);
+    previewImageState.current.zoom = zoom;
+    setPolaroidImageZoom(zoom);
+  }
+
+  function handlePreviewPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    previewPointers.current.delete(e.pointerId);
+    previewGesture.current = null;
+  }
+
+  const previewCoverScale = previewImageNaturalSize.width && previewImageNaturalSize.height && previewBoxSize.width && previewBoxSize.height
+    ? Math.max(previewBoxSize.width / previewImageNaturalSize.width, previewBoxSize.height / previewImageNaturalSize.height) * polaroidImageZoom
+    : 0;
+  const previewRenderedWidth = previewImageNaturalSize.width * previewCoverScale;
+  const previewRenderedHeight = previewImageNaturalSize.height * previewCoverScale;
+  const previewTranslateX = (polaroidImageX - 50) / 100 * (previewRenderedWidth - previewBoxSize.width);
+  const previewTranslateY = (polaroidImageY - 50) / 100 * (previewRenderedHeight - previewBoxSize.height);
 
   const archiveFrame = (
       <div className="char-archive-frame">
@@ -2216,6 +2391,84 @@ function CharArchiveView({
             )}
           </div>
         </div>
+
+        {isEditing && (
+          <div className="char-wall-settings">
+            <div className="char-wall-settings-options">
+              <div>
+                <div className="char-wall-settings-label">PHOTO WALL RATIO</div>
+                <div className="char-wall-settings-row">
+                  {POLAROID_RATIOS.map((ratio, index) => (
+                    <button
+                      key={ratio.label}
+                      type="button"
+                      className={`char-wall-option ${polaroidStyle === index ? "is-active" : ""}`}
+                      onClick={() => setPolaroidStyle(index)}
+                    >
+                      {ratio.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="char-wall-settings-label">CARD SIZE</div>
+                <div className="char-wall-settings-row">
+                  {([
+                    ["random", "随机"],
+                    ["small", "小"],
+                    ["medium", "中"],
+                    ["large", "大"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`char-wall-option ${polaroidSize === value ? "is-active" : ""}`}
+                      onClick={() => setPolaroidSize(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div
+              ref={previewRef}
+              className={`char-wall-preview ${POLAROID_RATIOS[polaroidStyle % POLAROID_RATIOS.length].className}`}
+              onPointerDown={handlePreviewPointerDown}
+              onPointerMove={handlePreviewPointerMove}
+              onPointerUp={handlePreviewPointerUp}
+              onPointerCancel={handlePreviewPointerUp}
+              onWheel={handlePreviewWheel}
+              aria-label="照片墙头像取景预览，可拖动或双指缩放"
+            >
+              {avatar ? (
+                <img
+                  ref={previewImageRef}
+                  key={`${char.id}-${avatar}-${polaroidStyle}`}
+                  src={avatar}
+                  alt="照片墙头像预览"
+                  draggable={false}
+                  onLoad={(event) => {
+                    setPreviewImageNaturalSize({
+                      width: event.currentTarget.naturalWidth,
+                      height: event.currentTarget.naturalHeight,
+                    });
+                  }}
+                  style={{
+                    position: "static",
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    objectPosition: `${100 - polaroidImageX}% ${100 - polaroidImageY}%`,
+                    transform: `scale(${polaroidImageZoom})`,
+                  }}
+                />
+              ) : (
+                <CharAvatarFallback name={name || char.name} size="100%" />
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Persona Section (Full Width) */}
         <div className="char-archive-text-section border-b-0">
@@ -2458,7 +2711,10 @@ function CharArchiveView({
                           type="button"
                           className="flex-1 rounded-lg bg-[var(--c-text)] px-3 py-2 ts-12 font-semibold text-[var(--c-page-body-bg)] disabled:opacity-40"
                           disabled={getCharacterCurrentVersion(char.id) === version.version}
-                          onClick={() => setRestoreTarget(version)}
+                          onClick={() => {
+                            setShowVersions(false);
+                            setRestoreTarget(version);
+                          }}
                         >
                           切换到 V{version.version}
                         </button>
