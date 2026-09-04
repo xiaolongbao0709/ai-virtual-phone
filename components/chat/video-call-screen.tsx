@@ -45,6 +45,12 @@ type VideoCallScreenProps = {
     onEnd: () => void;
     onConnect?: () => void;
     initiator?: "user" | "character";
+    /** 通话是否处于缩小的悬浮窗状态：暂停麦克风监听/计时/语音播放，仅显示背景+名字 */
+    minimized?: boolean;
+    /** 点击左上角返回键：请求缩小为悬浮窗（通话逻辑冻结，不挂断） */
+    onMinimize?: () => void;
+    /** 点击悬浮窗：请求恢复为全屏通话界面 */
+    onRestore?: () => void;
 };
 
 function stripBilingualForSpeech(text: string): string {
@@ -56,7 +62,7 @@ function stripBilingualForSpeech(text: string): string {
 
 // ── Component ───────────────────────────────────────
 
-export function VideoCallScreen({ session, character, onEnd, onConnect, initiator = "user" }: VideoCallScreenProps) {
+export function VideoCallScreen({ session, character, onEnd, onConnect, initiator = "user", minimized = false, onMinimize, onRestore }: VideoCallScreenProps) {
     // 同 voice-call-screen：iOS 保留 Web Speech 免提 + Web Audio 播放；
     // 其余设备改按住说话 + 云端转写，播放走媒体元素。没配识别时回落旧行为。
     const iosDeviceRef = useRef(isIOSDevice());
@@ -90,6 +96,8 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const timerRef = useRef<NodeJS.Timeout | null>(null);
     const subtitlesScrollRef = useRef<HTMLDivElement | null>(null);
     const callStartRef = useRef<number>(0);
+    const pausedAtRef = useRef<number | null>(null);
+    const minimizedRef = useRef(false);
     const stateRef = useRef<string>("CONNECTING");
     const interimTextRef = useRef<string>("");
     const sttWarningShownRef = useRef(false);
@@ -103,6 +111,16 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const userAvatarRef = useRef<string | null>(_initUi?.avatarUrl || null);
 
     useEffect(() => { stateRef.current = callState; }, [callState]);
+    useEffect(() => { minimizedRef.current = minimized; }, [minimized]);
+
+    // 缩小为悬浮窗：冻结通话——停止监听、打断在播放的语音（摄像头继续保留，方便恢复时不用重新申请权限）
+    useEffect(() => {
+        if (!minimized) return;
+        if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
+        setInterimText("");
+        if (audioAbortRef.current) { audioAbortRef.current(); audioAbortRef.current = null; }
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+    }, [minimized]);
 
     // 来电等待接听：循环振动（开关在聊天主页，iOS 网页不支持自动无效果）
     useEffect(() => {
@@ -269,12 +287,24 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         if (callState === "CONNECTING" || callState === "ENDED") return;
         if (!callStartRef.current) callStartRef.current = Date.now();
 
+        // 缩小为悬浮窗：冻结计时显示，不再推进
+        if (minimized) {
+            if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+            if (pausedAtRef.current === null) pausedAtRef.current = Date.now();
+            return;
+        }
+        // 从悬浮窗恢复：把冻结期间流逝的时间补回起点，避免时长跳变
+        if (pausedAtRef.current !== null) {
+            callStartRef.current += Date.now() - pausedAtRef.current;
+            pausedAtRef.current = null;
+        }
+
         timerRef.current = setInterval(() => {
             setCallDuration(Math.floor((Date.now() - callStartRef.current) / 1000));
         }, 1000);
 
         return () => { if (timerRef.current) clearInterval(timerRef.current); };
-    }, [callState]);
+    }, [callState, minimized]);
 
     // ── Connecting animation ─────────────────────────
 
@@ -415,6 +445,13 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
             if (!displayText) { setCallState("IDLE"); return; }
 
             setSubtitles(prev => [...prev, { id: `ai-${Date.now()}`, role: "assistant", text: displayText }]);
+
+            // 缩小为悬浮窗期间收到的回复：只静默记录文字，不播放语音
+            if (minimizedRef.current) {
+                setCallState("IDLE");
+                return;
+            }
+
             setCallState("AI_SPEAKING");
 
             const voiceConfig = resolveVoiceConfig(session.contactId);
@@ -498,12 +535,12 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
             sttRef.current = null;
             setInterimText("");
         }
-        if (!androidTextInputOnly && inputMode === "voice" && callState === "IDLE" && !isMuted) {
-            const timer = setTimeout(() => { if (stateRef.current === "IDLE") startListening(); }, 500);
+        if (!androidTextInputOnly && inputMode === "voice" && callState === "IDLE" && !isMuted && !minimized) {
+            const timer = setTimeout(() => { if (stateRef.current === "IDLE" && !minimizedRef.current) startListening(); }, 500);
             return () => clearTimeout(timer);
         }
         if (isMuted && sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
-    }, [androidTextInputOnly, holdToTalk, callState, isMuted, inputMode, startListening]);
+    }, [androidTextInputOnly, holdToTalk, callState, isMuted, inputMode, minimized, startListening]);
 
     const handleInputModeToggle = useCallback(() => {
         if (androidTextInputOnly) {
@@ -530,6 +567,13 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         setTypedText("");
         runConversationTurn(text);
     }, [typedText, callState, runConversationTurn]);
+
+    // 输入框左侧的"重回"键：不发送新内容，直接让对方基于当前上下文重新回复一次
+    const handleRegenerate = useCallback(() => {
+        if (callState !== "IDLE") return;
+        if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
+        runConversationTurn();
+    }, [callState, runConversationTurn]);
 
     // 按住说话（非 iOS）：按下录音，松开转写后走对话轮
     const holdInput = useHoldToTalk({
@@ -582,9 +626,39 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
 
     // ── Render ──────────────────────────────────────
 
+    if (minimized) {
+        return (
+            <button
+                type="button"
+                className="call-mini-window"
+                style={{ backgroundImage: `url(${bgImageResolved || character.avatar || ""})` }}
+                onClick={onRestore}
+                aria-label={`返回与${character.name}的视频通话`}
+                title="点击返回通话"
+            >
+                <span className="call-mini-window-overlay" />
+                <span className="call-mini-window-name">{character.name}</span>
+            </button>
+        );
+    }
+
     return (
         <div className="absolute inset-0 z-[100] flex flex-col bg-black text-white overflow-hidden call-keyboard-shift" style={keyboardOffsetStyle}>
             <CallVolumeControl />
+
+            {onMinimize && callState !== "ENDED" && (
+                <button
+                    type="button"
+                    className="call-back-btn"
+                    onClick={onMinimize}
+                    aria-label="缩小通话"
+                    title="缩小通话"
+                >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M15 18l-6-6 6-6" />
+                    </svg>
+                </button>
+            )}
             {/* Full-screen blurred background (character avatar) */}
             <div
                 className="videocall-bg-blur"
@@ -713,12 +787,26 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
 
             {inputMode === "text" && callState !== "CONNECTING" && callState !== "ENDED" && (
                 <form
-                    className={`call-text-input-panel videocall-text-input-panel${androidTextInputOnly ? " videocall-text-input-panel-android" : ""}`}
+                    className={`call-text-input-panel videocall-text-input-panel call-text-input-row${androidTextInputOnly ? " videocall-text-input-panel-android" : ""}`}
                     onSubmit={(e) => {
                         e.preventDefault();
                         handleTextSubmit();
                     }}
                 >
+                    <button
+                        type="button"
+                        onClick={handleRegenerate}
+                        className="call-regenerate-btn"
+                        disabled={callState !== "IDLE"}
+                        aria-label="让对方重新回复"
+                        title="让对方重新回复"
+                    >
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M23 4v6h-6" />
+                            <path d="M1 20v-6h6" />
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                        </svg>
+                    </button>
                     <div className="call-text-input-shell">
                         <input
                             value={typedText}

@@ -5095,6 +5095,105 @@
   flex-shrink: 0;
 }
 
+.call-text-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.call-text-input-row .call-text-input-shell {
+  flex: 1;
+  width: auto;
+}
+
+.call-regenerate-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(20, 20, 24, 0.34);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.call-regenerate-btn:disabled {
+  opacity: 0.36;
+  cursor: default;
+}
+
+/* ── 左上角返回键（缩小通话为悬浮窗） ── */
+.call-back-btn {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  left: 14px;
+  z-index: 20;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.call-back-btn:active {
+  background: rgba(0, 0, 0, 0.42);
+}
+
+/* ── 缩小后的悬浮通话窗口（左侧，仅背景+名字） ── */
+.call-mini-window {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 90;
+  width: 84px;
+  height: 112px;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 14px;
+  overflow: hidden;
+  background-color: #1a1a2e;
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: flex-end;
+  cursor: pointer;
+}
+.call-mini-window-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0) 55%);
+}
+.call-mini-window-name {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  padding: 6px 6px;
+  color: #fff;
+  font-size: calc(11.7px * var(--app-text-scale, 1));
+  font-weight: 600;
+  text-align: center;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .call-keyboard-shift {
   transform: translateY(calc(var(--call-keyboard-offset, 0px) * -1));
   transition: transform 180ms ease;
@@ -6327,10 +6426,12 @@
    .chat-msg-wrapper[data-consecutive] > .flex-col.items-center.shrink-0 { opacity: 0; pointer-events: none; }
 */
 
-/* ── In-call volume control (top-right, self-positioned, glass) ── */
+/* ── In-call volume control (top-left, self-positioned, glass) ──
+   往下让出一截给左上角的缩小/返回键（.call-back-btn 占了同样的左上角位），
+   避免两者在通话界面里重叠。 */
 .call-volume {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  top: calc(max(14px, env(safe-area-inset-top, 0px)) + 46px);
   left: 12px;
   z-index: 40;
   display: flex;

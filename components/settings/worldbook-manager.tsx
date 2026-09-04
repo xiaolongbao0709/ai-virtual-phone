@@ -253,7 +253,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                 <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-[20px] border border-black/10 bg-white px-4 text-xs font-bold text-gray-800 shadow-sm transition-all hover:bg-gray-50 hover:shadow-md active:scale-95 focus:outline-none"
+                    className="wb-btn wb-btn-outline inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap px-4 text-xs font-bold shadow-sm transition-all hover:shadow-md active:scale-95 focus:outline-none"
                 >
                     <Upload size={15} strokeWidth={1.8} />
                     <span>导入世界书</span>
@@ -261,7 +261,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                 <button
                     type="button"
                     onClick={addBook}
-                    className="inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-[20px] bg-black px-4 text-xs font-bold text-white shadow-sm transition-all hover:bg-gray-800 hover:shadow-md active:scale-95 focus:outline-none"
+                    className="wb-btn wb-btn-primary inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap px-4 text-xs font-bold shadow-sm transition-all hover:shadow-md active:scale-95 focus:outline-none"
                 >
                     <Plus size={15} strokeWidth={1.8} />
                     <span>新建世界书</span>
@@ -471,13 +471,13 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
     if (!isLoaded) return null;
 
     return (
-        <div ref={wbContainerRef} className="flex flex-col gap-5 h-full">
+        <div ref={wbContainerRef} className="worldbook-shell flex flex-col gap-5 h-full">
             <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={handleImport} />
             <input type="file" accept=".json" className="hidden" ref={entryFileInputRef} onChange={handleEntryImportFile} />
             {viewMode === "list" ? (
                 <>
                     <div className="flex items-center">
-                        <h2 className="m-0 mx-2 ts-28 font-bold italic leading-none text-black">Worldbooks</h2>
+                        <h2 className="wb-heading m-0 mx-2 ts-28 leading-none">Worldbooks</h2>
                     </div>
 
                     {books.length === 0 ? (
@@ -498,7 +498,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                             {books.map(book => (
                                 <div
                                     key={book.id}
-                                    className="ui-config-card min-w-0 cursor-pointer"
+                                    className="ui-config-card wb-book-card min-w-0 cursor-pointer"
                                     style={{ aspectRatio: "3 / 2", padding: "12px", justifyContent: "space-between" }}
                                     role="button"
                                     tabIndex={0}
@@ -516,7 +516,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                     <div className="min-w-0 flex flex-col gap-1.5">
                                         <div className="min-w-0 flex items-center gap-[6px]">
                                             <BookOpen size={16} className="shrink-0" />
-                                            <span className="truncate text-[calc(14.4px*var(--app-text-scale,1))] font-bold leading-tight text-[var(--c-text-title)]">{book.name}</span>
+                                            <span className="wb-book-title truncate text-[calc(14.4px*var(--app-text-scale,1))] font-bold leading-tight">{book.name}</span>
                                         </div>
                                         <span className="menu-desc truncate">{book.description || `${book.entries?.length || 0} 个条目`}</span>
                                     </div>
@@ -538,7 +538,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                 <button
                                     type="button"
                                     onClick={() => handleExport(activeBook)}
-                                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[20px] bg-black px-4 text-xs font-bold text-white shadow-sm transition-all hover:bg-gray-800 hover:shadow-md active:scale-95"
+                                    className="wb-btn wb-btn-primary inline-flex h-10 items-center justify-center gap-1.5 px-4 text-xs font-bold shadow-sm transition-all hover:shadow-md active:scale-95"
                                 >
                                     <Download size={15} strokeWidth={1.8} />
                                     <span>导出世界书</span>
@@ -546,15 +546,15 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                 <button
                                     type="button"
                                     onClick={() => setConfirmDeleteTarget({ type: 'book', id: activeBook.id })}
-                                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[20px] border border-black/10 bg-white px-4 text-xs font-bold text-[var(--c-danger)] shadow-sm transition-all hover:bg-gray-50 hover:shadow-md active:scale-95"
+                                    className="wb-btn wb-btn-danger inline-flex h-10 items-center justify-center gap-1.5 px-4 text-xs font-bold shadow-sm transition-all hover:shadow-md active:scale-95"
                                 >
                                     <Trash2 size={15} strokeWidth={1.8} />
                                     <span>删除世界书</span>
                                 </button>
                             </div>
 
-                            <h2 className="mx-2 mb-0 mt-2 ts-20 font-bold leading-none text-black">Worldbook Info</h2>
-                            <div className="ui-entry-card" style={{ cursor: "default" }}>
+                            <h2 className="wb-heading mx-2 mb-0 mt-2 ts-20 leading-none">Worldbook Info</h2>
+                            <div className="ui-entry-card wb-info-card" style={{ cursor: "default" }}>
                                 <div className="flex flex-col gap-2">
                                     <label className="menu-label ts-13 font-semibold ml-1">世界书名称</label>
                                     <input
@@ -580,7 +580,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
 
                             {/* Entries Section */}
                             <div className="flex flex-col gap-4 mt-2">
-                            <h2 className="mx-2 mb-0 mt-2 ts-20 font-bold leading-none text-black">Worldbook Entries ({activeBook.entries?.length || 0})</h2>
+                            <h2 className="wb-heading mx-2 mb-0 mt-2 ts-20 leading-none">Worldbook Entries ({activeBook.entries?.length || 0})</h2>
 
                             {/* Entry Cards */}
                             <div className="flex flex-col gap-2">
@@ -650,7 +650,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                 }
                                             >
                                             <div
-                                                className="ui-entry-card"
+                                                className="ui-entry-card wb-entry-card"
                                                 data-active={isEditing ? "true" : undefined}
                                                 data-disabled={entry.disable && !isEditing ? "true" : undefined}
                                                 style={{ gap: isEditing ? 12 : 0 }}
@@ -842,7 +842,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                             <button
                                 type="button"
                                 onClick={() => setAddEntryMenuOpen(true)}
-                                className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-[20px] bg-black px-4 text-xs font-bold text-white shadow-sm transition-all hover:bg-gray-800 hover:shadow-md active:scale-95 focus:outline-none"
+                                className="wb-btn wb-btn-primary inline-flex h-10 w-full items-center justify-center gap-1.5 px-4 text-xs font-bold shadow-sm transition-all hover:shadow-md active:scale-95 focus:outline-none"
                             >
                                 <Plus size={15} strokeWidth={1.8} />
                                 添加条目

@@ -1,0 +1,252 @@
+/* ══════════════════════════════════════════
+   Worldbook — 静谧书架 (Quiet Bookshelf)
+   世界书专属视觉层：只在 .worldbook-page-shell / .worldbook-shell
+   作用域内生效，不影响其他设置页共用的 .ui-* 组件。
+   ══════════════════════════════════════════ */
+
+/* 变量挂在 .worldbook-page-shell（PageShell 根节点）上，而不是内容区的
+   .worldbook-shell —— 因为「导入/新建世界书」两个按钮渲染在页头右侧插槽里，
+   跟内容区是页头/页体两个平级容器，只有挂在共同祖先上才能被两边继承到。 */
+.worldbook-page-shell {
+  --wb-bg-top: #F8F3E8;
+  --wb-bg-bottom: #EFE6D3;
+  --wb-ink: #362B21;
+  --wb-text: #7C7061;
+  --wb-text-soft: #ACA08C;
+  --wb-card: #FBF8F0;
+  --wb-card-hair: #E6DAC2;
+  --wb-line: #E9DFC9;
+  --wb-accent: #5C6E52;
+  --wb-accent-soft: rgba(92, 110, 82, 0.13);
+  --wb-gold: #B08F4F;
+  --wb-gold-soft: rgba(176, 143, 79, 0.14);
+  --wb-danger: #A24B3B;
+  --wb-danger-soft: rgba(162, 75, 59, 0.12);
+  --wb-spine-1: #6E7F63;
+  --wb-spine-2: #7B5B49;
+  --wb-spine-3: #56707F;
+  --wb-spine-4: #85678A;
+  --wb-spine-5: #99823F;
+}
+
+.worldbook-shell {
+  color: var(--wb-ink);
+}
+
+/* 让整页（含 header）都浸在温暖的纸色里，而不只是内容区 */
+.worldbook-page-shell .page-header {
+  background: color-mix(in srgb, var(--wb-bg-top) 78%, transparent);
+}
+.worldbook-page-shell .page-title,
+.worldbook-page-shell .page-back-btn {
+  color: var(--wb-ink);
+}
+.worldbook-page-shell .page-body {
+  background: linear-gradient(180deg, var(--wb-bg-top) 0%, var(--wb-bg-bottom) 100%);
+  color: var(--wb-ink);
+}
+
+/* ── 标题：书名页的排版感 ── */
+.worldbook-shell .wb-heading {
+  font-family: "Noto Serif SC", "Source Han Serif SC", "EB Garamond", serif;
+  font-style: italic;
+  font-weight: 700;
+  color: var(--wb-ink);
+  letter-spacing: 0.2px;
+  position: relative;
+}
+.worldbook-shell .wb-heading::after {
+  content: "";
+  display: block;
+  width: 30px;
+  height: 1px;
+  margin-top: 8px;
+  background: linear-gradient(90deg, var(--wb-gold), transparent);
+  opacity: 0.7;
+}
+
+/* ── 空态 ── */
+.worldbook-shell .ui-empty .ui-icon-circle {
+  background: var(--wb-accent-soft);
+  color: var(--wb-accent);
+}
+.worldbook-shell .ui-empty .menu-label {
+  color: var(--wb-ink);
+  font-family: "Noto Serif SC", "Source Han Serif SC", serif;
+}
+.worldbook-shell .ui-empty .menu-desc {
+  color: var(--wb-text);
+}
+
+/* ── 书架：世界书网格卡片，像立在架上的一本本书 ── */
+.worldbook-shell .wb-book-card.ui-config-card {
+  position: relative;
+  overflow: hidden;
+  background: var(--wb-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--wb-card-hair);
+  border-radius: 10px 14px 14px 10px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset,
+              0 10px 20px -12px rgba(54, 43, 33, 0.28);
+  padding-left: 22px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.worldbook-shell .wb-book-card.ui-config-card::before {
+  /* 书脊 */
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 8px;
+  background: var(--wb-spine-1);
+  box-shadow: inset -1px 0 2px rgba(0,0,0,0.18);
+}
+.worldbook-shell .wb-book-card.ui-config-card:nth-child(5n+2)::before { background: var(--wb-spine-2); }
+.worldbook-shell .wb-book-card.ui-config-card:nth-child(5n+3)::before { background: var(--wb-spine-3); }
+.worldbook-shell .wb-book-card.ui-config-card:nth-child(5n+4)::before { background: var(--wb-spine-4); }
+.worldbook-shell .wb-book-card.ui-config-card:nth-child(5n+5)::before { background: var(--wb-spine-5); }
+.worldbook-shell .wb-book-card.ui-config-card:active {
+  transform: scale(0.98) translateY(1px);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset,
+              0 4px 10px -6px rgba(54, 43, 33, 0.3);
+}
+.worldbook-shell .wb-book-card .wb-book-title {
+  font-family: "Noto Serif SC", "Source Han Serif SC", "EB Garamond", serif;
+  color: var(--wb-ink);
+}
+.worldbook-shell .wb-book-card svg { color: var(--wb-accent); }
+
+/* ── 目录卡（世界书详情：名称/简介），像扉页信息栏 ── */
+.worldbook-shell .wb-info-card.ui-entry-card {
+  background: var(--wb-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px dashed var(--wb-card-hair);
+  border-radius: 12px;
+  box-shadow: none;
+}
+.worldbook-shell .wb-info-card.ui-entry-card .menu-label {
+  letter-spacing: 0.3px;
+}
+
+/* ── 条目卡：图书馆索引卡质感 ── */
+.worldbook-shell .wb-entry-card.ui-entry-card {
+  background: var(--wb-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--wb-card-hair);
+  border-left: 3px solid var(--wb-accent);
+  border-radius: 10px;
+  box-shadow: 0 6px 14px -10px rgba(54, 43, 33, 0.35);
+}
+.worldbook-shell .wb-entry-card.ui-entry-card[data-disabled="true"] {
+  border-left-color: var(--wb-text-soft);
+  opacity: 0.62;
+}
+.worldbook-shell .wb-entry-card.ui-entry-card[data-active="true"] {
+  border-left-color: var(--wb-gold);
+  box-shadow: 0 10px 20px -12px rgba(54, 43, 33, 0.4);
+}
+.worldbook-shell .ui-entry-icon { color: var(--wb-accent); }
+.worldbook-shell .wb-entry-card .menu-label {
+  font-family: "Noto Serif SC", "Source Han Serif SC", serif;
+  color: var(--wb-ink);
+}
+.worldbook-shell .ui-entry-separator {
+  border-top-color: var(--wb-line);
+}
+
+/* ── 标签：牛皮纸书签的低饱和配色 ── */
+.worldbook-shell .ui-tag,
+.worldbook-shell .ui-status-tag,
+.worldbook-shell .ui-badge {
+  background: var(--wb-card-hair);
+  color: var(--wb-text);
+  border-radius: 3px;
+}
+.worldbook-shell .ui-status-tag[data-variant="muted"] { background: var(--wb-card-hair); color: var(--wb-text); }
+.worldbook-shell .ui-status-tag[data-variant="success"] { background: var(--wb-accent-soft); color: var(--wb-accent); }
+.worldbook-shell .ui-status-tag[data-variant="warning"] { background: var(--wb-gold-soft); color: var(--wb-gold); }
+.worldbook-shell .ui-status-tag[data-variant="action"] { background: rgba(86, 112, 127, 0.14); color: var(--wb-spine-3); }
+.worldbook-shell .ui-badge[data-variant="success"] { background: var(--wb-accent-soft); color: var(--wb-accent); }
+.worldbook-shell .ui-badge[data-variant="muted"] { background: var(--wb-card-hair); color: var(--wb-text); }
+
+/* ── 表单：输入区维持纸感，正文用衬线字体，像在页面上写批注 ── */
+.worldbook-shell .ui-input,
+.worldbook-shell .ui-select {
+  background: color-mix(in srgb, var(--wb-card) 60%, var(--wb-bg-bottom));
+  border-color: var(--wb-card-hair);
+  color: var(--wb-ink);
+}
+.worldbook-shell .ui-textarea {
+  background: color-mix(in srgb, var(--wb-card) 60%, var(--wb-bg-bottom));
+  border-color: var(--wb-card-hair);
+  color: var(--wb-ink);
+  font-family: "Noto Serif SC", "Source Han Serif SC", serif;
+  line-height: 1.7;
+}
+.worldbook-shell .ui-input:focus,
+.worldbook-shell .ui-textarea:focus,
+.worldbook-shell .ui-select:focus {
+  border-color: var(--wb-accent);
+}
+.worldbook-shell .ui-input::placeholder,
+.worldbook-shell .ui-textarea::placeholder {
+  color: var(--wb-text-soft);
+}
+.worldbook-shell .menu-label,
+.worldbook-shell .menu-desc {
+  color: var(--wb-text);
+}
+.worldbook-shell .ui-checkbox-label {
+  color: var(--wb-text);
+  accent-color: var(--wb-accent);
+}
+
+/* ── 迷你开关：由亮绿改为暗架上的鼠尾草绿 ── */
+.worldbook-shell .ui-mini-toggle-track {
+  background: var(--wb-card-hair);
+}
+.worldbook-shell .ui-mini-toggle-track:checked {
+  background: var(--wb-accent);
+}
+
+/* ── 左滑操作条：呼应书脊配色 ── */
+.worldbook-shell .ui-swipe-action[data-variant="insert"] { background: var(--wb-accent); }
+.worldbook-shell .ui-swipe-action[data-variant="replace"] { background: var(--wb-gold); }
+.worldbook-shell .ui-swipe-action[data-variant="export"] { background: var(--wb-spine-3); }
+.worldbook-shell .ui-swipe-action[data-variant="delete"] { background: var(--wb-danger); }
+
+/* ── 按钮：从高对比黑白改为墨色/纸色的静谧配色 ──
+   注：导入/新建两个按钮渲染在页头右侧插槽（PageShell header），
+   跟内容区是页头/页体两个平级容器，不是 .worldbook-shell 的后代，
+   但两者都在 .worldbook-page-shell 之下，能拿到同一份 --wb-* 变量，
+   所以 .wb-btn 系列直接用类名本身作用域（全站唯一，不会误伤别处）。 */
+.wb-btn {
+  border-radius: 20px;
+}
+.wb-btn-primary {
+  background: var(--wb-ink);
+  color: var(--wb-bg-top);
+}
+.wb-btn-primary:hover { background: color-mix(in srgb, var(--wb-ink) 88%, black); }
+.wb-btn-outline {
+  background: var(--wb-card);
+  border: 1px solid var(--wb-card-hair);
+  color: var(--wb-ink);
+}
+.wb-btn-outline:hover { background: color-mix(in srgb, var(--wb-card) 80%, var(--wb-bg-bottom)); }
+.wb-btn-danger {
+  background: var(--wb-card);
+  border: 1px solid color-mix(in srgb, var(--wb-danger) 35%, var(--wb-card-hair));
+  color: var(--wb-danger);
+}
+.wb-btn-danger:hover { background: var(--wb-danger-soft); }
+.worldbook-shell .ui-btn-primary {
+  background: var(--wb-ink);
+  box-shadow: 0 4px 14px rgba(54, 43, 33, 0.25);
+}
+.worldbook-shell .ui-btn-outline {
+  background: var(--wb-card-hair);
+  color: var(--wb-ink);
+}
