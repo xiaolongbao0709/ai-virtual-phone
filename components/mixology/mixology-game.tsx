@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ChevronLeft, Copy, History, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sun, WandSparkles, X } from "lucide-react";
-import { continueMix, editMixTurn, generateMixReply, canReplayMixFrom, MIX_REPAIR_EVENT, MIX_STORE_SNAPSHOT_TURNS, mixTurnRawText, recordMixPanelStore, refreshMixOpening, regenerateMixTail, rerollMixReply, runMixEditSync, runMixSessionEnd, truncateMixAfterTurn, type MixRepairEventDetail } from "@/lib/mixology/engine";
+import { continueMix, editMixTurn, generateMixReply, canReplayMixFrom, MIX_REPAIR_EVENT, MIX_STORE_SNAPSHOT_TURNS, mixTurnRawText, recordMixPanelStore, refreshMixOpening, regenerateMixTail, rerollMixReply, rerunMixFilters, runMixEditSync, runMixSessionEnd, truncateMixAfterTurn, type MixRepairEventDetail } from "@/lib/mixology/engine";
 import { findMixConnector, getMixMaterial, getMixSession, isMixBuiltinId, listMixPickables, MIX_CABINET_UPDATED_EVENT, resolveMixRecipeMaterials, saveMixMaterial, saveMixSession } from "@/lib/mixology/storage";
 import { applyMixMacros, MIX_DEFAULT_USER_NAME } from "@/lib/mixology/assembler";
 import { buildMixConditionContext, pickActiveMixMaterials } from "@/lib/mixology/state";
@@ -167,7 +167,7 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps -- 只关心开/关，别在每次敲字时重挂监听
     }, [Boolean(editing)]);
-    const [confirm, setConfirm] = useState<{ type: "rewind" | "edit"; turnId: string } | null>(null);
+    const [confirm, setConfirm] = useState<{ type: "rewind" | "edit"; turnId: string } | { type: "refilter" } | null>(null);
     const [recipeOpen, setRecipeOpen] = useState(false);
     /** 局内的叠层编辑：排序 / 生效条件 / 移除，和吧台同一套编辑器 */
     const [slotEdit, setSlotEdit] = useState<MixMaterialKind | null>(null);
@@ -1336,6 +1336,11 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
                                 >
                                     {session.historyLimit ? `回传近 ${session.historyLimit} 轮` : "回传全部历史"}
                                 </button>
+                                {mixSlotEntries(session.recipe.slots, "filter").length ? (
+                                    <button type="button" className="mix-dock-chip" disabled={busy} onClick={() => setConfirm({ type: "refilter" })}>
+                                        对历史重跑滤网
+                                    </button>
+                                ) : null}
                             </div>
                             {histOpen ? (
                                 <div className="mix-histlimit">
@@ -1578,7 +1583,26 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
                 );
             })() : null}
 
-            {confirm ? (
+            {confirm?.type === "refilter" ? (
+                <MixConfirm
+                    title="对历史重跑滤网？"
+                    body={<>把本局每一条 AI 正文按当前生效的「进上下文」规则再洗一遍，存的和发回模型的历史都会改。<br />「仅显示」规则本来就对全部历史即时生效，不在此列。原始输出会保留，之后编辑看到的仍是模型原话。</>}
+                    confirmText="重跑"
+                    onCancel={() => setConfirm(null)}
+                    onConfirm={() => {
+                        setConfirm(null);
+                        try {
+                            const result = rerunMixFilters(sessionId);
+                            setSession(getMixSession(sessionId));
+                            if (!result.rules) onToast("当前方案里没有「进上下文」的滤网规则，历史没有改动。");
+                            else if (!result.changed) onToast(`按 ${result.rules} 条规则重跑了 ${result.total} 条回复，没有需要改的。`);
+                            else onToast(`按 ${result.rules} 条规则重跑了 ${result.total} 条回复，${result.changed} 条有改动。`);
+                        } catch (error) {
+                            onToast(error instanceof Error ? error.message : "重跑失败");
+                        }
+                    }}
+                />
+            ) : confirm ? (
                 <MixConfirm
                     title={confirm.type === "rewind" ? "回溯到这条消息？" : "保存修改？"}
                     body={confirm.type === "rewind"
