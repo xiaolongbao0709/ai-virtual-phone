@@ -312,12 +312,15 @@ export function assembleMixPrompt(input: MixAssembleInput): MixAssembledPrompt {
         withHung("ticket", ticketSection(tickets, charName, userName, input.state, sectionTitle("ticket"))),
         withHung("encore", encoreSection(encores, charName, userName, input.state, sectionTitle("encore"))),
         withHung("examples", exampleSection(card, charName, userName, sectionTitle("examples"))),
-        withHung("checklist", checklistSection(
-            tickets.filter((t) => t.contract.trim()).length,
-            encores.filter((e) => e.contract?.trim()).length,
-            sectionTitle("checklist"),
-            { glass: sectionTitle("glass"), ticket: sectionTitle("ticket"), encore: sectionTitle("encore") },
-        )),
+        // 输出格式检查：序言里写了自定义正文就整段用它（不装状态栏也出现），否则按装了什么自动生成
+        withHung("checklist", preface?.checklist?.trim()
+            ? `# ${sectionTitle("checklist")}\n${apply(preface.checklist.trim())}`
+            : checklistSection(
+                tickets.filter((t) => t.contract.trim()).length,
+                encores.filter((e) => e.contract?.trim()).length,
+                sectionTitle("checklist"),
+                { glass: sectionTitle("glass"), ticket: sectionTitle("ticket"), encore: sectionTitle("encore") },
+            )),
     ];
 
     const openings = card.openings.filter((o) => o.trim());

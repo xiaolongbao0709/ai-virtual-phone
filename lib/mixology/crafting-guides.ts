@@ -292,7 +292,8 @@ examples＝数组 [{"role":"user"|"char","text":"…"}]，至少 2 轮（4 条�
 name＝材料名；hook＝一句话介绍；tags＝字符串数组；userName＝你的名字；content＝人设正文。`,
     preface: `—— 工具字段对照 ——
 name＝材料名；hook＝一句话介绍；tags＝字符串数组；content＝序言正文（提示词第一段，两三句为宜，建议保留优先级声明）；
-sectionTitles＝选填对象，覆写各分段标题让全篇措辞贴合序言基调，键为 base/character/persona/world/flavor/glass/ticket/encore/examples/checklist（对应默认标题 扮演总纲/角色资料/用户资料/世界与剧情/文风/正文输出要求/状态栏/小剧场/示例对话/输出格式检查），只写要改的键，提示词里的交叉引用会跟着换。`,
+sectionTitles＝选填对象，覆写各分段标题让全篇措辞贴合序言基调，键为 base/character/persona/world/flavor/glass/ticket/encore/examples/checklist（对应默认标题 扮演总纲/角色资料/用户资料/世界与剧情/文风/正文输出要求/状态栏/小剧场/示例对话/输出格式检查），只写要改的键，提示词里的交叉引用会跟着换；
+checklist＝选填，「输出格式检查」整段正文（系统提示词最后一节，每轮收尾前的核对清单）。留空时系统按装了的状态栏/小剧场自动生成；写了就整段替换，想让机括要求的输出块（如 [拍立得]…[/拍立得]）也进清单就在这里列。`,
     base: `—— 工具字段对照 ——
 name＝材料名；hook＝一句话介绍；tags＝字符串数组；content＝扮演总纲正文。`,
     flavor: `—— 工具字段对照 ——

@@ -192,6 +192,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
         initial && "content" in initial ? (initial as MixTextMaterial).content : "",
     );
     // 仅序言：各分段标题的覆写（留空的键用默认标题）
+    const [checklist, setChecklist] = useState(initial?.kind === "preface" ? (initial as MixTextMaterial).checklist ?? "" : "");
     const [sectionTitles, setSectionTitles] = useState<Partial<Record<MixSectionTitleKey, string>>>(
         initial?.kind === "preface" ? { ...(initial as MixTextMaterial).sectionTitles } : {},
     );
@@ -473,7 +474,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             ...meta,
             kind,
             content: content.trim(),
-            ...(kind === "preface" ? { sectionTitles: cleanedTitles } : {}),
+            ...(kind === "preface" ? { sectionTitles: cleanedTitles, checklist: checklist.trim() || undefined } : {}),
         } as MixTextMaterial);
     };
 
@@ -708,6 +709,17 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                         value={content}
                         onChange={(e) => setContent(e.target.value)}
                         placeholder={TEXT_FIELD_COPY[kind].placeholder}
+                    />
+                </Field>
+            ) : null}
+            {kind === "preface" ? (
+                <Field label="输出格式检查" hint="选填，可用 {{char}} / {{user}}。留空时系统按装了的状态栏/小剧场自动生成；写了就整段替换，机括要求的输出块也可以列进来">
+                    <textarea
+                        className="mix-textarea"
+                        style={{ minHeight: 120 }}
+                        value={checklist}
+                        onChange={(e) => setChecklist(e.target.value)}
+                        placeholder={"系统默认大致是：\n每轮回复发出前逐项核对：\n- 正文符合「正文输出要求」。\n- 回复最开头已按「状态栏」的格式输出 [状态栏]...[/状态栏] 块——任何一轮都不能缺。\n- 回复最末尾已按「小剧场」的格式输出 [小剧场]...[/小剧场] 块——任何一轮都不能缺。\n\n可以照这个样子加一行：\n- 回复末尾已写 [拍立得]...[/拍立得] 块——任何一轮都不能缺。"}
                     />
                 </Field>
             ) : null}

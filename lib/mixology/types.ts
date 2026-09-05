@@ -247,6 +247,10 @@ export type MixTextMaterial = MixMaterialMeta & {
      *  的措辞跟上序言定下的基调。缺省/留空的键用默认标题；交叉引用（如输出
      *  格式检查里提到的段名）会跟着换。 */
     sectionTitles?: Partial<Record<MixSectionTitleKey, string>>;
+    /** 仅序言使用：自定义「输出格式检查」正文（可用 {{char}}/{{user}} 宏）。
+     *  留空用系统按状态栏/小剧场自动生成的清单；写了就整段替换——想把机括的
+     *  输出块、自家的收尾规则一并列进去，在这里写。 */
+    checklist?: string;
 };
 
 /** 面具（用户人设）：{{user}} 是谁——名字 + 人设正文，装配成「用户资料」段 */

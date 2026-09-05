@@ -206,6 +206,8 @@ const CONTENT_FIELDS: FieldSpec[] = [
     { key: "content", kinds: ["persona", "preface", "base", "flavor", "glass", "strength"] },
     // 序言可整套覆写各分段标题（对象 {base:"…",character:"…",…}，留空键用默认）
     { key: "sectionTitles", kinds: ["preface"] },
+    // 序言可整段覆写「输出格式检查」（留空用系统自动生成）
+    { key: "checklist", kinds: ["preface"] },
     { key: "userName", kinds: ["persona"] },
     { key: "baseInfo", kinds: ["character"] },
     { key: "personality", kinds: ["character"] },
