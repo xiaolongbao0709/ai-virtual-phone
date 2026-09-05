@@ -203,11 +203,9 @@ export function mixToolReadCraftSpec(args: Record<string, unknown>): ToolResult 
 type FieldSpec = { key: string; kinds: MixMaterialKind[] };
 /** 各 kind 允许写入的正文字段（元信息 name/hook/tags 全类通用，单独处理） */
 const CONTENT_FIELDS: FieldSpec[] = [
-    { key: "content", kinds: ["persona", "preface", "base", "flavor", "glass", "strength"] },
+    { key: "content", kinds: ["persona", "preface", "base", "flavor", "glass", "strength", "checklist"] },
     // 序言可整套覆写各分段标题（对象 {base:"…",character:"…",…}，留空键用默认）
     { key: "sectionTitles", kinds: ["preface"] },
-    // 序言可整段覆写「输出格式检查」（留空用系统自动生成）
-    { key: "checklist", kinds: ["preface"] },
     { key: "userName", kinds: ["persona"] },
     { key: "baseInfo", kinds: ["character"] },
     { key: "personality", kinds: ["character"] },
@@ -452,7 +450,7 @@ function validateMaterial(material: Record<string, unknown>, kind: MixMaterialKi
         case "character":
             if (!Array.isArray(material.openings) || material.openings.length === 0) return "角色卡至少要有一条开场白（openings），否则开不了局。";
             return null;
-        case "persona": case "preface": case "base": case "flavor": case "glass": case "strength":
+        case "persona": case "preface": case "base": case "flavor": case "glass": case "strength": case "checklist":
             if (!has("content")) return `${MIX_KIND_LABELS[kind]}缺正文（content）。`;
             return null;
         case "ticket":

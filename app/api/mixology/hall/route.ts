@@ -12,7 +12,7 @@ import { normalizeRecipeParts as normalizeParts, validateMechanismPayload, type 
 // when 是这一件的生效条件。同一 kind 可以出现多条（一格叠多件），数组顺序即叠放顺序。
 // 详情接口现场联表把引用换成完整材料内容；已下架的标 gone。
 
-const MATERIAL_KINDS = ["character", "persona", "preface", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "filter", "mechanism"] as const;
+const MATERIAL_KINDS = ["character", "persona", "preface", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "checklist", "filter", "mechanism"] as const;
 
 const ITEM_SUMMARY_COLUMNS = "id,kind,name,hook,cover,tags,author_id,author_name,author_avatar,like_count,save_count,view_count,comment_count,created_at,updated_at";
 const ITEM_COLUMNS = `${ITEM_SUMMARY_COLUMNS},payload`;

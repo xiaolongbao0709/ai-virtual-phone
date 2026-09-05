@@ -16,8 +16,7 @@ import {
     ReceiptText,
     ScrollText,
     Sparkles,
-    UserRound,
-} from "lucide-react";
+    UserRound, ListChecks } from "lucide-react";
 import type { MixCharacterCard, MixMaterial, MixMaterialKind } from "@/lib/mixology/types";
 import { isMixCardFreeform } from "@/lib/mixology/card-freeform";
 import { findMixConnector } from "@/lib/mixology/storage";
@@ -37,6 +36,7 @@ const KIND_ICONS: Record<MixMaterialKind, typeof UserRound> = {
     ticket: ReceiptText,
     garnish: Sparkles,
     encore: Music4,
+    checklist: ListChecks,
     filter: Filter,
     mechanism: Cog,
 };

@@ -271,6 +271,8 @@ export function assembleMixPrompt(input: MixAssembleInput): MixAssembledPrompt {
     const flavorText = stackBody(m.flavor, apply);
     const glassText = stackBody(m.glass, apply);
     const strengthText = stackBody(m.strength, apply);
+    // 核对：玩家自己写的输出格式检查，叠多件按顺序拼；有就整段替换系统自动生成的那份
+    const checklistText = stackBody(m.checklist, apply);
 
     // 机括挂段：某一段本身为空（没装面具、没有文风）时挂在它上面的内容照样出现，
     // 位置就是那一段本来该在的位置。宏照常替换，多件机括按钩子跑的顺序依次接。
@@ -312,9 +314,9 @@ export function assembleMixPrompt(input: MixAssembleInput): MixAssembledPrompt {
         withHung("ticket", ticketSection(tickets, charName, userName, input.state, sectionTitle("ticket"))),
         withHung("encore", encoreSection(encores, charName, userName, input.state, sectionTitle("encore"))),
         withHung("examples", exampleSection(card, charName, userName, sectionTitle("examples"))),
-        // 输出格式检查：序言里写了自定义正文就整段用它（不装状态栏也出现），否则按装了什么自动生成
-        withHung("checklist", preface?.checklist?.trim()
-            ? `# ${sectionTitle("checklist")}\n${apply(preface.checklist.trim())}`
+        // 输出格式检查：装了「核对」材料就整段用它（不装状态栏也出现），否则按装了什么自动生成
+        withHung("checklist", checklistText
+            ? `# ${sectionTitle("checklist")}\n${checklistText}`
             : checklistSection(
                 tickets.filter((t) => t.contract.trim()).length,
                 encores.filter((e) => e.contract?.trim()).length,

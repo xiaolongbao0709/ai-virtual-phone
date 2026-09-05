@@ -17,6 +17,7 @@ export type MixMaterialKind =
     | "ticket"    // 小票：状态数据卡（输出契约 + 渲染代码）
     | "garnish"   // 外观：界面美化 CSS
     | "encore"    // 尾调：随卡互动 HTML 小品
+    | "checklist" // 核对：输出格式检查——系统提示词最后一节的收尾清单（叠加；不配则按状态栏/小剧场自动生成）
     | "filter"    // 滤网：正则清洗正文（不进提示词）
     | "mechanism"; // 机括：沙盒里跑的钩子逻辑 + 常驻界面
 
@@ -31,13 +32,14 @@ export const MIX_KIND_LABELS: Record<MixMaterialKind, string> = {
     ticket: "小票",
     garnish: "外观",
     encore: "尾调",
+    checklist: "核对",
     filter: "滤网",
     mechanism: "机括",
 };
 
 /** 吧台槽位顺序（角色卡永远第一槽） */
 export const MIX_SLOT_ORDER: MixMaterialKind[] = [
-    "character", "persona", "preface", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "filter", "mechanism",
+    "character", "persona", "preface", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "checklist", "filter", "mechanism",
 ];
 
 /** TAB 上大字下面那行小字：说明这一类到底干什么（不进提示词的种类标它的实际职责） */
@@ -52,6 +54,7 @@ export const MIX_KIND_SECTION_LABELS: Record<MixMaterialKind, string> = {
     ticket: "状态栏",
     garnish: "界面样式",
     encore: "小剧场",
+    checklist: "输出格式检查",
     filter: "正则替换",
     mechanism: "可执行逻辑",
 };
@@ -76,6 +79,7 @@ export const MIX_SLOT_STACK: Record<MixMaterialKind, "concat" | "first"> = {
     ticket: "concat",
     garnish: "concat",
     encore: "concat",
+    checklist: "concat",
     filter: "concat",
     mechanism: "concat",
 };
@@ -241,16 +245,12 @@ export const MIX_SECTION_TITLE_DEFAULTS: Record<MixSectionTitleKey, string> = {
 
 /** 纯文本类材料：序言 / 基底 / 风味 / 杯型 / 苦精 */
 export type MixTextMaterial = MixMaterialMeta & {
-    kind: "preface" | "base" | "flavor" | "glass" | "strength";
+    kind: "preface" | "base" | "flavor" | "glass" | "strength" | "checklist";
     content: string;
     /** 仅序言使用：自定义各分段标题（可用 {{char}}/{{user}} 宏），让整份提示词
      *  的措辞跟上序言定下的基调。缺省/留空的键用默认标题；交叉引用（如输出
      *  格式检查里提到的段名）会跟着换。 */
     sectionTitles?: Partial<Record<MixSectionTitleKey, string>>;
-    /** 仅序言使用：自定义「输出格式检查」正文（可用 {{char}}/{{user}} 宏）。
-     *  留空用系统按状态栏/小剧场自动生成的清单；写了就整段替换——想把机括的
-     *  输出块、自家的收尾规则一并列进去，在这里写。 */
-    checklist?: string;
 };
 
 /** 面具（用户人设）：{{user}} 是谁——名字 + 人设正文，装配成「用户资料」段 */

@@ -764,7 +764,7 @@ const STATUS_BAR_PROMPT = `线上聊天状态栏 = 让 AI 每轮在 [状态栏].
 
 
 // ── 独家特调工具 ──
-const MIX_KIND_ENUM = ["character", "persona", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "filter", "mechanism"];
+const MIX_KIND_ENUM = ["character", "persona", "preface", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "checklist", "filter", "mechanism"];
 
 const MIX_LIST_CABINET_SCHEMA = {
     type: "object",

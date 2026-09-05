@@ -8,7 +8,7 @@ import {
   mixologyRestFetch,
 } from "@/lib/server/mixology-supabase";
 
-const MATERIAL_KINDS = ["character", "persona", "preface", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "filter", "mechanism"] as const;
+const MATERIAL_KINDS = ["character", "persona", "preface", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "checklist", "filter", "mechanism"] as const;
 type HallType = "material" | "recipe";
 
 type HallListRow = {

@@ -72,6 +72,10 @@ const KIND_GUIDE: Record<MixMaterialKind, { what: string; where: string }> = {
         what: "这里写小剧场：正文之外的加演，例如朋友圈动态、一段监控录像。契约决定 AI 何时写什么，渲染代码决定它长什么样；契约留空则为纯静态小品。",
         where: "契约进提示词；渲染代码只在界面执行。",
     },
+    checklist: {
+        what: "这里写输出格式检查：系统提示词最后一节的收尾核对清单，模型动笔前逐项核对本轮必须带上什么、禁止什么。一行一条，写得越具体越难被忽略。",
+        where: "进入系统提示词末尾「输出格式检查」段，紧挨对话历史；不装则由系统按已装的状态栏/小剧场自动生成一份。",
+    },
     mechanism: {
         what: "一段在沙盒里跑的逻辑，加一块常驻在对局画面上的界面。两半共用同一份存储，可以只写一半。",
         where: "不进提示词，跑在断网的沙盒里。",
@@ -88,10 +92,10 @@ const KIND_GUIDE: Record<MixMaterialKind, { what: string; where: string }> = {
  * 不进提示词的几种材料（外观/机括/滤网）不显示这行。
  */
 const HEADING_NOTE = "要在框里加小标题，用 ### 开头（# 和 ## 已被应用占用）。";
-const HEADING_NOTE_KINDS: MixMaterialKind[] = ["character", "persona", "base", "flavor", "glass", "strength", "ticket", "encore"];
+const HEADING_NOTE_KINDS: MixMaterialKind[] = ["character", "persona", "base", "flavor", "glass", "strength", "ticket", "encore", "checklist"];
 
 /** 文本类材料（序言/基底/风味/杯型/苦精）的字段名与示例 */
-const TEXT_FIELD_COPY: Record<"preface" | "base" | "flavor" | "glass" | "strength", { label: string; placeholder: string }> = {
+const TEXT_FIELD_COPY: Record<"preface" | "base" | "flavor" | "glass" | "strength" | "checklist", { label: string; placeholder: string }> = {
     preface: {
         label: "序言",
         placeholder: "例：\n这是一场沉浸式角色扮演，你要扮演的角色是{{char}}。下方依次给出扮演规则、角色资料与输出要求，请全部遵守；越靠后的要求优先级越高。\n（建议保留一句优先级声明，应用的段落排序依赖它。）",
@@ -111,6 +115,10 @@ const TEXT_FIELD_COPY: Record<"preface" | "base" | "flavor" | "glass" | "strengt
     strength: {
         label: "最高优先级要求",
         placeholder: "一到两条即可，例：\n始终保持{{char}}的克制感，不要替{{user}}总结感受。",
+    },
+    checklist: {
+        label: "输出格式检查",
+        placeholder: "系统提示词的最后一节，模型收尾前逐项核对的清单。不装这件时系统按状态栏/小剧场自动生成；装了就整段用你写的。例：\n每轮回复发出前逐项核对：\n- 正文符合「正文输出要求」。\n- 回复最开头已按「状态栏」的格式输出 [状态栏]...[/状态栏] 块——任何一轮都不能缺。\n- 回复末尾已写 [拍立得]...[/拍立得] 块——任何一轮都不能缺。\n- 已写〔记〕行；该归纳时写〔纳〕，该压核心时写〔核〕。",
     },
 };
 
@@ -192,7 +200,6 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
         initial && "content" in initial ? (initial as MixTextMaterial).content : "",
     );
     // 仅序言：各分段标题的覆写（留空的键用默认标题）
-    const [checklist, setChecklist] = useState(initial?.kind === "preface" ? (initial as MixTextMaterial).checklist ?? "" : "");
     const [sectionTitles, setSectionTitles] = useState<Partial<Record<MixSectionTitleKey, string>>>(
         initial?.kind === "preface" ? { ...(initial as MixTextMaterial).sectionTitles } : {},
     );
@@ -474,7 +481,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             ...meta,
             kind,
             content: content.trim(),
-            ...(kind === "preface" ? { sectionTitles: cleanedTitles, checklist: checklist.trim() || undefined } : {}),
+            ...(kind === "preface" ? { sectionTitles: cleanedTitles } : {}),
         } as MixTextMaterial);
     };
 
@@ -701,7 +708,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                     </Field>
                 </>
             ) : null}
-            {kind === "preface" || kind === "base" || kind === "flavor" || kind === "glass" || kind === "strength" ? (
+            {kind === "preface" || kind === "base" || kind === "flavor" || kind === "glass" || kind === "strength" || kind === "checklist" ? (
                 <Field label={TEXT_FIELD_COPY[kind].label} hint="必填，可用 {{char}} / {{user}}">
                     <textarea
                         className="mix-textarea"
@@ -709,17 +716,6 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                         value={content}
                         onChange={(e) => setContent(e.target.value)}
                         placeholder={TEXT_FIELD_COPY[kind].placeholder}
-                    />
-                </Field>
-            ) : null}
-            {kind === "preface" ? (
-                <Field label="输出格式检查" hint="选填，可用 {{char}} / {{user}}。留空时系统按装了的状态栏/小剧场自动生成；写了就整段替换，机括要求的输出块也可以列进来">
-                    <textarea
-                        className="mix-textarea"
-                        style={{ minHeight: 120 }}
-                        value={checklist}
-                        onChange={(e) => setChecklist(e.target.value)}
-                        placeholder={"系统默认大致是：\n每轮回复发出前逐项核对：\n- 正文符合「正文输出要求」。\n- 回复最开头已按「状态栏」的格式输出 [状态栏]...[/状态栏] 块——任何一轮都不能缺。\n- 回复最末尾已按「小剧场」的格式输出 [小剧场]...[/小剧场] 块——任何一轮都不能缺。\n\n可以照这个样子加一行：\n- 回复末尾已写 [拍立得]...[/拍立得] 块——任何一轮都不能缺。"}
                     />
                 </Field>
             ) : null}
