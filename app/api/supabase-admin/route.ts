@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 export const runtime = "nodejs";
 
 const MANAGEMENT_API = "https://api.supabase.com/v1";
+const MAX_ERROR_DETAIL_LENGTH = 600;
 
 type AdminPayload = {
   action?: string;
@@ -36,14 +37,60 @@ function cleanRegionCode(value: unknown): "americas" | "emea" | "apac" {
   return value === "americas" || value === "emea" || value === "apac" ? value : "apac";
 }
 
-async function upstreamMessage(response: Response): Promise<string> {
-  try {
-    const data = await response.json() as { message?: unknown; error?: unknown };
-    const message = typeof data.message === "string" ? data.message : typeof data.error === "string" ? data.error : "";
-    return message || `Supabase 管理接口返回 HTTP ${response.status}`;
-  } catch {
-    return `Supabase 管理接口返回 HTTP ${response.status}`;
+function safeErrorText(value: string): string {
+  return value
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\bsbp_[a-z0-9_-]{8,}\b/gi, "sbp_[已隐藏]")
+    .replace(/\bsb_secret_[a-z0-9_-]{8,}\b/gi, "sb_secret_[已隐藏]")
+    .replace(/\beyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+\b/gi, "[JWT 已隐藏]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_ERROR_DETAIL_LENGTH);
+}
+
+function detailFromUnknown(value: unknown): string {
+  if (typeof value === "string") return safeErrorText(value);
+  if (Array.isArray(value)) {
+    return safeErrorText(value.map(detailFromUnknown).filter(Boolean).join("；"));
   }
+  if (!value || typeof value !== "object") return "";
+
+  const data = value as Record<string, unknown>;
+  const keys = ["message", "error_description", "error", "detail", "details", "hint", "msg", "code"];
+  const details = keys.map(key => detailFromUnknown(data[key])).filter(Boolean);
+  return safeErrorText([...new Set(details)].join("；"));
+}
+
+async function upstreamMessage(response: Response, operation: string): Promise<string> {
+  const raw = await response.text().catch(() => "");
+  let parsed: unknown;
+  try {
+    parsed = raw ? JSON.parse(raw) : null;
+  } catch {
+    parsed = null;
+  }
+  const detail = detailFromUnknown(parsed) || safeErrorText(raw);
+
+  let guidance: string;
+  if (response.status === 401) {
+    guidance = "Supabase 未接受这个 Access Token。请确认粘贴的是令牌页生成的完整 Token，且令牌尚未过期。";
+  } else if (response.status === 403) {
+    guidance = `Access Token 已被识别，但缺少“${operation}”所需权限。请检查令牌的组织/项目范围与授权权限。`;
+  } else if (response.status === 429) {
+    guidance = "Supabase 请求过于频繁，请稍候一分钟再试。";
+  } else if (response.status >= 500) {
+    guidance = "Supabase 管理服务暂时异常，请稍后再试。";
+  } else {
+    guidance = `Supabase 未能完成“${operation}”。`;
+  }
+
+  return [
+    guidance,
+    `失败步骤：${operation}（HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}）`,
+    detail ? `Supabase 原始提示：${detail}` : "Supabase 没有返回更多错误信息。",
+  ].join("\n");
 }
 
 async function managementFetch(token: string, path: string, init?: RequestInit): Promise<Response> {
@@ -60,7 +107,7 @@ async function managementFetch(token: string, path: string, init?: RequestInit):
 async function handleOrganizations(token: string): Promise<NextResponse> {
   const response = await managementFetch(token, "/organizations");
   if (!response.ok) {
-    return NextResponse.json({ ok: false, error: await upstreamMessage(response) }, { status: response.status });
+    return NextResponse.json({ ok: false, error: await upstreamMessage(response, "读取组织列表") }, { status: response.status });
   }
   const data = await response.json() as Array<{ id?: unknown; slug?: unknown; name?: unknown }>;
   const organizations = (Array.isArray(data) ? data : [])
@@ -91,7 +138,7 @@ async function handleCreateProject(
     }),
   });
   if (!response.ok) {
-    return NextResponse.json({ ok: false, error: await upstreamMessage(response) }, { status: response.status });
+    return NextResponse.json({ ok: false, error: await upstreamMessage(response, "创建个人云项目") }, { status: response.status });
   }
   const data = await response.json() as { id?: unknown; ref?: unknown; status?: unknown };
   const projectRef = typeof data.ref === "string" ? data.ref : typeof data.id === "string" ? data.id : "";
@@ -108,7 +155,7 @@ async function handleCreateProject(
 async function handleProjectStatus(token: string, projectRef: string): Promise<NextResponse> {
   const response = await managementFetch(token, `/projects/${projectRef}`);
   if (!response.ok) {
-    return NextResponse.json({ ok: false, error: await upstreamMessage(response) }, { status: response.status });
+    return NextResponse.json({ ok: false, error: await upstreamMessage(response, "查询个人云项目状态") }, { status: response.status });
   }
   const data = await response.json() as { status?: unknown };
   return NextResponse.json({ ok: true, status: typeof data.status === "string" ? data.status : "" });
@@ -136,7 +183,7 @@ async function handleAssertDedicatedProject(token: string, projectRef: string): 
     }),
   });
   if (!response.ok) {
-    return NextResponse.json({ ok: false, error: await upstreamMessage(response) }, { status: response.status });
+    return NextResponse.json({ ok: false, error: await upstreamMessage(response, "检查目标数据库") }, { status: response.status });
   }
   const rows = await response.json().catch(() => null) as Array<{ deployment_guard?: unknown }> | null;
   const guard = Array.isArray(rows) && typeof rows[0]?.deployment_guard === "string"
@@ -157,7 +204,7 @@ async function handleAssertDedicatedProject(token: string, projectRef: string): 
 async function handleApiKeys(token: string, projectRef: string): Promise<NextResponse> {
   const response = await managementFetch(token, `/projects/${projectRef}/api-keys?reveal=true`);
   if (!response.ok) {
-    return NextResponse.json({ ok: false, error: await upstreamMessage(response) }, { status: response.status });
+    return NextResponse.json({ ok: false, error: await upstreamMessage(response, "读取项目密钥") }, { status: response.status });
   }
   const data = await response.json() as Array<{ name?: unknown; api_key?: unknown; type?: unknown }>;
   const rows = Array.isArray(data) ? data : [];
@@ -182,7 +229,7 @@ async function handleRunSql(token: string, projectRef: string, sql: string): Pro
     body: JSON.stringify({ query: sql, read_only: false }),
   });
   if (!response.ok) {
-    return NextResponse.json({ ok: false, error: await upstreamMessage(response) }, { status: response.status });
+    return NextResponse.json({ ok: false, error: await upstreamMessage(response, "执行个人云初始化 SQL") }, { status: response.status });
   }
   return NextResponse.json({ ok: true });
 }
@@ -219,7 +266,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       return await handleRunSql(token, projectRef, sql);
     }
     return NextResponse.json({ ok: false, error: "未知操作。" }, { status: 400 });
-  } catch {
-    return NextResponse.json({ ok: false, error: "暂时无法连接 Supabase 管理接口。" }, { status: 502 });
+  } catch (error) {
+    const detail = safeErrorText(error instanceof Error ? error.message : String(error));
+    return NextResponse.json({
+      ok: false,
+      error: [
+        "暂时无法连接 Supabase 管理接口，请检查网络后重试。",
+        detail ? `本地连接提示：${detail}` : "没有可用的连接错误详情。",
+      ].join("\n"),
+    }, { status: 502 });
   }
 }

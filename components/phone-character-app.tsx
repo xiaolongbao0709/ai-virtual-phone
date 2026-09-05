@@ -53,6 +53,7 @@ import {
 import { notifyMascotPageContext } from "@/lib/mascot-events";
 import { kvGet, kvSet } from "@/lib/kv-db";
 import { normalizeTimeZone } from "@/lib/character-time";
+import { removeCharacterChatReferences } from "@/lib/character-chat-cleanup";
 
 type ViewType = "list" | "detail";
 
@@ -309,10 +310,12 @@ export function PhoneCharacterApp({ onClose, onNotice }: PhoneCharacterAppProps)
               setView({ type: "detail", id: existing.id, isEditing: false });
               onNotice(`已切换到 V${activeVersion}，未创建新版本`);
             }}
-            onDelete={() => {
-              if (view.id) {
-                clearCharacterVersions(view.id);
-                updateChars(characters.filter((c) => c.id !== view.id));
+            onDelete={async () => {
+              const characterId = view.id;
+              if (characterId) {
+                await removeCharacterChatReferences(characterId);
+                clearCharacterVersions(characterId);
+                updateChars(characters.filter((c) => c.id !== characterId));
               }
               setView({ type: "list", id: null, isEditing: false });
               onNotice("已删除档案");
@@ -675,6 +678,7 @@ function CharListView({
   }
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'char' | 'bg' } | null>(null);
   const [deleteConfirmReady, setDeleteConfirmReady] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [isAnyDragging, setIsAnyDragging] = useState(false);
   const [overTrashBin, setOverTrashBin] = useState(false);
   // 拖拽结束（含取消）时清掉世界 tab 的归档高亮
@@ -694,6 +698,7 @@ function CharListView({
   useEffect(() => {
     if (!deleteConfirm) {
       setDeleteConfirmReady(false);
+      setDeleteBusy(false);
       return;
     }
     setDeleteConfirmReady(false);
@@ -1319,31 +1324,43 @@ function CharListView({
           className="modal-overlay"
           style={{ zIndex: 8000000, backdropFilter: "blur(var(--ui-blur-light))" }}
           onClick={() => {
-            if (deleteConfirmReady) setDeleteConfirm(null);
+            if (deleteConfirmReady && !deleteBusy) setDeleteConfirm(null);
           }}
         >
           <div className="char-punched-hole-note" onClick={(e) => e.stopPropagation()}>
             <h3>销毁确认</h3>
-            <p>您确定要丢弃该档案或物件吗？此操作将永远无法恢复。</p>
+            <p>{deleteConfirm.type === "char"
+              ? "角色档案、联系人及与该角色的单聊记录将一并删除；角色会从群聊成员中移除，但群聊和群聊历史会保留。此操作无法恢复。"
+              : "您确定要丢弃该物件吗？此操作将永远无法恢复。"}</p>
             <div className="char-punched-hole-btn-group">
               <button
                 className="char-punched-hole-btn"
-                disabled={!deleteConfirmReady}
+                disabled={!deleteConfirmReady || deleteBusy}
                 onClick={() => {
-                  if (deleteConfirmReady) setDeleteConfirm(null);
+                  if (deleteConfirmReady && !deleteBusy) setDeleteConfirm(null);
                 }}
               >驳回申请</button>
-              <button className="char-punched-hole-btn danger" disabled={!deleteConfirmReady} onClick={() => {
-                if (!deleteConfirmReady) return;
-                if (deleteConfirm.type === 'char') {
-                  onUpdateChars(characters.filter(c => c.id !== deleteConfirm.id));
-                  onNotice?.("已销毁调查档案");
-                } else {
-                  onUpdateBgItems((bgItems || []).filter(b => b.id !== deleteConfirm.id));
-                  onNotice?.("已销毁散落物件");
+              <button className="char-punched-hole-btn danger" disabled={!deleteConfirmReady || deleteBusy} onClick={async () => {
+                if (!deleteConfirmReady || deleteBusy) return;
+                const target = deleteConfirm;
+                setDeleteBusy(true);
+                try {
+                  if (target.type === 'char') {
+                    await removeCharacterChatReferences(target.id);
+                    clearCharacterVersions(target.id);
+                    onUpdateChars(characters.filter(c => c.id !== target.id));
+                    onNotice?.("已销毁调查档案");
+                  } else {
+                    onUpdateBgItems((bgItems || []).filter(b => b.id !== target.id));
+                    onNotice?.("已销毁散落物件");
+                  }
+                  setDeleteConfirm(null);
+                } catch (error) {
+                  console.error("[Character] delete failed:", error);
+                  setDeleteBusy(false);
+                  onNotice?.("删除失败，请重试");
                 }
-                setDeleteConfirm(null);
-              }}>批准销毁</button>
+              }}>{deleteBusy ? "销毁中…" : "批准销毁"}</button>
             </div>
           </div>
         </div>
@@ -1795,13 +1812,14 @@ function CharArchiveView({
   onCancelEdit?: () => void;
   onSave?: (data: CharacterImportData, createVersion: boolean) => void;
   onRestoreVersion?: (version: CharacterVersion) => void;
-  onDelete: () => void;
+  onDelete: () => void | Promise<void>;
   onExportJson: () => void;
   onExportPng: () => Promise<void>;
   onNotice?: (text: string) => void;
   dummy?: boolean;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState<"back" | "cancel" | null>(null);
   const [showSaveVersionConfirm, setShowSaveVersionConfirm] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
@@ -2289,9 +2307,19 @@ function CharArchiveView({
         <div className="char-archive-actions">
           {!dummy && confirmDelete ? (
             <div className="char-confirm-row">
-              <span className="char-confirm-text">CONFIRM DELETE?</span>
-              <button className="char-confirm-yes" onClick={onDelete}>YES</button>
-              <button className="char-confirm-no" onClick={() => setConfirmDelete(false)}>NO</button>
+              <span className="char-confirm-text">DELETE CHARACTER + PRIVATE CHAT?</span>
+              <button className="char-confirm-yes" disabled={deleteBusy} onClick={async () => {
+                if (deleteBusy) return;
+                setDeleteBusy(true);
+                try {
+                  await onDelete();
+                } catch (error) {
+                  console.error("[Character] delete failed:", error);
+                  setDeleteBusy(false);
+                  onNotice?.("删除失败，请重试");
+                }
+              }}>{deleteBusy ? "..." : "YES"}</button>
+              <button className="char-confirm-no" disabled={deleteBusy} onClick={() => setConfirmDelete(false)}>NO</button>
             </div>
           ) : (
             !dummy && isEditing ? (

@@ -1490,49 +1490,6 @@
 }
 
 /* 输入区 */
-/* 状态栏补写 toast：流式结束后的追加请求没有画面反馈，这颗半透明小条顶着 */
-.mix-repair-toast {
-    position: absolute;
-    left: 50%;
-    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
-    transform: translateX(-50%);
-    z-index: 24;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 6px 13px;
-    border-radius: 999px;
-    background: rgba(14, 12, 22, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    backdrop-filter: blur(8px);
-    color: rgba(242, 240, 247, 0.85);
-    font-size: 11.5px;
-    white-space: nowrap;
-    pointer-events: none;
-    animation: mixFadeIn 0.2s ease;
-}
-
-.mix-repair-dots {
-    display: inline-flex;
-    gap: 3px;
-}
-
-.mix-repair-dots i {
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: var(--mix-gold);
-    animation: mixRepairPulse 1.1s ease-in-out infinite;
-}
-
-.mix-repair-dots i:nth-child(2) { animation-delay: 0.18s; }
-.mix-repair-dots i:nth-child(3) { animation-delay: 0.36s; }
-
-@keyframes mixRepairPulse {
-    0%, 100% { opacity: 0.25; transform: translateY(0); }
-    50% { opacity: 1; transform: translateY(-2px); }
-}
-
 /* ── 机括挂点 ──
    按钮位：宿主画的图标按钮（标题栏/输入栏），点击开合下方的停靠面板；
    流内位：嵌进滚动流的内嵌卡。按钮与容器都是宿主的，沙盒只画格子里的内容 */

@@ -62,15 +62,71 @@ function wait(ms: number): Promise<void> {
     return new Promise(resolve => window.setTimeout(resolve, ms));
 }
 
+function readableResponseDetail(raw: string): string {
+    let parsed: unknown;
+    try {
+        parsed = raw ? JSON.parse(raw) : null;
+    } catch {
+        parsed = null;
+    }
+
+    const fromUnknown = (value: unknown): string => {
+        if (typeof value === "string") return value;
+        if (Array.isArray(value)) return value.map(fromUnknown).filter(Boolean).join("；");
+        if (!value || typeof value !== "object") return "";
+        const data = value as Record<string, unknown>;
+        return ["error", "message", "detail", "details", "hint", "code"]
+            .map(key => fromUnknown(data[key]))
+            .filter(Boolean)
+            .join("；");
+    };
+
+    return (fromUnknown(parsed) || raw)
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\bsbp_[a-z0-9_-]{8,}\b/gi, "sbp_[已隐藏]")
+        .replace(/\bsb_secret_[a-z0-9_-]{8,}\b/gi, "sb_secret_[已隐藏]")
+        .replace(/\beyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+\b/gi, "[JWT 已隐藏]")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 600);
+}
+
 async function callSupabaseAdmin<T>(payload: Record<string, unknown>): Promise<T> {
-    const res = await fetch("/api/supabase-admin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-    });
-    const data = await res.json().catch(() => ({})) as T & { ok?: boolean; error?: string };
-    if (!res.ok || data.ok === false) {
-        throw new Error(data.error || `管理接口返回 HTTP ${res.status}`);
+    let res: Response;
+    try {
+        res = await fetch("/api/supabase-admin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error([
+            "无法连接本站的云服务部署接口，请检查当前网络后重试。",
+            detail ? `浏览器原始提示：${detail}` : "浏览器没有返回更多错误信息。",
+        ].join("\n"));
+    }
+
+    const raw = await res.text().catch(() => "");
+    let data: (T & { ok?: boolean; error?: unknown }) | null = null;
+    try {
+        data = raw ? JSON.parse(raw) as T & { ok?: boolean; error?: unknown } : null;
+    } catch {
+        data = null;
+    }
+    if (!res.ok || data?.ok === false) {
+        const detail = data && typeof data.error === "string"
+            ? data.error
+            : readableResponseDetail(raw);
+        throw new Error(detail || [
+            "云服务部署接口没有返回可识别的错误内容。",
+            `本站接口状态：HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`,
+        ].join("\n"));
+    }
+    if (!data) {
+        throw new Error("云服务部署接口返回了空内容，请稍后重试。");
     }
     return data;
 }
@@ -126,7 +182,14 @@ export function CloudServicesSetup({ onConfigChanged }: { onConfigChanged?: () =
                 setSelectedOrganizationSlug(config.managedOrganizationSlug || "");
             } else {
                 const data = await callSupabaseAdmin<{ organizations: OrganizationOption[] }>({ action: "organizations", token });
-                if (data.organizations.length === 0) throw new Error("该 Supabase 账号下没有可用组织。");
+                if (data.organizations.length === 0) {
+                    throw new Error([
+                        "Supabase 已接受这个 Access Token，但在它可访问的范围内没有返回任何组织。",
+                        token.trim().toLowerCase().startsWith("sbp_fc")
+                            ? "这是细粒度 Token：请在 Supabase 令牌页把目标组织加入授权范围，并开启 Organizations 的读取权限。"
+                            : "请确认当前 Supabase 账号已加入至少一个组织；如果刚创建 Token，可稍等片刻后再试。",
+                    ].join("\n"));
+                }
                 setOrganizations(data.organizations);
                 setSelectedOrganizationSlug(data.organizations.length === 1 ? data.organizations[0].slug : "");
                 setSelectedRef("");
@@ -136,7 +199,7 @@ export function CloudServicesSetup({ onConfigChanged }: { onConfigChanged?: () =
             setScopePush(true);
             setDialogOpen(true);
         } catch (err) {
-            setResultDialog({ title: "部署失败", text: err instanceof Error ? err.message : String(err) });
+            setResultDialog({ title: "Access Token 验证失败", text: err instanceof Error ? err.message : String(err) });
         } finally {
             setBusy(null);
         }
@@ -409,7 +472,10 @@ export function CloudServicesSetup({ onConfigChanged }: { onConfigChanged?: () =
                     <ExternalLink size={15} strokeWidth={1.8} />
                     打开 Supabase 令牌页
                 </button>
-                <p className="text-[calc(11px*var(--app-text-scale,1))] font-medium text-gray-400">生成 Access Token 后复制粘贴；只用一次，不保存</p>
+                <p className="text-center text-[calc(11px*var(--app-text-scale,1))] font-medium leading-relaxed text-gray-400">
+                    生成 Access Token 后复制粘贴；只用一次，不保存<br />
+                    sbp_fc… 细粒度 Token 需要授权目标组织及部署权限
+                </p>
             </div>
 
             {/* token 输入 + 圆形确认钮 */}

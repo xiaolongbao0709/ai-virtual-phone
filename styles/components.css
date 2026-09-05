@@ -4162,6 +4162,104 @@
   margin-top: 2px;
 }
 
+/* ── 预设生成参数发送选择 ── */
+.generation-parameter-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.generation-parameter-picker-btn {
+  width: 44px;
+  height: 44px;
+  margin-block: -12px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--c-icon);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.generation-parameter-picker-btn:hover,
+.generation-parameter-picker-btn:focus-visible {
+  background: color-mix(in srgb, var(--c-icon-active) 10%, transparent);
+  color: var(--c-icon-active);
+}
+
+.generation-parameter-picker-btn:active {
+  transform: scale(0.94);
+}
+
+.generation-parameter-control {
+  transition: opacity 160ms ease, filter 160ms ease;
+}
+
+.generation-parameter-control[data-disabled] {
+  opacity: 0.42;
+  filter: grayscale(0.35);
+}
+
+.generation-parameter-control[data-disabled] .ui-slider {
+  cursor: not-allowed;
+}
+
+.generation-parameter-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.generation-parameter-picker-desc,
+.generation-parameter-picker-note {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.generation-parameter-chips {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.generation-parameter-chip {
+  min-height: 44px;
+  padding: 10px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--c-page-body-bg);
+  color: var(--c-icon);
+  font-size: calc(11.5px*var(--app-text-scale,1));
+  font-weight: 400;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 160ms ease, color 160ms ease, transform 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.generation-parameter-chip[data-selected] {
+  background: var(--c-icon-active);
+  color: #fff;
+  font-weight: 600;
+}
+
+.generation-parameter-chip:active {
+  transform: scale(0.96);
+}
+
+.generation-parameter-chip:focus-visible {
+  outline: 2px solid var(--c-icon-active);
+  outline-offset: 2px;
+}
+
 /* ── Avatar Upload ── */
 .ui-avatar-upload {
   width: 72px;

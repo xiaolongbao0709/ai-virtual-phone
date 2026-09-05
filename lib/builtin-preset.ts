@@ -6,7 +6,7 @@ import type { PresetConfig } from "./settings-types";
 import { getCheckPhonePromptTags } from "./checkphone-config";
 
 export const BUILTIN_PRESET_ID = "builtin_default_v1";
-export const BUILTIN_PRESET_VERSION = 262; // 升版本会用出厂内容重写用户的内置预设副本（自定义会丢），非必要不升
+export const BUILTIN_PRESET_VERSION = 264; // 升版本会用出厂内容重写用户的内置预设副本（自定义会丢），非必要不升
 
 export function createBuiltinPreset(): PresetConfig {
     const now = Date.now();
@@ -667,6 +667,7 @@ export function createBuiltinPreset(): PresetConfig {
                     "#发朋友圈指令：",
                     "【要求】",
                     "- **禁止重复自己在<shortTermMemory>里最近已经发过的朋友圈！**",
+                    "- **照片中只要出现{{char}}本人，必须输出[照片:使用参考图:照片描述]；只有画面完全不出现{{char}}、仅为景物、食物或物件时，才输出[照片:不使用参考图:照片描述]。**",
                     "",
                     "【格式】",
                     "[朋友圈]",
@@ -890,7 +891,9 @@ export function createBuiltinPreset(): PresetConfig {
                     "朋友圈文字内容",
                     "[照片:使用参考图:照片描述] 或 [照片:不使用参考图:照片描述]（可选）",
                     "[/朋友圈]",
-                    "【要求】不要重复最近已经发过的朋友圈；emoji 直接用真实字符，不要用方括号表情。",
+                    "【要求】",
+                    "- 不要重复最近已经发过的朋友圈；emoji 直接用真实字符，不要用方括号表情。",
+                    "- 照片中只要出现{{char}}本人，必须使用参考图；只有画面完全不出现{{char}}、仅为景物、食物或物件时，才不使用参考图。",
                     "",
                     "### 评论朋友圈指令：",
                     "【格式】",
@@ -1242,7 +1245,9 @@ export function createBuiltinPreset(): PresetConfig {
                     "朋友圈文字内容",
                     "[照片:使用参考图:照片描述] 或 [照片:不使用参考图:照片描述]（可选）",
                     "[/朋友圈]",
-                    "【要求】角色名必须是当前群聊成员；内容符合该角色性格和心情；emoji 直接用真实字符，不要用方括号表情。",
+                    "【要求】",
+                    "- 角色名必须是当前群聊成员；内容符合该角色性格和心情；emoji 直接用真实字符，不要用方括号表情。",
+                    "- 照片中只要出现发帖角色本人，必须使用参考图；只有画面完全不出现该角色、仅为景物、食物或物件时，才不使用参考图。",
                     "",
                     "### 某角色评论朋友圈：",
                     "【格式】",

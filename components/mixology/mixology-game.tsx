@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ChevronLeft, Copy, History, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sun, WandSparkles, X } from "lucide-react";
-import { continueMix, editMixTurn, generateMixReply, canReplayMixFrom, MIX_REPAIR_EVENT, MIX_STORE_SNAPSHOT_TURNS, mixTurnRawText, recordMixPanelStore, refreshMixOpening, regenerateMixTail, rerollMixReply, rerunMixFilters, runMixEditSync, runMixSessionEnd, truncateMixAfterTurn, type MixRepairEventDetail } from "@/lib/mixology/engine";
+import { continueMix, editMixTurn, generateMixReply, canReplayMixFrom, MIX_STORE_SNAPSHOT_TURNS, mixTurnRawText, recordMixPanelStore, refreshMixOpening, regenerateMixTail, rerollMixReply, rerunMixFilters, runMixEditSync, runMixSessionEnd, truncateMixAfterTurn } from "@/lib/mixology/engine";
 import { findMixConnector, getMixMaterial, getMixSession, isMixBuiltinId, listMixPickables, MIX_CABINET_UPDATED_EVENT, resolveMixRecipeMaterials, saveMixMaterial, saveMixSession } from "@/lib/mixology/storage";
 import { applyMixMacros, MIX_DEFAULT_USER_NAME } from "@/lib/mixology/assembler";
 import { buildMixConditionContext, pickActiveMixMaterials } from "@/lib/mixology/state";
@@ -189,22 +189,6 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
         window.addEventListener(MIX_CABINET_UPDATED_EVENT, bump);
         return () => window.removeEventListener(MIX_CABINET_UPDATED_EVENT, bump);
     }, []);
-    /**
-     * 状态栏补写提示：补写是流式结束后追加的一次模型往返，屏幕上没有任何
-     * 东西在动——引擎广播事件，这里挂一个半透明小 toast 告诉用户在补什么。
-     */
-    const [repairNote, setRepairNote] = useState<string | null>(null);
-    useEffect(() => {
-        const onRepair = (event: Event) => {
-            const detail = (event as CustomEvent<MixRepairEventDetail>).detail;
-            if (!detail || detail.sessionId !== sessionId) return;
-            setRepairNote(detail.done ? null : detail.name ?? "");
-        };
-        window.addEventListener(MIX_REPAIR_EVENT, onRepair);
-        return () => window.removeEventListener(MIX_REPAIR_EVENT, onRepair);
-    }, [sessionId]);
-    // 兜底：这轮怎么收场的都别让 toast 挂着（引擎侧异常路径已在 finally 里收过一道）
-    useEffect(() => { if (!busy) setRepairNote(null); }, [busy]);
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const abortRef = useRef<AbortController | null>(null);
     const wheelRef = useRef<HTMLDivElement | null>(null);
@@ -1233,12 +1217,6 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
                             onToast={onToast}
                         />
                     ))}
-                </div>
-            ) : null}
-            {repairNote !== null ? (
-                <div className="mix-repair-toast" role="status">
-                    <span className="mix-repair-dots" aria-hidden="true"><i /><i /><i /></span>
-                    {repairNote ? `「${repairNote}」状态栏补写中` : "状态栏补写中"}
                 </div>
             ) : null}
             <div className="mix-game-inputbar">

@@ -175,22 +175,28 @@ export function DebugPromptPanel() {
         const sessions = loadChatSessions();
         const chars = loadCharacters();
         const charNameById = new Map(chars.map(c => [c.id, c.name]));
-        return sessions.map(session => {
-            if (session.isGroup) {
-                const fallbackName = (session.participantIds || [])
-                    .map(id => charNameById.get(id) || id)
-                    .slice(0, 3)
-                    .join("、");
+        // 不列出已删除角色的残留单聊，也不列出没有任何有效角色的空群聊。
+        return sessions
+            .filter(session => session.isGroup
+                ? (session.participantIds || []).some(id => charNameById.has(id))
+                : charNameById.has(session.contactId))
+            .map(session => {
+                if (session.isGroup) {
+                    const fallbackName = (session.participantIds || [])
+                        .map(id => charNameById.get(id))
+                        .filter(Boolean)
+                        .slice(0, 3)
+                        .join("、");
+                    return {
+                        session,
+                        label: `群聊 · ${session.groupName || fallbackName || "未命名群聊"}`,
+                    };
+                }
                 return {
                     session,
-                    label: `群聊 · ${session.groupName || fallbackName || "未命名群聊"}`,
+                    label: charNameById.get(session.contactId) || session.alias || session.contactId,
                 };
-            }
-            return {
-                session,
-                label: charNameById.get(session.contactId) || session.alias || session.contactId,
-            };
-        });
+            });
     }, [enabled, chatState?.session?.id]);
     const activeChatSession = chatSessionOptions.find(option => option.session.id === selectedChatSessionId)?.session
         ?? chatState?.session
