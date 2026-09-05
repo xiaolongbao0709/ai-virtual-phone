@@ -15,10 +15,12 @@ import type {
 import { MIX_CONNECTOR_NAME_RE, MIX_SLOT_ORDER, mixSlotEntries, normalizeMixSlots } from "./types";
 import {
     MIX_BUILTIN_BASE_ID,
+    MIX_BUILTIN_CHECKLIST_ID,
     MIX_BUILTIN_GLASS_ID,
     MIX_BUILTIN_PREFACE_ID,
     MIX_BUILTIN_READER_ID,
     createBuiltinBase,
+    createBuiltinChecklist,
     createBuiltinGlass,
     createBuiltinPreface,
     createBuiltinReader,
@@ -49,6 +51,7 @@ export const MIX_BUILTIN_IDS: readonly string[] = [
     MIX_BUILTIN_PREFACE_ID,
     MIX_BUILTIN_BASE_ID,
     MIX_BUILTIN_GLASS_ID,
+    MIX_BUILTIN_CHECKLIST_ID,
     MIX_BUILTIN_READER_ID,
 ];
 
@@ -58,7 +61,7 @@ export function isMixBuiltinId(id: string): boolean {
 
 /** 出厂件工厂直读：不落库，每次现造，天然随版本更新 */
 export function listMixBuiltins(kind?: MixMaterialKind): MixMaterial[] {
-    const factory: MixMaterial[] = [createBuiltinPreface(), createBuiltinBase(), createBuiltinGlass(), createBuiltinReader()];
+    const factory: MixMaterial[] = [createBuiltinPreface(), createBuiltinBase(), createBuiltinGlass(), createBuiltinChecklist(), createBuiltinReader()];
     return kind ? factory.filter((m) => m.kind === kind) : factory;
 }
 

@@ -533,7 +533,7 @@ const STRUCTURE_ROWS: { section: string; from: string; kind?: string }[] = [
     { section: "# 状态栏", from: "格式说明在前，小票的「输出契约」是一个 ##，壳为 [状态栏]...[/状态栏]", kind: "ticket" },
     { section: "# 小剧场", from: "格式说明在前，尾调的「输出契约」是一个 ##，壳为 [小剧场]...[/小剧场]", kind: "encore" },
     { section: "# 示例对话", from: "角色卡：示例对话", kind: "character" },
-    { section: "# 输出格式检查", from: "核对材料（叠多件按顺序拼）；没装时由系统按状态栏/小剧场自动生成", kind: "checklist" },
+    { section: "# 输出格式检查", from: "核对材料（叠多件按顺序拼）；没装则没有这一段（官方出厂件在槽位候选里可选）", kind: "checklist" },
 ];
 
 export function MixStructureSheet({ highlight, onClose }: { highlight?: string; onClose: () => void }) {

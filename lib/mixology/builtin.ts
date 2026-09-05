@@ -1,5 +1,5 @@
 // lib/mixology/builtin.ts
-// 独家特调 · 官方出厂材料：序言/基底/杯型的默认文案，以及一件示范机括「朗读」。
+// 独家特调 · 官方出厂材料：序言/基底/杯型/核对的默认文案，以及一件示范机括「朗读」。
 // 这几件是"素杯也好喝"的底线——玩家一件配料不装、只拿一张角色卡也能开局。
 // 文案升级时 bump MIX_BUILTIN_VERSION，storage 会用出厂内容刷新官方件。
 
@@ -10,6 +10,7 @@ export const MIX_BUILTIN_VERSION = 4;
 export const MIX_BUILTIN_PREFACE_ID = "mix_builtin_preface";
 export const MIX_BUILTIN_BASE_ID = "mix_builtin_base";
 export const MIX_BUILTIN_GLASS_ID = "mix_builtin_glass";
+export const MIX_BUILTIN_CHECKLIST_ID = "mix_builtin_checklist";
 
 const now = () => Date.now();
 
@@ -66,6 +67,30 @@ export function createBuiltinGlass(): MixTextMaterial {
             "以小说正文的形式输出，第三人称叙述，每轮 2~4 个自然段，段落之间空一行。",
             "- 叙述里穿插动作、神态与环境细节，让画面能被看见；不要写成流水账。",
             "- 每轮在留有余韵处收笔，给{{user}}接话的空间；不要替{{user}}总结感受。",
+        ].join("\n"),
+        tags: ["官方"],
+        createdAt: now(),
+        updatedAt: now(),
+    };
+}
+
+/**
+ * 官方核对：系统提示词最后一节「输出格式检查」的默认清单（历史上曾由组装器按装了几块
+ * 状态栏/小剧场临时拼出来，现在与序言同规则：槽位里选了才有这一段，不选就没有，所见即所得）。
+ * 按一块状态栏 + 一块小剧场的通用版写；装了多块或有机括要求的输出块，自建一件在此基础上改。
+ */
+export function createBuiltinChecklist(): MixTextMaterial {
+    return {
+        id: MIX_BUILTIN_CHECKLIST_ID,
+        kind: "checklist",
+        name: "官方 · 标准核对",
+        hook: "出厂自带的收尾清单：正文、状态栏、小剧场逐项核对",
+        author: "独家特调",
+        content: [
+            "每轮回复发出前逐项核对：",
+            "- 正文符合「正文输出要求」。",
+            "- 回复最开头已按「状态栏」的格式输出 [状态栏]...[/状态栏] 块——任何一轮都不能缺。",
+            "- 回复最末尾已按「小剧场」的格式输出 [小剧场]...[/小剧场] 块——任何一轮都不能缺。",
         ].join("\n"),
         tags: ["官方"],
         createdAt: now(),

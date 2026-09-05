@@ -17,7 +17,7 @@ import type {
 } from "@/lib/mixology/types";
 import { createMixId, formatMixTags, MIX_KIND_LABELS, MIX_PANEL_DEFAULT_LAYOUT, MIX_SECTION_TITLE_DEFAULTS, MIX_TAG_MAX, mixPanelLayoutOf, normalizeMixConnectorNames, normalizeMixDialogueButton, parseMixTags, type MixSectionTitleKey } from "@/lib/mixology/types";
 import { applyMixFilterRules } from "@/lib/mixology/prose";
-import { mixDefaultChecklistText } from "@/lib/mixology/assembler";
+import { createBuiltinChecklist } from "@/lib/mixology/builtin";
 import {
     buildMixCardFreeformText,
     MIX_CARD_PROFILE_FALLBACK,
@@ -75,7 +75,7 @@ const KIND_GUIDE: Record<MixMaterialKind, { what: string; where: string }> = {
     },
     checklist: {
         what: "这里写输出格式检查：系统提示词最后一节的收尾核对清单，模型动笔前逐项核对本轮必须带上什么、禁止什么。一行一条，写得越具体越难被忽略。",
-        where: "进入系统提示词末尾「输出格式检查」段，紧挨对话历史；不装则由系统按已装的状态栏/小剧场自动生成一份。",
+        where: "进入系统提示词末尾「输出格式检查」段，紧挨对话历史；与序言同规则，槽里没装就没有这一段（官方出厂件在槽位候选里可选）。",
     },
     mechanism: {
         what: "一段在沙盒里跑的逻辑，加一块常驻在对局画面上的界面。两半共用同一份存储，可以只写一半。",
@@ -119,7 +119,7 @@ const TEXT_FIELD_COPY: Record<"preface" | "base" | "flavor" | "glass" | "strengt
     },
     checklist: {
         label: "输出格式检查",
-        placeholder: "系统提示词的最后一节，模型收尾前逐项核对的清单。不装这件时系统按状态栏/小剧场自动生成；装了就整段用你写的。例：\n每轮回复发出前逐项核对：\n- 正文符合「正文输出要求」。\n- 回复最开头已按「状态栏」的格式输出 [状态栏]...[/状态栏] 块——任何一轮都不能缺。\n- 回复末尾已写 [拍立得]...[/拍立得] 块——任何一轮都不能缺。\n- 已写〔记〕行；该归纳时写〔纳〕，该压核心时写〔核〕。",
+        placeholder: "系统提示词的最后一节，模型收尾前逐项核对的清单。槽里没装就没有这一段。例：\n每轮回复发出前逐项核对：\n- 正文符合「正文输出要求」。\n- 回复最开头已按「状态栏」的格式输出 [状态栏]...[/状态栏] 块——任何一轮都不能缺。\n- 回复末尾已写 [拍立得]...[/拍立得] 块——任何一轮都不能缺。\n- 已写〔记〕行；该归纳时写〔纳〕，该压核心时写〔核〕。",
     },
 };
 
@@ -197,11 +197,11 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
         initialCard?.examples ? initialCard.examples.map((e) => ({ ...e })) : [],
     );
     // 文本类 / 小票 / 装饰 / 尾调
-    // 新建「核对」时预填系统默认清单（状态栏 + 小剧场各一块的通用版），作者在此基础上增删
+    // 新建「核对」时预填官方出厂件的清单（状态栏 + 小剧场各一块的通用版），作者在此基础上增删
     const [content, setContent] = useState(
         initial && "content" in initial
             ? (initial as MixTextMaterial).content
-            : kind === "checklist" ? mixDefaultChecklistText() : "",
+            : kind === "checklist" ? createBuiltinChecklist().content : "",
     );
     // 仅序言：各分段标题的覆写（留空的键用默认标题）
     const [sectionTitles, setSectionTitles] = useState<Partial<Record<MixSectionTitleKey, string>>>(
