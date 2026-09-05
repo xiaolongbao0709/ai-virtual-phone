@@ -1304,6 +1304,26 @@
     height: 24px;
 }
 
+/* 旧轮次懒加载：顶上一颗「查看更早」 */
+.mix-load-more {
+    display: block;
+    margin: 6px auto 14px;
+    padding: 6px 14px;
+    border: none;
+    border-radius: 999px;
+    background: var(--mix-panel);
+    color: var(--mix-dim);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, transform 0.16s;
+}
+
+.mix-load-more:active {
+    transform: scale(0.96);
+    color: var(--mix-violet);
+}
+
 /* AI 正文：无气泡全宽，左右对称 */
 .mix-prose {
     margin: 14px 0;
