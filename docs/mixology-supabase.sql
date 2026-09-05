@@ -13,7 +13,7 @@
 create table if not exists public.mixology_items (
   id text primary key,
 
-  kind text not null check (kind in ('character', 'persona', 'base', 'flavor', 'glass', 'strength', 'ticket', 'garnish', 'encore', 'filter', 'mechanism')),
+  kind text not null check (kind in ('character', 'persona', 'preface', 'base', 'flavor', 'glass', 'strength', 'ticket', 'garnish', 'encore', 'filter', 'mechanism')),
   name text not null,
   hook text not null default '',
   cover text not null default '',
@@ -138,7 +138,7 @@ notify pgrst, 'reload schema';
 
 -- ─────────────────────────────────────────────────────────────
 -- 已建库升级（老库执行这一段即可，重复执行安全；一次全跑完就是最新状态）：
---  1) kind 检查约束补齐十一类：persona（面具）、filter（滤网）、mechanism（机括）
+--  1) kind 检查约束补齐十二类：persona（面具）、preface（序言）、filter（滤网）、mechanism（机括）
 --  2) 创作者头像：两张表加 author_avatar 列
 --
 -- 说明：配方的 materials 列本来就是 jsonb，「一格叠多件 + 每件的生效条件」
@@ -146,7 +146,7 @@ notify pgrst, 'reload schema';
 alter table public.mixology_items drop constraint if exists mixology_items_kind_check;
 alter table public.mixology_items
   add constraint mixology_items_kind_check
-  check (kind in ('character', 'persona', 'base', 'flavor', 'glass', 'strength', 'ticket', 'garnish', 'encore', 'filter', 'mechanism'));
+  check (kind in ('character', 'persona', 'preface', 'base', 'flavor', 'glass', 'strength', 'ticket', 'garnish', 'encore', 'filter', 'mechanism'));
 alter table public.mixology_items add column if not exists author_avatar text not null default '';
 alter table public.mixology_recipes add column if not exists author_avatar text not null default '';
 notify pgrst, 'reload schema';
