@@ -17,6 +17,7 @@ import type {
 } from "@/lib/mixology/types";
 import { createMixId, formatMixTags, MIX_KIND_LABELS, MIX_PANEL_DEFAULT_LAYOUT, MIX_SECTION_TITLE_DEFAULTS, MIX_TAG_MAX, mixPanelLayoutOf, normalizeMixConnectorNames, normalizeMixDialogueButton, parseMixTags, type MixSectionTitleKey } from "@/lib/mixology/types";
 import { applyMixFilterRules } from "@/lib/mixology/prose";
+import { mixDefaultChecklistText } from "@/lib/mixology/assembler";
 import {
     buildMixCardFreeformText,
     MIX_CARD_PROFILE_FALLBACK,
@@ -196,8 +197,11 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
         initialCard?.examples ? initialCard.examples.map((e) => ({ ...e })) : [],
     );
     // 文本类 / 小票 / 装饰 / 尾调
+    // 新建「核对」时预填系统默认清单（状态栏 + 小剧场各一块的通用版），作者在此基础上增删
     const [content, setContent] = useState(
-        initial && "content" in initial ? (initial as MixTextMaterial).content : "",
+        initial && "content" in initial
+            ? (initial as MixTextMaterial).content
+            : kind === "checklist" ? mixDefaultChecklistText() : "",
     );
     // 仅序言：各分段标题的覆写（留空的键用默认标题）
     const [sectionTitles, setSectionTitles] = useState<Partial<Record<MixSectionTitleKey, string>>>(

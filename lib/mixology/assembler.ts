@@ -205,6 +205,17 @@ function encoreSection(encores: MixEncoreMaterial[], charName: string, userName:
 
 /** 收尾核对清单：放在最后压阵，防止模型写完正文忘了必须输出的块。
  *  段名引用跟随序言的自定义标题（refs），改了标题清单仍指得到对应段。 */
+/** 系统默认的输出格式检查正文（按一块状态栏 + 一块小剧场写的通用版）：
+ *  新建「核对」材料时预填这一段，作者在此基础上增删；标题行由装配时统一加。 */
+export function mixDefaultChecklistText(): string {
+    const items = checklistSection(1, 1, "", {
+        glass: MIX_SECTION_TITLE_DEFAULTS.glass,
+        ticket: MIX_SECTION_TITLE_DEFAULTS.ticket,
+        encore: MIX_SECTION_TITLE_DEFAULTS.encore,
+    });
+    return items ? items.split("\n").slice(1).join("\n") : "";
+}
+
 function checklistSection(
     ticketCount: number,
     encoreCount: number,
