@@ -773,8 +773,11 @@ export async function generateImageFromConfiguredApi(params: {
     };
   }
 
-  // OpenAI 兼容模式
-  if (!settings.apiKey.trim() || !settings.baseUrl.trim() || !settings.model.trim()) return null;
+  // OpenAI 兼容模式：使用当前激活预设（旧配置由存储层迁移后仍保持兼容）
+  const openaiPreset = settings.openaiPresets?.find(preset => preset.id === settings.activeOpenAiPresetId)
+    || settings.openaiPresets?.[0];
+  const openaiSettings = openaiPreset ? { ...settings, ...openaiPreset } : settings;
+  if (!openaiSettings.apiKey.trim() || !openaiSettings.baseUrl.trim() || !openaiSettings.model.trim()) return null;
 
   const reference = params.characterId ? settings.characterReferences[params.characterId] : undefined;
   const rawReferenceImageDataUrl = params.useReferenceImage && reference?.assetId
@@ -785,11 +788,11 @@ export async function generateImageFromConfiguredApi(params: {
     ? await normalizeReferenceImageForEdit(rawReferenceImageDataUrl)
     : null;
   throwIfAborted(params.signal);
-  const prompt = mergePrompt(description, settings.extraPrompt);
+  const prompt = mergePrompt(description, openaiSettings.extraPrompt);
 
-  const data = settings.requestMode === "direct"
-    ? await generateImageDirect({ settings, prompt, referenceImageDataUrl, signal: params.signal })
-    : await generateImageViaServerOrProxy({ settings, prompt, referenceImageDataUrl, signal: params.signal });
+  const data = openaiSettings.requestMode === "direct"
+    ? await generateImageDirect({ settings: openaiSettings, prompt, referenceImageDataUrl, signal: params.signal })
+    : await generateImageViaServerOrProxy({ settings: openaiSettings, prompt, referenceImageDataUrl, signal: params.signal });
 
   throwIfAborted(params.signal);
   const mimeType = data.mimeType || "image/png";
