@@ -8,6 +8,7 @@ import { ChatEngineError, sendLLMRequest, sendLLMStreamRequest } from "../chat-e
 import type { LLMMessage } from "../llm-prompt-assembler";
 import { loadApiConfigs, loadBindingConfig } from "../settings-storage";
 import type { ApiConfig } from "../settings-types";
+import type { MixHookSection } from "./mechanism-protocol";
 import { applyMixMacros, assembleMixPrompt, MIX_DEFAULT_USER_NAME, MIX_ENCORE_CLOSE, MIX_ENCORE_OPEN, MIX_TICKET_CLOSE, MIX_TICKET_OPEN, mixNamedOpen, type MixAssembledPrompt } from "./assembler";
 import { applyMixFilterRules, extractMixBlocks, type MixExtractedBlock } from "./prose";
 import {
@@ -74,7 +75,7 @@ export function resolveMixApiConfig(): ApiConfig | null {
 }
 
 /** 从方案快照装配提示词（材料从酒柜按 id 现取；角色卡被删则报错） */
-function assembleFromSession(session: MixSession): {
+function assembleFromSession(session: MixSession, sections?: MixHookSection[]): {
     prompt: MixAssembledPrompt;
     /** 本轮生效的小票/尾调（条件筛过、按槽位顺序）——每件各自成块 */
     tickets: MixTicketMaterial[];
@@ -93,6 +94,7 @@ function assembleFromSession(session: MixSession): {
         userName: session.userName,
         openingIndex: session.openingIndex,
         state: session.state,
+        sections,
     });
     const tickets = (active.ticket ?? []).filter((m): m is MixTicketMaterial => m.kind === "ticket");
     const encores = (active.encore ?? []).filter((m): m is MixEncoreMaterial => m.kind === "encore");
@@ -368,7 +370,7 @@ async function runMechanismHooks(
     hook: MixHook,
     input: { text?: string; ticketRaws?: string[]; encoreRaws?: string[]; edited?: boolean },
     roster?: MixMechanismMaterial[],
-): Promise<{ text?: string; notes: string[]; state: MixState; store: Record<string, Record<string, string>>; roster: MixMechanismMaterial[]; wrote: string[] }> {
+): Promise<{ text?: string; notes: string[]; sections: MixHookSection[]; state: MixState; store: Record<string, Record<string, string>>; roster: MixMechanismMaterial[]; wrote: string[] }> {
     // roster：这一轮的机括名单。生效条件一轮只判一次（落杯前那次），之后
     // 由调用方原封传回来——否则小票一更新记住的值，条件在同一轮里翻脸，
     // 落杯前注入的标记行就没人回收，原样漏进正文。
@@ -380,7 +382,7 @@ async function runMechanismHooks(
     }
     const store = { ...(session.mechanismStore ?? {}) };
     // wrote：这一趟真正重新记了账的机括。调用方据此判断"谁没记"，别让它原来的账被连累
-    const out = { text: input.text, notes: [] as string[], state: {} as MixState, store, roster: mechanisms, wrote: [] as string[] };
+    const out = { text: input.text, notes: [] as string[], sections: [] as MixHookSection[], state: {} as MixState, store, roster: mechanisms, wrote: [] as string[] };
     if (!mechanisms.length) return out;
     for (const material of mechanisms) {
         const script = material.script?.trim();
@@ -407,6 +409,7 @@ async function runMechanismHooks(
             : await runMixHook(session.id, material.id, script, hook, payload);
         if (typeof result.text === "string") out.text = result.text;
         if (result.note) out.notes.push(result.note);
+        if (result.sections?.length) out.sections.push(...result.sections);
         if (result.state) out.state = mergeHookState(out.state, result.state);
         if (result.store) { store[material.id] = result.store; out.wrote.push(material.id); }
     }
@@ -414,14 +417,14 @@ async function runMechanismHooks(
 }
 
 /** 落杯前：给机括一次改写玩家发言、追加临时提示的机会。返回本轮机括名单，出杯后照单回收 */
-async function runBeforeSendHooks(session: MixSession, text?: string): Promise<{ session: MixSession; text?: string; note?: string; roster: MixMechanismMaterial[] }> {
+async function runBeforeSendHooks(session: MixSession, text?: string): Promise<{ session: MixSession; text?: string; note?: string; sections: MixHookSection[]; roster: MixMechanismMaterial[] }> {
     const result = await runMechanismHooks(session, "beforeSend", { text });
     const next: MixSession = {
         ...session,
         state: mergeHookState(session.state ?? {}, result.state),
         mechanismStore: result.store,
     };
-    return { session: next, text: result.text, note: result.notes.join("\n") || undefined, roster: result.roster };
+    return { session: next, text: result.text, note: result.notes.join("\n") || undefined, sections: result.sections, roster: result.roster };
 }
 
 /**
@@ -529,6 +532,7 @@ async function runMixGeneration(
     skipBeforeSend = false,
     onDelta?: (text: string) => void,
     roster?: MixMechanismMaterial[],
+    sections?: MixHookSection[],
 ): Promise<MixReplyResult> {
     const apiConfig = resolveMixApiConfig();
     if (!apiConfig) {
@@ -538,6 +542,8 @@ async function runMixGeneration(
     // 因为改写要发生在发言落库之前）；这些路径没有新发言，机括只能追加临时提示
     let working = session;
     let extraNote: string | undefined;
+    // 机括挂进系统提示词的段：与 note 一样只活这一轮，不落库
+    let hookSections = sections;
     // 本轮机括名单：落杯前判一次条件，出杯后照同一份名单跑回收——
     // 中途小票改了记住的值也不换人，注入过格式要求的机括必须自己收尾
     let turnRoster = roster;
@@ -545,11 +551,12 @@ async function runMixGeneration(
         const before = await runBeforeSendHooks(session);
         working = before.session;
         extraNote = before.note;
+        hookSections = before.sections;
         turnRoster = before.roster;
         if (working !== session) saveMixSession(working);
     }
     const combinedNudge = [nudge, extraNote].filter(Boolean).join("\n\n") || undefined;
-    const { prompt: assembled, tickets, encores, active } = assembleFromSession(working);
+    const { prompt: assembled, tickets, encores, active } = assembleFromSession(working, hookSections);
     const messages = buildMixMessages(working, assembled, combinedNudge, buildFeedResolver(working, tickets, encores));
     const meta = { characterName: working.charName, userName: working.userName || "你" };
     // skipTimestampStrip：特调是"所见即模型所写"，不走聊天那套幻觉时间戳剥离——
@@ -691,7 +698,7 @@ export async function generateMixReply(
     onUserTurn?.();
     // 这条路径的落杯前已经跑过了，别在 runMixGeneration 里重复触发；
     // 名单原封带过去，出杯后照单回收
-    return runMixGeneration(withUser, before.note, signal, true, onDelta, before.roster);
+    return runMixGeneration(withUser, before.note, signal, true, onDelta, before.roster, before.sections);
 }
 
 /** 本局全部小票材料（记住的值的声明来源），按槽位顺序 */

@@ -8,7 +8,7 @@
 // 这里只放两件事：递进去的数据包长什么样、还回来的东西怎么验。
 // 都是纯函数，可以脱离浏览器单测——这段错了不会报错，只会让机括默默改坏别人的对局。
 
-import type { MixState, MixStateValue } from "./types";
+import type { MixSectionTitleKey, MixState, MixStateValue } from "./types";
 
 /** 钩子点：流水线上开的四个口子（第五个「上桌时」属于常驻界面，不走这条通道） */
 export type MixHook = "sessionStart" | "beforeSend" | "afterReply" | "sessionEnd";
@@ -53,16 +53,32 @@ export type MixHookPayload = {
 };
 
 /** 沙盒还回来的东西 */
+/**
+ * 挂进系统提示词的一段：at 指定挂在哪个分段之后，text 原样接上（标题自带，
+ * 写 # 就是独立一段，写 ## 就读作那一段的小节）。只在这一轮的提示词里存在，不落库。
+ */
+export type MixHookSection = {
+    at: MixSectionTitleKey;
+    text: string;
+};
+
 export type MixHookResult = {
     /** 改写 text（落杯前改玩家这句，出杯后改模型正文） */
     text?: string;
-    /** 追加一段只在这一轮生效的临时提示 */
+    /** 追加一段只在这一轮生效的临时提示（挂在最末尾那条 user 消息） */
     note?: string;
+    /** 挂进系统提示词指定分段之后的内容（落杯前钩子有效） */
+    sections?: MixHookSection[];
     /** 要写进对局的记住值 */
     state?: MixState;
     /** 覆盖这件机括自己的存储 */
     store?: MixMechanismStore;
 };
+
+/** 可挂的分段键：与序言自定义标题的那一套一致 */
+export const MIX_HOOK_SECTION_KEYS: readonly MixSectionTitleKey[] = [
+    "base", "character", "persona", "world", "flavor", "glass", "ticket", "encore", "examples", "checklist",
+];
 
 // text / note / store 不设长度上限，也绝不静默裁剪——被截在半句话上的记忆、
 // 悄悄丢掉的存储键，出了问题根本查不到原因，比撑大上下文更伤人。
@@ -125,6 +141,17 @@ export function normalizeHookResult(value: unknown): MixHookResult {
         if (Object.keys(state).length) out.state = state;
     }
     if (record.store !== undefined) out.store = normalizeMechanismStore(record.store);
+    if (Array.isArray(record.sections)) {
+        const sections: MixHookSection[] = [];
+        for (const item of record.sections) {
+            if (!item || typeof item !== "object") continue;
+            const { at, text } = item as Record<string, unknown>;
+            if (typeof at !== "string" || !(MIX_HOOK_SECTION_KEYS as readonly string[]).includes(at)) continue;
+            const body = typeof text === "string" ? cleanText(text).trim() : "";
+            if (body) sections.push({ at: at as MixSectionTitleKey, text: body });
+        }
+        if (sections.length) out.sections = sections;
+    }
     return out;
 }
 
