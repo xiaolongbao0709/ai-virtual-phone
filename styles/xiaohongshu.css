@@ -1,3 +1,163 @@
+/* ===== Xiaohongshu Multi-Image & Slider Styles ===== */
+.xhs-publish-multi-images {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.xhs-publish-images-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+
+.xhs-publish-grid-item {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f0f0f0;
+}
+
+.xhs-publish-grid-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.xhs-publish-img-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.xhs-publish-grid-add {
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  border: 1.5px dashed #ccc;
+  background: #fafafa;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #888;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  cursor: pointer;
+}
+
+.xhs-publish-grid-add:active {
+  background: #f0f0f0;
+}
+
+.xhs-waterfall-multi-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.xhs-note-slider-container {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+.xhs-note-slider-track {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.xhs-note-slider-track::-webkit-scrollbar {
+  display: none;
+}
+
+.xhs-note-slider-item {
+  flex: 0 0 100%;
+  width: 100%;
+  height: 100%;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.xhs-note-slider-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.xhs-note-slider-indicator {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  color: #ffffff;
+  font-size: calc(12px * var(--app-text-scale, 1));
+  font-weight: 550;
+  letter-spacing: 0.5px;
+  pointer-events: none;
+}
+
+.xhs-note-slider-dots {
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+  pointer-events: none;
+}
+
+.xhs-slider-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+  transition: all 200ms ease;
+}
+
+.xhs-slider-dot.is-active {
+  width: 14px;
+  border-radius: 3px;
+  background: #ffffff;
+}
+
 .xhs-app {
   position: relative;
   width: 100%;

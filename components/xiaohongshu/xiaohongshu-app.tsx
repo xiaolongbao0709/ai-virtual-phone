@@ -404,17 +404,64 @@ function createCharacterPost(character: Character, activity: ParsedXiaohongshuCh
   };
 }
 
+function NoteDetailSlider({
+  note,
+  imageIds,
+  imageMap,
+}: {
+  note: XiaohongshuNote;
+  imageIds: string[];
+  imageMap: Record<string, string>;
+}) {
+  const [activeSlide, setActiveSlide] = useState(0);
+  return (
+    <div className="xhs-note-slider-container" style={getImageFrameStyle(note.imageWidth, note.imageHeight)}>
+      <div
+        className="xhs-note-slider-track"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          const index = Math.round(el.scrollLeft / (el.clientWidth || 1));
+          setActiveSlide(index);
+        }}
+      >
+        {imageIds.map((id, idx) => (
+          <div key={id || idx} className="xhs-note-slider-item">
+            {imageMap[id] ? (
+              <img src={imageMap[id]} alt={`Slide ${idx + 1}`} className="xhs-note-real-image" />
+            ) : (
+              <div className="cp-xhs-cover cp-xhs-cover--ivory" style={{ width: "100%", height: "100%" }} />
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="xhs-note-slider-indicator">
+        {activeSlide + 1} / {imageIds.length}
+      </div>
+      <div className="xhs-note-slider-dots">
+        {imageIds.map((_, idx) => (
+          <span key={idx} className={`xhs-slider-dot ${idx === activeSlide ? "is-active" : ""}`} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function NoteImage({
   note,
   imageMap,
   hideTextImageDescription = false,
   collapseBilingualTranslation,
+  isDetail,
 }: {
   note: XiaohongshuNote;
   imageMap: Record<string, string>;
   hideTextImageDescription?: boolean;
   collapseBilingualTranslation: boolean;
+  isDetail?: boolean;
 }) {
+  const imageIds = (note.imageAssetIds && note.imageAssetIds.length > 0)
+    ? note.imageAssetIds
+    : (note.imageAssetId ? [note.imageAssetId] : []);
   if (note.type === "video") {
     return (
       <div className={`cp-xhs-cover cp-xhs-cover--video cp-xhs-cover--${note.tone}`} style={VIDEO_XHS_IMAGE_FRAME_STYLE}>
@@ -434,10 +481,22 @@ function NoteImage({
       </div>
     );
   }
-  if (note.imageAssetId && imageMap[note.imageAssetId]) {
+  if (imageIds.length > 0 && imageIds.some(id => Boolean(imageMap[id]))) {
+    if (isDetail && imageIds.length > 1) {
+      return <NoteDetailSlider note={note} imageIds={imageIds} imageMap={imageMap} />;
+    }
+    const firstImgId = imageIds.find(id => Boolean(imageMap[id])) || imageIds[0];
     return (
       <div className="xhs-note-real-image-frame" style={getImageFrameStyle(note.imageWidth, note.imageHeight)}>
-        <img src={imageMap[note.imageAssetId]} alt="" className="xhs-note-real-image" />
+        <img src={imageMap[firstImgId]} alt="" className="xhs-note-real-image" />
+        {!isDetail && imageIds.length > 1 ? (
+          <div className="xhs-waterfall-multi-badge">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <rect x="3" y="3" width="14" height="14" rx="2" />
+              <path d="M7 21h12a2 2 0 0 0 2-2V7" />
+            </svg>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1295,7 +1354,7 @@ export function XiaohongshuApp({ onClose, onNotice, visible = true, onIdle, onBu
 
   useEffect(() => {
     const assetIds = Array.from(new Set([
-      ...state.notes.map(note => note.imageAssetId).filter(Boolean),
+      ...state.notes.flatMap(note => (note.imageAssetIds && note.imageAssetIds.length > 0 ? note.imageAssetIds : [note.imageAssetId])),
       state.profile.coverImageAssetId,
     ].filter(Boolean))) as string[];
     assetIds.forEach((assetId) => {
@@ -1464,53 +1523,77 @@ export function XiaohongshuApp({ onClose, onNotice, visible = true, onIdle, onBu
     setSettingsDraft(DEFAULT_XIAOHONGSHU_SETTINGS);
   }
 
-  async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const image = new Image();
-    const objectUrl = URL.createObjectURL(file);
-    image.onload = () => {
-      const canvas = document.createElement("canvas");
-      const maxSize = 960;
-      const sourceWidth = image.width;
-      let sourceHeight = image.height;
-      const sourceX = 0;
-      let sourceY = 0;
-      if (sourceHeight / sourceWidth > XHS_MAX_IMAGE_HEIGHT_RATIO) {
-        sourceHeight = Math.round(sourceWidth * XHS_MAX_IMAGE_HEIGHT_RATIO);
-        sourceY = Math.round((image.height - sourceHeight) / 2);
-      }
-      let width = sourceWidth;
-      let height = sourceHeight;
-      if (width > maxSize || height > maxSize) {
-        if (width > height) {
-          height = Math.round(height / width * maxSize);
-          width = maxSize;
-        } else {
-          width = Math.round(width / height * maxSize);
-          height = maxSize;
+  async function processImageFile(file: File): Promise<XiaohongshuDraftImage | null> {
+    return new Promise((resolve) => {
+      const image = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      image.onload = () => {
+        const canvas = document.createElement("canvas");
+        const maxSize = 960;
+        const sourceWidth = image.width;
+        let sourceHeight = image.height;
+        const sourceX = 0;
+        let sourceY = 0;
+        if (sourceHeight / sourceWidth > XHS_MAX_IMAGE_HEIGHT_RATIO) {
+          sourceHeight = Math.round(sourceWidth * XHS_MAX_IMAGE_HEIGHT_RATIO);
+          sourceY = Math.round((image.height - sourceHeight) / 2);
         }
-      }
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext("2d");
-      if (!context) {
+        let width = sourceWidth;
+        let height = sourceHeight;
+        if (width > maxSize || height > maxSize) {
+          if (width > height) {
+            height = Math.round(height / width * maxSize);
+            width = maxSize;
+          } else {
+            width = Math.round(width / height * maxSize);
+            height = maxSize;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          URL.revokeObjectURL(objectUrl);
+          resolve(null);
+          return;
+        }
+        context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          URL.revokeObjectURL(objectUrl);
+          if (!blob) {
+            resolve(null);
+            return;
+          }
+          saveChatImageToIndexedDB(blob).then((assetId) => {
+            const preview = URL.createObjectURL(blob);
+            setImageMap(prev => ({ ...prev, [assetId]: preview }));
+            resolve({ assetId, dataUrl: preview, width: canvas.width, height: canvas.height });
+          }).catch(() => resolve(null));
+        }, "image/jpeg", 0.82);
+      };
+      image.onerror = () => {
         URL.revokeObjectURL(objectUrl);
-        return;
-      }
-      context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
-      canvas.toBlob((blob) => {
-        URL.revokeObjectURL(objectUrl);
-        if (!blob) return;
-        saveChatImageToIndexedDB(blob).then((assetId) => {
-          const preview = URL.createObjectURL(blob);
-          setDraft(prev => ({ ...prev, image: { assetId, dataUrl: preview, width: canvas.width, height: canvas.height } }));
-          setImageMap(prev => ({ ...prev, [assetId]: preview }));
-        });
-      }, "image/jpeg", 0.82);
-    };
-    image.src = objectUrl;
+        resolve(null);
+      };
+      image.src = objectUrl;
+    });
+  }
+
+  async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || []);
     event.target.value = "";
+    if (files.length === 0) return;
+    const results = (await Promise.all(files.map(processImageFile))).filter((img): img is XiaohongshuDraftImage => Boolean(img));
+    if (results.length === 0) return;
+    setDraft((prev) => {
+      const existing = prev.images || (prev.image?.dataUrl ? [prev.image] : []);
+      const nextImages = [...existing, ...results];
+      return {
+        ...prev,
+        image: nextImages[0] || {},
+        images: nextImages,
+      };
+    });
   }
 
   async function handleProfileCoverChange(event: ChangeEvent<HTMLInputElement>) {
@@ -2696,6 +2779,7 @@ export function XiaohongshuApp({ onClose, onNotice, visible = true, onIdle, onBu
                   note={selectedNote}
                   imageMap={imageMap}
                   collapseBilingualTranslation={state.settings.collapseBilingualTranslation}
+                  isDetail={true}
                 />
               </div>
               <div className="cp-xhs-note-detail-card">
@@ -3019,31 +3103,61 @@ export function XiaohongshuApp({ onClose, onNotice, visible = true, onIdle, onBu
             </header>
             <div className="xhs-publish-content">
               <div className="xhs-publish-left">
-                {draft.image?.dataUrl === undefined && draft.image?.description === undefined ? (
+                {((draft.images && draft.images.length > 0) || draft.image?.dataUrl) ? (
+                  <div className="xhs-publish-multi-images">
+                    <div className="xhs-publish-images-grid">
+                      {(draft.images || [draft.image!]).map((img, idx) => (
+                        <div key={img.assetId || idx} className="xhs-publish-grid-item">
+                          <img src={img.dataUrl} alt={`Preview ${idx + 1}`} />
+                          <button
+                            type="button"
+                            className="xhs-publish-img-remove"
+                            onClick={() => {
+                              setDraft((prev) => {
+                                const list = (prev.images || [prev.image!]).filter((_, i) => i !== idx);
+                                return {
+                                  ...prev,
+                                  image: list[0] || {},
+                                  images: list.length > 0 ? list : undefined,
+                                };
+                              });
+                            }}
+                            aria-label="删除图片"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        className="xhs-publish-grid-add"
+                        onClick={() => fileRef.current?.click()}
+                        aria-label="继续添加图片"
+                      >
+                        <Plus size={24} />
+                        <span>添加</span>
+                      </button>
+                    </div>
+                    <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={handleImageChange} />
+                    <button
+                      type="button"
+                      className="xhs-upload-change-btn"
+                      onClick={() => setDraft(prev => ({ ...prev, image: {}, images: undefined }))}
+                    >
+                      清空所有图片
+                    </button>
+                  </div>
+                ) : draft.image?.description === undefined ? (
                   <div className="xhs-image-upload-area">
                     <div className="xhs-publish-placeholder">
                       <ImagePlus size={42} strokeWidth={1.5} color="#bbb" />
                       <div className="xhs-placeholder-actions">
-                        <button type="button" onClick={() => fileRef.current?.click()}>上传图片</button>
+                        <button type="button" onClick={() => fileRef.current?.click()}>上传图片 (支持多张)</button>
                         <button type="button" onClick={() => setDraft(prev => ({ ...prev, image: { ...prev.image, description: "" } }))}>描述图片</button>
                       </div>
                     </div>
-                    <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleImageChange} />
+                    <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={handleImageChange} />
                   </div>
-                ) : draft.image?.dataUrl ? (
-                  <>
-                    <div
-                      className="xhs-image-upload-area is-image-preview"
-                      style={getImageFrameStyle(draft.image.width, draft.image.height)}
-                      onClick={() => fileRef.current?.click()}
-                    >
-                      <img src={draft.image.dataUrl} alt="Preview" className="xhs-publish-preview-img" />
-                      <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleImageChange} />
-                    </div>
-                    <button type="button" className="xhs-upload-change-btn" onClick={() => setDraft(prev => ({ ...prev, image: {} }))}>
-                      取消并重新选择
-                    </button>
-                  </>
                 ) : (
                   <>
                     <div className="xhs-image-upload-area is-text-mode">
