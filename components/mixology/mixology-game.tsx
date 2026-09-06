@@ -47,6 +47,8 @@ type TurnFrame = { key: string; html: string; raw: string };
  */
 const MIX_INITIAL_TURNS = 12;
 const MIX_LOAD_MORE_TURNS = 12;
+/** 回溯把轮次砍短后至少还露着几条（不足就把收起数往回让） */
+const MIX_MIN_VISIBLE_TURNS = 4;
 
 function AssistantTurn({ turn, ticketFrames, encoreFrames, filterRules, state, dialogue }: { turn: MixTurn; ticketFrames: TurnFrame[]; encoreFrames: TurnFrame[]; filterRules?: MixFilterRule[]; state?: MixState; dialogue?: MixProseDialogue }) {
     // 展示顺序：状态栏在正文前、小剧场在正文后（与模型的输出顺序一致，无需重排）；
@@ -205,8 +207,12 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
      * free = 用户自己翻过了，别再拽他。
      */
     const stickRef = useRef<"top" | "bottom" | "free">("bottom");
-    /** 懒加载：当前渲染最近多少条；换局时重置 */
-    const [visibleTurnCount, setVisibleTurnCount] = useState(MIX_INITIAL_TURNS);
+    /**
+     * 懒加载：收起的更早轮次数（从头数）。记"收起几条"而不是"露出几条"：
+     * 回溯把后面的轮次砍掉时，收起的那些不会因此从顶上冒出来把画面往下推——
+     * 用户正停在被回溯的那一轮上，iOS 没有 scroll anchoring，顶上一长就跳走了。
+     */
+    const [hiddenTurnCount, setHiddenTurnCount] = useState(0);
     /**
      * 展开更早的轮次后，把原来最上面那条钉在屏幕上原来的位置：新插进来的轮次里
      * 小票/小剧场 iframe 是异步报高的，头一两秒内容会连着长高几次，每次报高都按锚点重落一次，
@@ -494,9 +500,9 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
     const [entering, setEntering] = useState(true);
     useLayoutEffect(() => {
         setEntering(true);
-        setVisibleTurnCount(MIX_INITIAL_TURNS);
         loadMoreAnchorRef.current = null;
         const entered = getMixSession(sessionId);
+        setHiddenTurnCount(Math.max(0, (entered?.turns.length ?? 0) - MIX_INITIAL_TURNS));
         stickRef.current = (entered?.turns ?? []).some((turn) => turn.role === "user") ? "bottom" : "top";
         applyStick();
         const timer = window.setTimeout(() => {
@@ -558,9 +564,24 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
             };
         }
         stickRef.current = "free";
-        setVisibleTurnCount((count) => count + MIX_LOAD_MORE_TURNS);
+        setHiddenTurnCount((count) => Math.max(0, count - MIX_LOAD_MORE_TURNS));
     }, []);
-    useLayoutEffect(() => { restoreLoadMoreAnchor(); }, [visibleTurnCount, restoreLoadMoreAnchor]);
+    useLayoutEffect(() => { restoreLoadMoreAnchor(); }, [hiddenTurnCount, restoreLoadMoreAnchor]);
+
+    /**
+     * 轮数变了跟着修正收起数：
+     * · 变少（回溯/撤回）：只保证还露着几条，不多露——不然顶上冒出旧轮次把画面推下去；
+     * · 变多（新一轮到了）且正贴着底：把顶上多出来的收掉，常驻的 iframe 数量不随长局增长。
+     */
+    const turnCount = session?.turns.length ?? 0;
+    useLayoutEffect(() => {
+        setHiddenTurnCount((hidden) => {
+            const maxHidden = Math.max(0, turnCount - MIX_MIN_VISIBLE_TURNS);
+            if (hidden > maxHidden) return maxHidden;
+            if (stickRef.current === "bottom") return Math.max(hidden, turnCount - MIX_INITIAL_TURNS);
+            return hidden;
+        });
+    }, [turnCount]);
 
     /**
      * 用户自己翻页了就撒手，别在画布撑高时把他拽回去。
@@ -987,8 +1008,6 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
             .filter((f) => f.html && f.raw);
 
     const lastTurn = session.turns[session.turns.length - 1];
-    /** 收起来的更早轮次数：渲染时从这里往后切 */
-    const hiddenTurnCount = Math.max(0, session.turns.length - visibleTurnCount);
     const canReroll = !busy && lastTurn?.role === "assistant" && session.turns.length > 1;
 
     /** 背景观感微调：蒙版提亮（0=原样，100=无蒙版）与封面模糊，按局保存 */
