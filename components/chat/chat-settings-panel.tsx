@@ -390,6 +390,7 @@ export function ChatSettingsPanel({
     };
     const [visionImagePromptLimit, setVisionImagePromptLimit] = useState(() => normalizeVisionImagePromptLimit(session.visionImagePromptLimit));
     const [bilingualTranslationEnabled, setBilingualTranslationEnabled] = useState(session.bilingualTranslationEnabled !== false);
+    const [offlineSummaryRetry, setOfflineSummaryRetry] = useState(session.offlineSummaryRetry !== false);
     const [collapseBilingualTranslation, setCollapseBilingualTranslation] = useState(session.collapseBilingualTranslation !== false);
     const [discardInvalidStickers, setDiscardInvalidStickers] = useState(session.discardInvalidStickers === true);
     // 流式生成：按会话区分（线上/线下），存 ChatSession 字段，默认关
@@ -1119,6 +1120,22 @@ export function ChatSettingsPanel({
                                     onChange={c => {
                                         setStreamOffline(c);
                                         updateSession({ streamOffline: c });
+                                    }}
+                                />
+                            </div>
+                        </div>
+                        <div className="menu-item">
+                            <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">线下摘要自动补提</span>
+                                <span className="menu-desc">仅当前会话：模型漏写 &lt;summary&gt; 时再发一次请求让它补；关闭则只调一次 API，漏了那轮就没摘要</span>
+                            </div>
+                            <div className="menu-right">
+                                <Toggle
+                                    checked={offlineSummaryRetry}
+                                    onChange={c => {
+                                        setOfflineSummaryRetry(c);
+                                        updateSession({ offlineSummaryRetry: c });
                                     }}
                                 />
                             </div>
