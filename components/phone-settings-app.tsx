@@ -112,6 +112,8 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
     const [timeAware, setTimeAware] = useState(true);
     const [promptViewerEnabled, setPromptViewerEnabled] = useState(false);
     const [quickActionEnabled, setQuickActionEnabled] = useState(false);
+    const [floatingDockEnabled, setFloatingDockEnabled] = useState(false);
+    const [floatingDockSheetOpen, setFloatingDockSheetOpen] = useState(false);
     const [keepAlive, setKeepAlive] = useState(false);
     // 角色电脑：施工中弹窗（返回 / 仍要看看）
     const pageBodyRef = useRef<HTMLDivElement | null>(null);
@@ -237,6 +239,12 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         onNotice(next ? "已开启快捷操作" : "已关闭快捷操作");
     }, [onNotice]);
 
+    const handleFloatingDockChange = useCallback((next: boolean) => {
+        setFloatingDockEnabled(next);
+        saveChatAppSettings({ ...loadChatAppSettings(), floatingDockEnabled: next });
+        onNotice(next ? "已开启悬浮球贴边收拢" : "已关闭悬浮球贴边收拢");
+    }, [onNotice]);
+
     const handleKeepAliveChange = useCallback((next: boolean) => {
         setKeepAlive(next);
         saveKeepAlive(next);
@@ -345,6 +353,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         setTimeAware(settings.timeAware !== false);
         setPromptViewerEnabled(settings.promptViewerEnabled === true);
         setQuickActionEnabled(settings.quickActionEnabled === true);
+        setFloatingDockEnabled(settings.floatingDockEnabled === true);
         setKeepAlive(loadKeepAlive());
     }, []);
 
@@ -458,7 +467,24 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                             </div>
                         ) : null}
                         <div className="settings-tools-section">
-                            <h3 className="settings-menu-section-title">Tools</h3>
+                            <div className="settings-tools-header">
+                                <div className="settings-tools-title-wrap">
+                                    <h3 className="settings-menu-section-title">Tools</h3>
+                                    <button
+                                        type="button"
+                                        className="settings-tools-info-btn"
+                                        onClick={() => setFloatingDockSheetOpen(true)}
+                                        aria-label="悬浮球偏好设置"
+                                        title="悬浮球偏好设置"
+                                    >
+                                        <span className="settings-tools-info-circle">
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                                <path d="M15.32 18.27L15.10 19.19Q14.09 19.58 13.49 19.79Q12.89 20 12.10 20Q10.88 20 10.21 19.41Q9.53 18.81 9.53 17.90Q9.53 17.54 9.58 17.17Q9.63 16.80 9.74 16.33L10.58 13.37Q10.69 12.94 10.77 12.56Q10.84 12.18 10.84 11.86Q10.84 11.29 10.61 11.07Q10.37 10.85 9.71 10.85Q9.39 10.85 9.05 10.95Q8.71 11.05 8.46 11.14L8.69 10.23Q9.51 9.89 10.26 9.65Q11.01 9.41 11.69 9.41Q12.89 9.41 13.55 10Q14.20 10.58 14.20 11.52Q14.20 11.71 14.16 12.20Q14.11 12.69 13.99 13.09L13.16 16.05Q13.06 16.40 12.98 16.86Q12.89 17.32 12.89 17.55Q12.89 18.14 13.16 18.35Q13.42 18.57 14.07 18.57Q14.38 18.57 14.76 18.46Q15.15 18.35 15.32 18.27M15.54 5.87Q15.54 6.64 14.95 7.18Q14.37 7.73 13.54 7.73Q12.72 7.73 12.13 7.18Q11.54 6.64 11.54 5.87Q11.54 5.10 12.13 4.55Q12.72 4 13.54 4Q14.37 4 14.95 4.55Q15.54 5.10 15.54 5.87" />
+                                            </svg>
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
                             <div className="menu-group settings-tools-menu">
                                 <div className="menu-item settings-tools-menu-item">
                                     <span className="card-icon card-icon-glass">
@@ -491,6 +517,32 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                             labelClassName="settings-menu-section-title"
                             items={SETTINGS_MENU.filter(item => ["identity", "about"].includes(item.id)).map(makeCardItem)}
                         />
+                        {floatingDockSheetOpen && (
+                            <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setFloatingDockSheetOpen(false)}>
+                                <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>
+                                    <div className="modal-header" data-ui="modal-header">
+                                        <span style={{ width: 44 }} />
+                                        <h3 className="modal-title">悬浮球设置</h3>
+                                        <button className="modal-header-btn modal-header-btn-muted" onClick={() => setFloatingDockSheetOpen(false)} aria-label="关闭"><X size={18} /></button>
+                                    </div>
+                                    <div className="modal-body modal-body-tight" data-ui="modal-body">
+                                        <div className="menu-group">
+                                            <div className="menu-item settings-tools-menu-item">
+                                                <span className="card-icon card-icon-glass">
+                                                    <SlidersHorizontal size={20} strokeWidth={1.8} />
+                                                </span>
+                                                <span className="settings-tools-menu-copy">
+                                                    <span className="menu-label appearance-menu-item-label">贴边半透明收拢模式</span>
+                                                </span>
+                                                <span className="menu-right settings-tools-menu-toggle">
+                                                    <Toggle checked={floatingDockEnabled} onChange={handleFloatingDockChange} className="settings-toggle-control" />
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         {accountSheetOpen && (
                             <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setAccountSheetOpen(false)}>
                                 <div className="modal-sheet" data-ui="modal-sheet" onClick={event => event.stopPropagation()}>

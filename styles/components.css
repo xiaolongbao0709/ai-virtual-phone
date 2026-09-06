@@ -1527,6 +1527,54 @@
 .settings-tools-menu-toggle {
   margin-left: 12px;
 }
+.settings-tools-header {
+  margin: 8px 4px 0;
+}
+.settings-tools-title-wrap {
+  display: inline-flex;
+  align-items: flex-start;
+  position: relative;
+}
+.settings-tools-title-wrap .settings-menu-section-title {
+  margin: 0;
+}
+.settings-tools-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 999px;
+  outline: none;
+  margin-left: 3px;
+  transform: translateY(-5px);
+  position: relative;
+}
+.settings-tools-info-btn::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  right: -8px;
+  bottom: -8px;
+}
+.settings-tools-info-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c-icon) 22%, transparent);
+  color: var(--c-icon-active);
+  transition: all 0.2s ease;
+}
+.settings-tools-info-btn:hover .settings-tools-info-circle {
+  background: color-mix(in srgb, var(--c-icon) 38%, transparent);
+  transform: scale(1.08);
+}
 .card-featured-chevron {
   color: var(--c-icon);
   flex-shrink: 0;
@@ -1639,6 +1687,62 @@
   box-shadow:
     0 0 32px 8px rgba(96, 218, 195, 0.26),
     0 6px 18px rgba(70, 154, 195, 0.18);
+}
+
+/* 悬浮球贴边停靠状态（半隐藏、低透明度、平滑阻尼动效） */
+.prompt-viewer-float-button.is-docked {
+  transform: translateX(36px) scale(0.75);
+  opacity: 0.55;
+  animation: none !important;
+  transition: transform 320ms cubic-bezier(0.25, 0.8, 0.25, 1), opacity 240ms ease, box-shadow 200ms ease;
+}
+
+.prompt-viewer-float-button.is-docked[data-dock-side="left"] {
+  transform: translateX(-36px) scale(0.75);
+}
+
+.prompt-viewer-float-button.is-docked:hover {
+  opacity: 0.9;
+  transform: translateX(24px) scale(0.78);
+}
+
+.prompt-viewer-float-button.is-docked[data-dock-side="left"]:hover {
+  transform: translateX(-24px) scale(0.78);
+}
+
+/* 弹窗打开态与展开挑选状态：恢复完全可见，停止原浮动动画保证贴边过渡丝滑无跳帧 */
+.prompt-viewer-float-button.is-open,
+.prompt-viewer-float-button.is-expanded {
+  transform: translateX(0) scale(0.75);
+  opacity: 1;
+  animation: none !important;
+  transition: transform 320ms cubic-bezier(0.25, 0.8, 0.25, 1), opacity 240ms ease, box-shadow 200ms ease;
+}
+
+/* 双球模式横向并排展开：靠右贴边时，提示词球在快捷操作球左侧并排（间距约 10px） */
+.prompt-viewer-float-button.is-expanded.is-paired {
+  transform: translateX(-52px) scale(0.75) !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  animation: none !important;
+}
+
+/* 靠左贴边时，提示词球在快捷操作球右侧并排 */
+.prompt-viewer-float-button.is-expanded.is-paired[data-dock-side="left"] {
+  transform: translateX(52px) scale(0.75) !important;
+}
+
+/* 双球贴边收拢时，次级球叠在主球内部，展开时横向丝滑滑出 */
+.prompt-viewer-float-button.is-hidden-behind {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateX(36px) scale(0.4) !important;
+  animation: none !important;
+  transition: transform 320ms cubic-bezier(0.25, 0.8, 0.25, 1), opacity 240ms ease;
+}
+
+.prompt-viewer-float-button.is-hidden-behind[data-dock-side="left"] {
+  transform: translateX(-36px) scale(0.4) !important;
 }
 
 .quick-action-popover {

@@ -5,6 +5,7 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "node --max-old-space-size=4096 scripts/local-next-server.mjs --dev",
+    "dev:3002": "node --max-old-space-size=4096 scripts/local-next-server.mjs --dev --port 3002",
     "build": "node scripts/build-weixin-assistant-dist.mjs && node scripts/build-personal-push-dist.mjs && next build && node scripts/restore-backdrop-filter.mjs",
     "start": "node scripts/local-next-server.mjs --prod",
     "lint": "next lint",

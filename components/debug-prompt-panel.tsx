@@ -1,10 +1,18 @@
 "use client";
 
-import { useState, useEffect, useRef, useSyncExternalStore, useMemo, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useState, useEffect, useRef, useSyncExternalStore, useMemo, useCallback, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties } from "react";
 import { getDebugChatState, getDebugPromptSnapshot, subscribeDebugChatState, subscribeDebugPromptSnapshot, type DebugPromptSnapshot } from "@/lib/debug-store";
 import { previewPromptRequestSnapshot, ChatEngineError } from "@/lib/chat-engine";
 import { previewGroupPromptRequestSnapshot } from "@/lib/group-chat-engine";
 import { FileText, X } from "lucide-react";
+import {
+    getFloatingDockState,
+    subscribeFloatingDockState,
+    expandFloatingDock,
+    collapseFloatingDock,
+    setFloatingDockAnchor,
+    setActiveFloatingTool,
+} from "@/lib/floating-dock-store";
 import {
     previewMomentsPostPrompt,
     previewMomentsCommentPrompt,
@@ -102,6 +110,9 @@ export function DebugPromptPanel() {
     const [mode, setMode] = useState<DebugMode>("chat");
     const [floatingPosition, setFloatingPosition] = useState<FloatingPosition | null>(null);
     const [draggingFloatingButton, setDraggingFloatingButton] = useState(false);
+    const [floatingDockEnabled, setFloatingDockEnabled] = useState(false);
+    const [quickActionEnabled, setQuickActionEnabled] = useState(false);
+    const dockState = useSyncExternalStore(subscribeFloatingDockState, getFloatingDockState, getFloatingDockState);
     const floatingDragRef = useRef<FloatingDragState | null>(null);
     const suppressFloatingClickRef = useRef(false);
     const [selectedChatSessionId, setSelectedChatSessionId] = useState("");
@@ -233,19 +244,43 @@ export function DebugPromptPanel() {
         if (nextSessionId !== selectedChatSessionId) setSelectedChatSessionId(nextSessionId);
     }, [chatSessionOptions, chatState?.session?.id, selectedChatSessionId]);
 
+    const handleClosePanel = useCallback(() => {
+        setCollapsed(true);
+        if (floatingDockEnabled) {
+            collapseFloatingDock();
+        }
+    }, [floatingDockEnabled]);
+
     useEffect(() => {
         const syncEnabled = (event?: Event) => {
             const detail = (event as CustomEvent | undefined)?.detail;
+            const settings = loadChatAppSettings();
             const nextEnabled = typeof detail?.promptViewerEnabled === "boolean"
                 ? detail.promptViewerEnabled
-                : loadChatAppSettings().promptViewerEnabled === true;
+                : settings.promptViewerEnabled === true;
             setEnabled(nextEnabled);
+            setQuickActionEnabled(typeof detail?.quickActionEnabled === "boolean" ? detail.quickActionEnabled : settings.quickActionEnabled === true);
+            setFloatingDockEnabled(typeof detail?.floatingDockEnabled === "boolean" ? detail.floatingDockEnabled : settings.floatingDockEnabled === true);
             if (!nextEnabled) setCollapsed(true);
         };
         syncEnabled();
         window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, syncEnabled);
         return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, syncEnabled);
     }, []);
+
+    useEffect(() => {
+        if (collapsed) return;
+        const handlePointerDown = (event: PointerEvent) => {
+            const panel = document.querySelector(".pv-panel");
+            const floatBtn = (event.target as HTMLElement | null)?.closest(".prompt-viewer-float-button");
+            if (floatBtn) return;
+            if (panel && !panel.contains(event.target as Node)) {
+                handleClosePanel();
+            }
+        };
+        document.addEventListener("pointerdown", handlePointerDown);
+        return () => document.removeEventListener("pointerdown", handlePointerDown);
+    }, [collapsed, handleClosePanel]);
 
     useEffect(() => {
         if (mode !== "chat" || !activeChatSnapshot) return;
@@ -567,7 +602,7 @@ export function DebugPromptPanel() {
         return Math.min(Math.max(value, 12), max);
     }
 
-    function getFloatingButtonBounds(button: HTMLButtonElement) {
+    function getFloatingButtonBounds(button: HTMLButtonElement, currentPos: FloatingPosition | null) {
         const parent = button.offsetParent instanceof HTMLElement ? button.offsetParent : null;
         const parentRect = parent?.getBoundingClientRect() ?? {
             left: 0,
@@ -575,19 +610,30 @@ export function DebugPromptPanel() {
             width: window.innerWidth,
             height: window.innerHeight,
         };
-        const rect = button.getBoundingClientRect();
+        // 始终使用未变换的纯净布局坐标：优先使用 state 中的位置，若初始未拖拽则取 offsetLeft / offsetTop（不受 CSS transform 影响）
+        const left = currentPos ? currentPos.left : button.offsetLeft;
+        const top = currentPos ? currentPos.top : button.offsetTop;
         return {
-            left: rect.left - parentRect.left,
-            top: rect.top - parentRect.top,
-            maxLeft: Math.max(12, parentRect.width - rect.width - 12),
-            maxTop: Math.max(12, parentRect.height - rect.height - 12),
+            left,
+            top,
+            maxLeft: Math.max(12, parentRect.width - 56 - 12),
+            maxTop: Math.max(12, parentRect.height - 56 - 12),
+            parentWidth: parentRect.width,
+            parentHeight: parentRect.height,
         };
     }
 
     function handleFloatingPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+        const isDual = floatingDockEnabled && quickActionEnabled && enabled;
+        const isPromptPrimary = !isDual || dockState.primaryTool === "prompt-viewer";
+        if (dockState.isExpanded || (isDual && !isPromptPrimary)) {
+            // 双球模式下且并非当前停靠主球，或处于展开挑选态时，不接受拖拽
+            return;
+        }
         event.stopPropagation();
         const button = event.currentTarget;
-        const bounds = getFloatingButtonBounds(button);
+        const anchor = isDual ? dockState.anchorPosition : null;
+        const bounds = getFloatingButtonBounds(button, (isDual && anchor) ? anchor : floatingPosition);
         floatingDragRef.current = {
             pointerId: event.pointerId,
             startClientX: event.clientX,
@@ -598,7 +644,7 @@ export function DebugPromptPanel() {
             maxTop: bounds.maxTop,
             moved: false,
         };
-        setDraggingFloatingButton(true);
+        // 不在 pointerDown 立即 setDraggingFloatingButton(true)，避免普通点击时瞬间取消 is-docked 产生动画抖动
         button.setPointerCapture(event.pointerId);
     }
 
@@ -608,8 +654,14 @@ export function DebugPromptPanel() {
         event.stopPropagation();
         const deltaX = event.clientX - drag.startClientX;
         const deltaY = event.clientY - drag.startClientY;
-        if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
-            drag.moved = true;
+        if (!drag.moved) {
+            // 超过 3px 移动阈值才判定为拖拽，杜绝手指/鼠标微小震颤把贴边位移写入 floatingPosition
+            if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+                drag.moved = true;
+                setDraggingFloatingButton(true);
+            } else {
+                return;
+            }
         }
         setFloatingPosition({
             left: clampFloatingPosition(drag.left + deltaX, drag.maxLeft),
@@ -621,7 +673,25 @@ export function DebugPromptPanel() {
         const drag = floatingDragRef.current;
         if (!drag || drag.pointerId !== event.pointerId) return;
         event.stopPropagation();
-        if (drag.moved) suppressFloatingClickRef.current = true;
+        if (drag.moved) {
+            suppressFloatingClickRef.current = true;
+            if (floatingDockEnabled) {
+                const bounds = getFloatingButtonBounds(event.currentTarget, floatingPosition);
+                const midX = bounds.parentWidth / 2;
+                const currentX = drag.left + (event.clientX - drag.startClientX);
+                const currentTop = drag.top + (event.clientY - drag.startClientY);
+                const isLeft = currentX < midX;
+                const snappedLeft = isLeft ? 18 : Math.max(18, bounds.parentWidth - 56 - 18);
+                const snappedTop = clampFloatingPosition(currentTop, bounds.maxTop);
+                const newPos = { left: snappedLeft, top: snappedTop };
+                setFloatingPosition(newPos);
+                setFloatingDockAnchor({ ...newPos, dockSide: isLeft ? "left" : "right" });
+                if (collapsed) {
+                    collapseFloatingDock();
+                }
+            }
+        }
+
         floatingDragRef.current = null;
         setDraggingFloatingButton(false);
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -634,6 +704,20 @@ export function DebugPromptPanel() {
         if (suppressFloatingClickRef.current) {
             suppressFloatingClickRef.current = false;
             return;
+        }
+        if (!collapsed) {
+            handleClosePanel();
+            return;
+        }
+        if (floatingDockEnabled) {
+            const isDual = quickActionEnabled && enabled;
+            const isPromptPrimary = !isDual || dockState.primaryTool === "prompt-viewer";
+            // Dual-ball mode: if currently docked as primary and not expanded, clicking expands both balls!
+            if (isDual && isPromptPrimary && dockState.isDocked && !dockState.isExpanded) {
+                expandFloatingDock();
+                return;
+            }
+            setActiveFloatingTool("prompt-viewer");
         }
         setCollapsed(false);
     }
@@ -756,24 +840,66 @@ export function DebugPromptPanel() {
 
     if (!enabled) return null;
 
+    const isPanelOpen = !collapsed;
+    const showFloatingButton = collapsed || floatingDockEnabled;
+    const isDual = floatingDockEnabled && quickActionEnabled && enabled;
+    const isPromptPrimary = !isDual || dockState.primaryTool === "prompt-viewer";
+
+    const isHiddenBehind = isDual && !isPromptPrimary && !isPanelOpen && !dockState.isExpanded;
+    const isDocked = floatingDockEnabled && !isPanelOpen && (
+        isPromptPrimary
+            ? (dockState.isDocked && !draggingFloatingButton)
+            : false
+    );
+    const isExpanded = floatingDockEnabled && !isPanelOpen && dockState.isExpanded;
+    const isPaired = isDual && !isPromptPrimary && !isPanelOpen && dockState.isExpanded;
+    const anchor = isDual ? dockState.anchorPosition : null;
+    const dockSide = dockState.dockSide;
+
+    const buttonClass = [
+        "prompt-viewer-float-button",
+        isHiddenBehind ? "is-hidden-behind" : "",
+        isDocked ? "is-docked" : "",
+        isPanelOpen ? "is-open" : "",
+        isExpanded ? "is-expanded" : "",
+        isPaired ? "is-paired" : "",
+    ].filter(Boolean).join(" ");
+
+    let buttonStyle: CSSProperties | undefined;
+    if (draggingFloatingButton && floatingPosition) {
+        buttonStyle = { left: floatingPosition.left, top: floatingPosition.top };
+    } else if (isDual && anchor) {
+        buttonStyle = { left: anchor.left, top: anchor.top };
+    } else if (floatingPosition) {
+        buttonStyle = { left: floatingPosition.left, top: floatingPosition.top };
+    } else if (isDual) {
+        buttonStyle = { bottom: 148, right: 18 };
+    }
+    if (isPanelOpen) {
+        buttonStyle = { ...buttonStyle, zIndex: 100001 };
+    }
+
+    const floatingButton = showFloatingButton ? (
+        <button
+            type="button"
+            className={buttonClass}
+            aria-label={isPanelOpen ? "关闭提示词查看器" : "打开提示词查看器"}
+            data-positioned={(isDual ? !!anchor : !!floatingPosition) ? "" : undefined}
+            data-dragging={draggingFloatingButton ? "" : undefined}
+            data-dock-side={floatingDockEnabled ? dockSide : undefined}
+            onPointerDown={handleFloatingPointerDown}
+            onPointerMove={handleFloatingPointerMove}
+            onPointerUp={handleFloatingPointerEnd}
+            onPointerCancel={handleFloatingPointerEnd}
+            onClick={handleFloatingButtonClick}
+            style={buttonStyle}
+        >
+            <FileText size={24} strokeWidth={1.9} />
+        </button>
+    ) : null;
+
     if (collapsed) {
-        return (
-            <button
-                type="button"
-                className="prompt-viewer-float-button"
-                aria-label="打开提示词查看器"
-                data-positioned={floatingPosition ? "" : undefined}
-                data-dragging={draggingFloatingButton ? "" : undefined}
-                onPointerDown={handleFloatingPointerDown}
-                onPointerMove={handleFloatingPointerMove}
-                onPointerUp={handleFloatingPointerEnd}
-                onPointerCancel={handleFloatingPointerEnd}
-                onClick={handleFloatingButtonClick}
-                style={floatingPosition ? { left: floatingPosition.left, top: floatingPosition.top } : undefined}
-            >
-                <FileText size={24} strokeWidth={1.9} />
-            </button>
-        );
+        return floatingButton;
     }
 
     const renderCharSelect = (value: string, onChange: (v: string) => void) => (
@@ -917,13 +1043,15 @@ export function DebugPromptPanel() {
     );
 
     return (
-        <div className="pv-panel" onPointerDown={e => e.stopPropagation()}>
+        <>
+            {floatingButton}
+            <div className="pv-panel" onPointerDown={e => e.stopPropagation()}>
             {/* Header */}
             <div className="pv-header">
                 <span className="pv-header-title">提示词查看器</span>
                 {resultMeta && <span className="pv-header-meta">{resultMeta.characterName}</span>}
                 <span style={{ flex: 1 }} />
-                <button type="button" className="pv-close-btn" aria-label="关闭" onClick={(e) => { e.stopPropagation(); setCollapsed(true); }}>
+                <button type="button" className="pv-close-btn" aria-label="关闭" onClick={(e) => { e.stopPropagation(); handleClosePanel(); }}>
                     <X size={18} strokeWidth={2} />
                 </button>
             </div>
@@ -1092,5 +1220,6 @@ export function DebugPromptPanel() {
                 </>
             )}
         </div>
+        </>
     );
 }
