@@ -58,6 +58,7 @@ import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { setChatActive } from "@/lib/music-action-queue";
 import { getMusicControlBridge } from "@/lib/music-control-bridge";
 import { setNextMusicSourceHint } from "@/lib/music-context";
+import { getListenTogetherState, startListenTogether } from "@/lib/listen-together";
 import { findPlayableMatch, getNeteaseLyrics, getNeteaseSongDetail } from "@/lib/music-service";
 import { approveMemoryWriteRequest } from "@/lib/tool-executor";
 import type { MemoryWriteRequest, ToolResult } from "@/lib/tool-executor";
@@ -1126,6 +1127,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [showVideoCall, setShowVideoCall] = useState(false);
     const [callInitiator, setCallInitiator] = useState<"user" | "character">("user");
     const [callInitiatorName, setCallInitiatorName] = useState<string>("");
+    const [listenTogetherInvite, setListenTogetherInvite] = useState<{ song: string; artist: string } | null>(null);
+    const [listenTogetherBusy, setListenTogetherBusy] = useState(false);
     const [userIdentity, setUserIdentity] = useState<UserIdentity | null>(null);
     const [enterToSendEnabled, setEnterToSendEnabled] = useState(() => loadChatAppSettings().enterToSendEnabled === true);
 
@@ -2798,6 +2801,71 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         }
     };
 
+    const handleRoleListenInvite = (song: string, artist: string) => {
+        if (session.isGroup || !character) return;
+        const listenState = getListenTogetherState();
+        if (listenState.status === "active" || listenState.status === "pending_char") {
+            showChatToast("你们已经在一起听，TA想换歌时会直接播放新歌");
+            return;
+        }
+        setListenTogetherInvite({ song, artist });
+    };
+
+    const acceptListenTogetherInvite = async () => {
+        const invite = listenTogetherInvite;
+        const musicBridge = getMusicControlBridge();
+        if (!invite || !musicBridge || !character) return;
+        setListenTogetherBusy(true);
+        showPersistentChatToast("接受邀请，正在加载歌曲...");
+        try {
+            const found = await findPlayableMatch(invite.song, invite.artist);
+            if (!found) {
+                showChatToast("没有找到TA想听的歌，邀请已取消");
+                setListenTogetherInvite(null);
+                return;
+            }
+            const { result: match } = found;
+            let playable: Parameters<typeof musicBridge.playTrack>[0] | null = null;
+            if (match.source === "local" && match.localTrack) {
+                playable = match.localTrack;
+            } else if (match.source === "netease" && match.neteaseResult) {
+                const r = match.neteaseResult;
+                playable = {
+                    id: `netease_${r.id}`,
+                    title: r.name,
+                    artist: r.artists,
+                    duration: r.duration / 1000,
+                    coverUrl: r.coverUrl,
+                    liked: false,
+                    addedAt: new Date().toISOString(),
+                };
+            }
+            if (!playable) {
+                showChatToast("没有找到可播放的版本");
+                setListenTogetherInvite(null);
+                return;
+            }
+            await startListenTogether({
+                characterId: character.id,
+                characterName: character.name,
+                track: playable,
+                inviter: "char",
+            });
+            setNextMusicSourceHint("char");
+            await musicBridge.playTrack(playable);
+            setListenTogetherInvite(null);
+            clearChatToast();
+            showChatToast(playable.title
+                ? `已接受，开始一起听《${playable.title}》`
+                : "已接受邀请，开始一起听");
+        } catch (err) {
+            console.warn("[ListenTogether] accept failed", err);
+            showChatToast("接受失败，请稍后再试");
+        } finally {
+            setListenTogetherBusy(false);
+        }
+    };
+
     // Helper: Split AI response by \n\n into multiple messages (online chat mode)
     // Uses shared parseAIResponse for rich-media support.
     // Returns { hasVisible, stateValues, hasDecline } — hasVisible is false if the AI chose [静默].
@@ -2812,13 +2880,19 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         } & GenerationRunGuard,
     ): Promise<{ hasVisible: boolean; stateValues: StateValue[]; triggerCall?: "voice" | "video"; hasDecline?: boolean }> => {
         throwIfGenerationStopped(options);
+        let textForProcessing = aiResponseText;
+        const listenInviteMarker = textForProcessing.match(/\[一起听邀请:([^:\]\n]+)(?::([^\]\n]+))?\]/);
+        if (listenInviteMarker && !session.isGroup && character) {
+            textForProcessing = textForProcessing.replace(listenInviteMarker[0], "").trim();
+            handleRoleListenInvite(listenInviteMarker[1].trim(), (listenInviteMarker[2] || "").trim());
+        }
         const responseBatchId = options?.responseBatchId || createResponseBatchId();
-        const rawResponseText = options?.rawResponseText ?? aiResponseText;
+        const rawResponseText = options?.rawResponseText ?? textForProcessing;
         const previousState = session.isGroup
             ? getLatestStateValues(session.id)
             : getLatestCharacterStateValues(session.contactId);
 
-        const { parts: rawParts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(aiResponseText, previousState);
+        const { parts: rawParts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(textForProcessing, previousState);
         const parts = stripInvalidStickerParts(rawParts);
         throwIfGenerationStopped(options);
 
@@ -6279,6 +6353,21 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 onSendSticker={(name, url) => { setShowStickerPanel(false); sendRichMessage("sticker", { label: name, stickerUrl: url }); }}
             />
             ))}
+
+            {listenTogetherInvite && (
+                <ConfirmDialog
+                    title={`${character?.name || "TA"}邀请你一起听`}
+                    message={
+                        listenTogetherInvite.song
+                            ? `${character?.name || "TA"}想和你一起听《${listenTogetherInvite.song}》${listenTogetherInvite.artist ? ` - ${listenTogetherInvite.artist}` : ""}。接受后会开始播放，并进入一起听状态。`
+                            : `${character?.name || "TA"}想和你一起听歌。接受后开始一起听。`
+                    }
+                    confirmLabel={listenTogetherBusy ? "接受中..." : "接受一起听"}
+                    cancelLabel="先不了"
+                    onConfirm={() => { void acceptListenTogetherInvite(); }}
+                    onCancel={() => setListenTogetherInvite(null)}
+                />
+            )}
 
             {showConfirmMultiDelete && (
                 <ConfirmDialog

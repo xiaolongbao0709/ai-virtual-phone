@@ -1877,6 +1877,12 @@ export async function buildChatPromptMessages(
     const listenTogetherHint = listenTogetherState.status === "active" && listenTogetherState.characterId === character.id
         ? `\n<一起听状态> 你正在和${userIdentity?.name || "用户"}一起听歌。当前播放：《${listenTogetherState.trackTitle || "未知歌曲"}》${listenTogetherState.trackArtist ? ` - ${listenTogetherState.trackArtist}` : ""}。如果你想让一起听换歌，请直接调用「播放音乐」工具并给 query；工具真正成功执行后音乐才会切换。不要只说“已切换”却没有调用工具。`
         : "";
+    const recentPromptText = promptHistory.slice(-12).map(item => String(item.content ?? "")).join("\n");
+    const musicTopicMentioned = /一起听|听歌|听音乐|播放|音乐|歌/.test(recentPromptText);
+    const listenTogetherInviteHint = listenTogetherState.status === "idle" && musicTopicMentioned
+        ? `\n<主动邀请规则> 如果你们正在聊音乐、听歌或一起听相关话题，而你想主动邀请${userIdentity?.name || "用户"}一起听，请只输出这条标记：\n[一起听邀请:歌名:歌手]\n不要提前用播放音乐工具播放，也不要只说“我们一起听吧”却不发出标记。用户接受后系统会自动开始播放。`
+        : "";
+    const listenTogetherPrompt = [listenTogetherHint, listenTogetherInviteHint].filter(Boolean).join("\n");
     const pluginPrompt = await runChatPluginTransform("prompt.system", {
         sessionId: session.id,
         isGroup: !!session.isGroup,
@@ -1942,8 +1948,8 @@ export async function buildChatPromptMessages(
         offlineSummaryTag: preset?.story_summary_tag?.trim() || "summary",
         nativeToolHistory: usesNativeActions,
     });
-    if (listenTogetherHint) {
-        llmMessages.push({ role: "system", content: listenTogetherHint });
+    if (listenTogetherPrompt) {
+        llmMessages.push({ role: "system", content: listenTogetherPrompt });
     }
     if (promptProfile?.output === "plain_text") {
         llmMessages.push({
