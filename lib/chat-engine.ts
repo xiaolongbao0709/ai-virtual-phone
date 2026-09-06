@@ -70,6 +70,7 @@ import { formatCustomAppChatDirectivesForPrompt } from "./custom-app-chat-direct
 import { loadAllTracks } from "./music-storage";
 import { getActiveAppTags } from "./content-tag-utils";
 import { isNeteaseConfigured, getUserPlaylists, getPlaylistTracks, checkLoginStatus, loadMusicApiConfig } from "./music-service";
+import { getListenTogetherState } from "./listen-together";
 import { buildCalendarScheduleMarker, getCurrentCalendarScheduleForPrompt } from "./calendar-storage";
 import { getWeekStartIso } from "./calendar-utils";
 import { buildCharacterTimeContext } from "./character-time";
@@ -1872,6 +1873,16 @@ export async function buildChatPromptMessages(
     const scheduleSummary = buildCalendarScheduleMarker("character", character.id, getWeekStartIso(now));
     const currentSchedule = getCurrentCalendarScheduleForPrompt("character", character.id, now);
     const musicOnlineHint = isNeteaseConfigured() ? "- 你可以推荐任何歌曲，系统会在线搜索并播放。不局限于用户本地音乐库。\n" : "\n";
+    const listenTogetherState = getListenTogetherState();
+    const listenTogetherHint = listenTogetherState.status === "active" && listenTogetherState.characterId === character.id
+        ? `\n<一起听状态> 你正在和${userIdentity?.name || "用户"}一起听歌。当前播放：《${listenTogetherState.trackTitle || "未知歌曲"}》${listenTogetherState.trackArtist ? ` - ${listenTogetherState.trackArtist}` : ""}。如果你想让一起听换歌，请直接调用「播放音乐」工具并给 query；工具真正成功执行后音乐才会切换。不要只说“已切换”却没有调用工具。`
+        : "";
+    const recentPromptText = promptHistory.slice(-12).map(item => String(item.content ?? "")).join("\n");
+    const musicTopicMentioned = /一起听|听歌|听音乐|播放|音乐|歌/.test(recentPromptText);
+    const listenTogetherInviteHint = listenTogetherState.status === "idle" && musicTopicMentioned
+        ? `\n<主动邀请规则（重要）> 只要正在聊音乐/听歌/一起听，且你决定邀请${userIdentity?.name || "用户"}一起听，就必须先只输出这条标记：\n[一起听邀请:歌名:歌手]\n规则：\n1. 不要调用「播放音乐」工具，也不要真的播放任何歌曲。\n2. 不要只写“我们一起听吧/好啊”这类话却不带标记。\n3. 如果用户明确说“你邀请我一起听”“来一起听歌”，你更必须输出标记，用户接受后系统才会自动播放。\n4. 标记里的歌名必须是真实存在的歌曲。`
+        : "";
+    const listenTogetherPrompt = [listenTogetherHint, listenTogetherInviteHint].filter(Boolean).join("\n");
     const pluginPrompt = await runChatPluginTransform("prompt.system", {
         sessionId: session.id,
         isGroup: !!session.isGroup,
@@ -1937,6 +1948,9 @@ export async function buildChatPromptMessages(
         offlineSummaryTag: preset?.story_summary_tag?.trim() || "summary",
         nativeToolHistory: usesNativeActions,
     });
+    if (listenTogetherPrompt) {
+        llmMessages.push({ role: "system", content: listenTogetherPrompt });
+    }
     if (promptProfile?.output === "plain_text") {
         llmMessages.push({
             role: "system",

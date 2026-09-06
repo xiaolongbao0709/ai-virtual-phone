@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMusicControlsOptional } from "@/lib/music-context";
+import { useListenTogetherState } from "@/lib/listen-together";
 
 const DRAG_START_THRESHOLD = 6;
 const SWIPE_DISMISS_EDGE_X = 4;
@@ -13,6 +14,7 @@ const SWIPE_VELOCITY_RECENT_MS = 180;
 
 export default function MusicFloat({ hidden }: { hidden?: boolean }) {
     const player = useMusicControlsOptional();
+    const listenState = useListenTogetherState();
     const floatRef = useRef<HTMLDivElement>(null);
     const [pos, setPos] = useState({ x: 310, y: 680 });
     const dragRef = useRef<{
@@ -201,6 +203,12 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                     <div className="music-float-title">{track.title}</div>
                     <div className="music-float-artist">{track.artist}</div>
                 </div>
+                {listenState.status === "active" && (
+                    <div className="music-float-listen-badge">
+                        <span className="music-float-listen-dot" />
+                        {listenState.characterName ? `和${listenState.characterName}一起听` : "一起听中"}
+                    </div>
+                )}
 
                 {/* Compact Controls */}
                 <div className="music-float-controls">
@@ -227,6 +235,15 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                     </button>
                 </div>
             </div>
+            <button
+                className="music-float-close"
+                type="button"
+                title="关闭浮窗"
+                aria-label="关闭浮窗"
+                onClick={(e) => { e.stopPropagation(); player.hideFloat(); }}
+            >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            </button>
         </div>
     );
 }
