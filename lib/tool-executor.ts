@@ -51,6 +51,7 @@ import type { NoteWallBoard, NoteWallComment, NoteWallNote, NoteWallSize } from 
 import { findNoteWallPlacement, normalizeNoteWallSize } from "./notewall-utils";
 import { recordNoteWallCommentEvent, recordNoteWallNoteEvent } from "./notewall-memory";
 import { getMusicControlBridge } from "./music-control-bridge";
+import { setNextMusicSourceHint } from "./music-context";
 import { loadAllTracks, type MusicTrack } from "./music-storage";
 import {
     checkLoginStatus,
@@ -2438,6 +2439,7 @@ async function executeMusicSearchTool(args: Record<string, unknown>): Promise<To
 async function executeMusicPlayTool(args: Record<string, unknown>): Promise<ToolResult> {
     const { result, bridge } = getMusicBridgeResult("播放音乐");
     if (result || !bridge) return result!;
+    setNextMusicSourceHint("char");
 
     const source = cleanToolString(args.source, 20);
     const songId = args.songId ?? args.song_id ?? args.id;
@@ -2504,6 +2506,7 @@ async function executeMusicQueueTool(args: Record<string, unknown>): Promise<Too
 function executeMusicSwitchTool(args: Record<string, unknown>): ToolResult {
     const { result, bridge } = getMusicBridgeResult("切换音乐");
     if (result || !bridge) return result!;
+    setNextMusicSourceHint("char");
     const action = cleanToolString(args.action ?? args.type, 20);
     const normalizedAction = action === "previous" ? "prev" : action === "play" ? "resume" : action;
     const labels: Record<string, string> = {

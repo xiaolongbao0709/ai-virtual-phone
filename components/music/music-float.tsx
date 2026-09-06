@@ -235,6 +235,15 @@ export default function MusicFloat({ hidden }: { hidden?: boolean }) {
                     </button>
                 </div>
             </div>
+            <button
+                className="music-float-close"
+                type="button"
+                title="关闭浮窗"
+                aria-label="关闭浮窗"
+                onClick={(e) => { e.stopPropagation(); player.hideFloat(); }}
+            >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            </button>
         </div>
     );
 }

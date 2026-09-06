@@ -70,6 +70,7 @@ import { formatCustomAppChatDirectivesForPrompt } from "./custom-app-chat-direct
 import { loadAllTracks } from "./music-storage";
 import { getActiveAppTags } from "./content-tag-utils";
 import { isNeteaseConfigured, getUserPlaylists, getPlaylistTracks, checkLoginStatus, loadMusicApiConfig } from "./music-service";
+import { getListenTogetherState } from "./listen-together";
 import { buildCalendarScheduleMarker, getCurrentCalendarScheduleForPrompt } from "./calendar-storage";
 import { getWeekStartIso } from "./calendar-utils";
 import { buildCharacterTimeContext } from "./character-time";
@@ -1872,6 +1873,10 @@ export async function buildChatPromptMessages(
     const scheduleSummary = buildCalendarScheduleMarker("character", character.id, getWeekStartIso(now));
     const currentSchedule = getCurrentCalendarScheduleForPrompt("character", character.id, now);
     const musicOnlineHint = isNeteaseConfigured() ? "- 你可以推荐任何歌曲，系统会在线搜索并播放。不局限于用户本地音乐库。\n" : "\n";
+    const listenTogetherState = getListenTogetherState();
+    const listenTogetherHint = listenTogetherState.status === "active" && listenTogetherState.characterId === character.id
+        ? `\n<一起听状态> 你正在和${userIdentity?.name || "用户"}一起听歌。当前播放：《${listenTogetherState.trackTitle || "未知歌曲"}》${listenTogetherState.trackArtist ? ` - ${listenTogetherState.trackArtist}` : ""}。如果你想让一起听换歌，请直接调用「播放音乐」工具并给 query；工具真正成功执行后音乐才会切换。不要只说“已切换”却没有调用工具。`
+        : "";
     const pluginPrompt = await runChatPluginTransform("prompt.system", {
         sessionId: session.id,
         isGroup: !!session.isGroup,
@@ -1937,6 +1942,9 @@ export async function buildChatPromptMessages(
         offlineSummaryTag: preset?.story_summary_tag?.trim() || "summary",
         nativeToolHistory: usesNativeActions,
     });
+    if (listenTogetherHint) {
+        llmMessages.push({ role: "system", content: listenTogetherHint });
+    }
     if (promptProfile?.output === "plain_text") {
         llmMessages.push({
             role: "system",

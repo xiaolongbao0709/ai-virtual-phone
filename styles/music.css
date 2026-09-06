@@ -5119,15 +5119,47 @@
   font-size: 13px;
 }
 
+.music-float {
+  overflow: visible;
+}
+
+.music-float-inner {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.music-float-close {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 9;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(30, 32, 38, 0.92);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  line-height: 1;
+}
+
 .music-float-listen-badge {
   position: absolute;
-  top: -6px;
-  right: -4px;
-  z-index: 3;
+  top: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  right: auto;
+  z-index: 9;
   display: flex;
   align-items: center;
   gap: 4px;
-  max-width: 116px;
+  max-width: 170px;
   padding: 3px 7px;
   border-radius: 99px;
   background: #ff4d6d;

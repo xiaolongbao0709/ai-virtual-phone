@@ -40,6 +40,8 @@ export type MusicActions = {
     setVolume: (vol: number) => void;
     stop: () => void;
     dismissFloat: () => void;
+    hideFloat: () => void;
+    showFloat: () => void;
     openFullPlayer: () => void;
     closeFullPlayer: () => void;
 };
@@ -349,6 +351,15 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         setFloatDismissed(true);
     }, []);
 
+    const hideFloat = useCallback(() => {
+        // 只收起悬浮窗，不暂停播放
+        setFloatDismissed(true);
+    }, []);
+
+    const showFloat = useCallback(() => {
+        setFloatDismissed(false);
+    }, []);
+
     const openFullPlayer = useCallback(() => { setFloatDismissed(false); setShowFullPlayer(true); }, []);
     const closeFullPlayer = useCallback(() => setShowFullPlayer(false), []);
 
@@ -470,11 +481,11 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     const controlsValue = useMemo<MusicControlsValue>(() => ({
         currentTrack, isPlaying, duration, playMode, queue, volume, showFullPlayer, floatDismissed,
         playTrack, playUrl, pause, resume, togglePlay, next, prev, seek,
-        setPlayMode, setQueue, removeFromQueue, setVolume, stop, dismissFloat, openFullPlayer, closeFullPlayer,
+        setPlayMode, setQueue, removeFromQueue, setVolume, stop, dismissFloat, hideFloat, showFloat, openFullPlayer, closeFullPlayer,
     }), [
         currentTrack, isPlaying, duration, playMode, queue, volume, showFullPlayer, floatDismissed,
         playTrack, playUrl, pause, resume, togglePlay, next, prev, seek,
-        setQueue, removeFromQueue, setVolume, stop, dismissFloat, openFullPlayer, closeFullPlayer,
+        setQueue, removeFromQueue, setVolume, stop, dismissFloat, hideFloat, showFloat, openFullPlayer, closeFullPlayer,
     ]);
 
     const value = useMemo<MusicContextValue>(() => ({

@@ -55,6 +55,11 @@ export default function MusicApp({ onClose }: Props) {
     const player = useMusicControls();
 
     useEffect(() => {
+        // 重新进入音乐 App 时恢复被手动关闭的悬浮窗；关闭音乐 App 后它仍可见。
+        player.showFloat();
+    }, [player.showFloat]);
+
+    useEffect(() => {
         const handleBgChange = () => setBgCfg(loadMusicBg());
         window.addEventListener(MUSIC_BG_EVENT, handleBgChange);
         return () => window.removeEventListener(MUSIC_BG_EVENT, handleBgChange);
