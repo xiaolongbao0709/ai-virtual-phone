@@ -1880,7 +1880,7 @@ export async function buildChatPromptMessages(
     const recentPromptText = promptHistory.slice(-12).map(item => String(item.content ?? "")).join("\n");
     const musicTopicMentioned = /一起听|听歌|听音乐|播放|音乐|歌/.test(recentPromptText);
     const listenTogetherInviteHint = listenTogetherState.status === "idle" && musicTopicMentioned
-        ? `\n<主动邀请规则> 如果你们正在聊音乐、听歌或一起听相关话题，而你想主动邀请${userIdentity?.name || "用户"}一起听，请只输出这条标记：\n[一起听邀请:歌名:歌手]\n不要提前用播放音乐工具播放，也不要只说“我们一起听吧”却不发出标记。用户接受后系统会自动开始播放。`
+        ? `\n<主动邀请规则（重要）> 只要正在聊音乐/听歌/一起听，且你决定邀请${userIdentity?.name || "用户"}一起听，就必须先只输出这条标记：\n[一起听邀请:歌名:歌手]\n规则：\n1. 不要调用「播放音乐」工具，也不要真的播放任何歌曲。\n2. 不要只写“我们一起听吧/好啊”这类话却不带标记。\n3. 如果用户明确说“你邀请我一起听”“来一起听歌”，你更必须输出标记，用户接受后系统才会自动播放。\n4. 标记里的歌名必须是真实存在的歌曲。`
         : "";
     const listenTogetherPrompt = [listenTogetherHint, listenTogetherInviteHint].filter(Boolean).join("\n");
     const pluginPrompt = await runChatPluginTransform("prompt.system", {
