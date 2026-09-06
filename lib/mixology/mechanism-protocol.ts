@@ -38,6 +38,12 @@ export type MixHookPayload = {
     userName: string;
     /** 落杯前：玩家这一句；出杯后：模型这一段正文 */
     text?: string;
+    /**
+     * 落杯前专用：最近一条 assistant 消息将要发给模型的完整文本（状态栏块 + 正文 + 小剧场块拼好的那份）。
+     * 钩子返回同名字段就整条换掉——只改这次请求，不落库，界面与存档不动。
+     * 多件机括按顺序接力，后一件看到的是前一件改过的版本。
+     */
+    lastReply?: string;
     /** 出杯后：这一轮的状态栏与小剧场原文（多块并行时为第一块，全量见 ticketRaws/encoreRaws） */
     ticketRaw?: string;
     encoreRaw?: string;
@@ -69,6 +75,11 @@ export type MixHookResult = {
     note?: string;
     /** 挂进系统提示词指定分段之后的内容（落杯前钩子有效） */
     sections?: MixHookSection[];
+    /**
+     * 改写最近一条 assistant 消息（落杯前钩子有效）：发给模型的那一条整条换成这段。
+     * 典型用法：把出杯后摘走的机括标记行/块放回它当初的位置，模型每轮都能看到自己上一轮写过它。
+     */
+    lastReply?: string;
     /** 要写进对局的记住值 */
     state?: MixState;
     /** 覆盖这件机括自己的存储 */
@@ -141,6 +152,7 @@ export function normalizeHookResult(value: unknown): MixHookResult {
         if (Object.keys(state).length) out.state = state;
     }
     if (record.store !== undefined) out.store = normalizeMechanismStore(record.store);
+    if (typeof record.lastReply === "string") out.lastReply = cleanText(record.lastReply);
     if (Array.isArray(record.sections)) {
         const sections: MixHookSection[] = [];
         for (const item of record.sections) {

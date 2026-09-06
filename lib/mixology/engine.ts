@@ -164,6 +164,7 @@ function buildMixMessages(
     assembled: MixAssembledPrompt,
     extraUserNudge?: string,
     feedOf?: MixFeedResolver,
+    lastReplyOverride?: string,
 ): LLMMessage[] {
     const messages: LLMMessage[] = [
         { role: "system", content: assembled.system, _debugMeta: { marker: "mixology_system" } },
@@ -174,9 +175,13 @@ function buildMixMessages(
         if (turns[i].role === "assistant") { lastAssistantIdx = i; break; }
     }
     for (const [i, turn] of turns.entries()) {
+        const isLast = i === lastAssistantIdx;
         messages.push({
             role: turn.role,
-            content: turnToHistoryContent(turn, i === lastAssistantIdx, feedOf),
+            // 机括落杯前改写过最近一条 assistant：发给模型的整条换成它给的（只改请求，不落库）
+            content: isLast && typeof lastReplyOverride === "string"
+                ? lastReplyOverride
+                : turnToHistoryContent(turn, isLast, feedOf),
             _debugMeta: { marker: "mixology_history", _fromHistory: true },
         });
     }
@@ -303,9 +308,9 @@ export type MixReplyResult = {
 async function runMechanismHooks(
     session: MixSession,
     hook: MixHook,
-    input: { text?: string; ticketRaws?: string[]; encoreRaws?: string[]; edited?: boolean },
+    input: { text?: string; ticketRaws?: string[]; encoreRaws?: string[]; edited?: boolean; lastReply?: string },
     roster?: MixMechanismMaterial[],
-): Promise<{ text?: string; notes: string[]; sections: MixHookSection[]; state: MixState; store: Record<string, Record<string, string>>; roster: MixMechanismMaterial[]; wrote: string[] }> {
+): Promise<{ text?: string; lastReply?: string; notes: string[]; sections: MixHookSection[]; state: MixState; store: Record<string, Record<string, string>>; roster: MixMechanismMaterial[]; wrote: string[] }> {
     // roster：这一轮的机括名单。生效条件一轮只判一次（落杯前那次），之后
     // 由调用方原封传回来——否则小票一更新记住的值，条件在同一轮里翻脸，
     // 落杯前注入的标记行就没人回收，原样漏进正文。
@@ -317,7 +322,7 @@ async function runMechanismHooks(
     }
     const store = { ...(session.mechanismStore ?? {}) };
     // wrote：这一趟真正重新记了账的机括。调用方据此判断"谁没记"，别让它原来的账被连累
-    const out = { text: input.text, notes: [] as string[], sections: [] as MixHookSection[], state: {} as MixState, store, roster: mechanisms, wrote: [] as string[] };
+    const out = { text: input.text, lastReply: input.lastReply, notes: [] as string[], sections: [] as MixHookSection[], state: {} as MixState, store, roster: mechanisms, wrote: [] as string[] };
     if (!mechanisms.length) return out;
     for (const material of mechanisms) {
         const script = material.script?.trim();
@@ -331,6 +336,8 @@ async function runMechanismHooks(
             charName: session.charName,
             userName: session.userName || MIX_DEFAULT_USER_NAME,
             text: out.text,
+            // 最近一条 assistant（落杯前）：前一件机括改过的版本接着给下一件
+            lastReply: out.lastReply,
             // 单块字段留给老机括脚本（多块时给第一块），全量走 ticketRaws/encoreRaws
             ticketRaw: input.ticketRaws?.[0],
             encoreRaw: input.encoreRaws?.[0],
@@ -343,6 +350,7 @@ async function runMechanismHooks(
             ? await runMixTrustedHook(session.id, material.id, hook, payload)
             : await runMixHook(session.id, material.id, script, hook, payload);
         if (typeof result.text === "string") out.text = result.text;
+        if (typeof result.lastReply === "string") out.lastReply = result.lastReply;
         if (result.note) out.notes.push(result.note);
         if (result.sections?.length) out.sections.push(...result.sections);
         if (result.state) out.state = mergeHookState(out.state, result.state);
@@ -351,15 +359,23 @@ async function runMechanismHooks(
     return out;
 }
 
-/** 落杯前：给机括一次改写玩家发言、追加临时提示的机会。返回本轮机括名单，出杯后照单回收 */
-async function runBeforeSendHooks(session: MixSession, text?: string): Promise<{ session: MixSession; text?: string; note?: string; sections: MixHookSection[]; roster: MixMechanismMaterial[] }> {
-    const result = await runMechanismHooks(session, "beforeSend", { text });
+/**
+ * 落杯前：给机括一次改写玩家发言、追加临时提示、改写最近一条 assistant 消息的机会。
+ * 返回本轮机括名单，出杯后照单回收。lastReply 只在有机括真改了时才返回（没改就按原样拼历史）。
+ */
+async function runBeforeSendHooks(session: MixSession, text?: string): Promise<{ session: MixSession; text?: string; note?: string; sections: MixHookSection[]; roster: MixMechanismMaterial[]; lastReply?: string }> {
+    // 最近一条 assistant 将要发给模型的样子：与 buildMixMessages 同一口径（回传裁决也一样）
+    const lastAssistant = [...session.turns].reverse().find((t) => t.role === "assistant");
+    const feedOf = buildFeedResolver(session, sessionTickets(session).filter((t) => t.contract.trim()), sessionEncores(session).filter((e) => e.contract?.trim()));
+    const lastReply = lastAssistant ? turnToHistoryContent(lastAssistant, true, feedOf) : undefined;
+    const result = await runMechanismHooks(session, "beforeSend", { text, lastReply });
     const next: MixSession = {
         ...session,
         state: mergeHookState(session.state ?? {}, result.state),
         mechanismStore: result.store,
     };
-    return { session: next, text: result.text, note: result.notes.join("\n") || undefined, sections: result.sections, roster: result.roster };
+    const rewritten = lastAssistant && typeof result.lastReply === "string" && result.lastReply !== lastReply ? result.lastReply : undefined;
+    return { session: next, text: result.text, note: result.notes.join("\n") || undefined, sections: result.sections, roster: result.roster, lastReply: rewritten };
 }
 
 /**
@@ -468,6 +484,7 @@ async function runMixGeneration(
     onDelta?: (text: string) => void,
     roster?: MixMechanismMaterial[],
     sections?: MixHookSection[],
+    lastReply?: string,
 ): Promise<MixReplyResult> {
     const apiConfig = resolveMixApiConfig();
     if (!apiConfig) {
@@ -479,6 +496,8 @@ async function runMixGeneration(
     let extraNote: string | undefined;
     // 机括挂进系统提示词的段：与 note 一样只活这一轮，不落库
     let hookSections = sections;
+    // 机括改写过的最近一条 assistant：同样只活这一轮，不落库
+    let hookLastReply = lastReply;
     // 本轮机括名单：落杯前判一次条件，出杯后照同一份名单跑回收——
     // 中途小票改了记住的值也不换人，注入过格式要求的机括必须自己收尾
     let turnRoster = roster;
@@ -487,12 +506,13 @@ async function runMixGeneration(
         working = before.session;
         extraNote = before.note;
         hookSections = before.sections;
+        hookLastReply = before.lastReply;
         turnRoster = before.roster;
         if (working !== session) saveMixSession(working);
     }
     const combinedNudge = [nudge, extraNote].filter(Boolean).join("\n\n") || undefined;
     const { prompt: assembled, tickets, encores, active } = assembleFromSession(working, hookSections);
-    const messages = buildMixMessages(working, assembled, combinedNudge, buildFeedResolver(working, tickets, encores));
+    const messages = buildMixMessages(working, assembled, combinedNudge, buildFeedResolver(working, tickets, encores), hookLastReply);
     const meta = { characterName: working.charName, userName: working.userName || "你" };
     // skipTimestampStrip：特调是"所见即模型所写"，不走聊天那套幻觉时间戳剥离——
     // 那个剥离器在流式时会扣住尾部 64 字等括号闭合，机括的末尾标记行会整行压在里面不出来
@@ -606,7 +626,7 @@ export async function generateMixReply(
     onUserTurn?.();
     // 这条路径的落杯前已经跑过了，别在 runMixGeneration 里重复触发；
     // 名单原封带过去，出杯后照单回收
-    return runMixGeneration(withUser, before.note, signal, true, onDelta, before.roster, before.sections);
+    return runMixGeneration(withUser, before.note, signal, true, onDelta, before.roster, before.sections, before.lastReply);
 }
 
 /** 本局全部小票材料（记住的值的声明来源），按槽位顺序 */

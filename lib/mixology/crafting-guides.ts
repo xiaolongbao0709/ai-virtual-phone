@@ -250,7 +250,8 @@ export const MIX_CRAFT_PROMPTS: Record<MixMaterialKind, string> = {
 ① 钩子逻辑（纯 JS，可选）：定义这些可选的全局函数，应用会在对应时机调用：
 function onSessionStart(ctx) / onBeforeSend(ctx) / onAfterReply(ctx) / onSessionEnd(ctx)
 ctx 字段：turnCount 已发生轮数；state 记住的值；store 本机括自己的存储；charName / userName；text（发送前 = 玩家这句话，回复后 = 模型正文）；ticketRaw / encoreRaw（回复后的状态栏与小剧场原文）；edited（回复后专用：true 表示这是玩家编辑原文后手动要求的重跑，不是新生成。玩家选「替换」时应用已先把存储回滚到这一轮记账前，钩子照常当新一轮记就行；选「追加」则是在现有存储上再跑一遍。一般无需特殊处理，此标记仅供知情）。
-返回一个普通对象（各项都可省略）：{ text: 改写后的 text, note: 只在这一轮生效的临时提示（不限长度，写多少注入多少，用量自己把握）, sections: 挂进系统提示词的段, state: 要写入的记住值, store: 覆盖自己的存储 }。
+返回一个普通对象（各项都可省略）：{ text: 改写后的 text, note: 只在这一轮生效的临时提示（不限长度，写多少注入多少，用量自己把握）, sections: 挂进系统提示词的段, lastReply: 改写后的最近一条 assistant 消息, state: 要写入的记住值, store: 覆盖自己的存储 }。
+lastReply 只在 onBeforeSend 里有效：ctx.lastReply 是最近一条 assistant 消息将要发给模型的完整文本（状态栏块 + 正文 + 小剧场块），返回同名字段就整条换掉——只改这次请求，不落库，界面与存档不动。典型用法：出杯后从正文里摘走的标记行/块存进 store，下一轮在 lastReply 里放回它当初的位置，模型每轮都能在历史里看到自己上一轮写过它（比只在提示词里要求稳得多）。多件机括按顺序接力，后一件看到的是前一件改过的版本。
 sections 只在 onBeforeSend 里有效，形如 [{ at: "world", text: "## 记忆区\n…" }]：at 是分段键（base / character / persona / world / flavor / glass / ticket / encore / examples / checklist），text 原样接在那一段之后，标题自己带——写 # 就是独立一段，写 ## 就读作那一段的小节。note 挂在最末尾那条 user 消息，离模型开口最近，适合短提醒；sections 进系统提示词，适合档案、格式要求这类要和其他分段并列的内容。两者都只活这一轮，不落库，回溯不受影响。
 限制：单次执行 2 秒超时；无网络、碰不到页面。存储不设上限，但它随对局整份读写，写太大轮轮都要序列化，自己节制。
 
