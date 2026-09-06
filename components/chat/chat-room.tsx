@@ -57,6 +57,7 @@ import { setDebugChatState } from "@/lib/debug-store";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { setChatActive } from "@/lib/music-action-queue";
 import { getMusicControlBridge } from "@/lib/music-control-bridge";
+import { setNextMusicSourceHint } from "@/lib/music-context";
 import { findPlayableMatch, getNeteaseLyrics, getNeteaseSongDetail } from "@/lib/music-service";
 import { approveMemoryWriteRequest } from "@/lib/tool-executor";
 import type { MemoryWriteRequest, ToolResult } from "@/lib/tool-executor";
@@ -2621,6 +2622,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
             let playedTitle = title;
             const { result: match, playUrl } = found;
+            setNextMusicSourceHint("char");
             if (match.source === "local" && match.localTrack) {
                 await musicBridge.playTrack(match.localTrack);
                 playedTitle = match.localTrack.title;
@@ -2772,6 +2774,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 return;
             }
             const { result: match, playUrl } = found;
+            setNextMusicSourceHint("char");
             if (match.source === "local" && match.localTrack) {
                 await musicBridge.playTrack(match.localTrack);
             } else if (match.source === "netease" && match.neteaseResult && playUrl) {

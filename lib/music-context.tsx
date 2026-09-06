@@ -7,6 +7,7 @@ import { getAudioBlob, markTrackPlayed } from "./music-storage";
 import { findPlayableMatch, getNeteaseLyrics, getNeteasePlayUrl, getNeteasePlayInfo, getNeteaseSongDetail } from "./music-service";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { registerMusicControlBridge } from "./music-control-bridge";
+import { refreshListenTogetherStateFromStorage, syncListenTogetherTrack } from "./listen-together";
 
 // ── Types ──
 
@@ -76,6 +77,19 @@ const QUEUE_STORAGE_KEY = "ai_phone_music_queue_v1";
 registerKvMigration(QUEUE_STORAGE_KEY);
 const QUEUE_MAX_SIZE = 200;
 
+/** 最近一次播放请求是用户操作还是角色操作；syncListenTogetherTrack 消费后自动归位 user。 */
+let nextMusicSourceHint: "user" | "char" = "user";
+
+export function setNextMusicSourceHint(source: "user" | "char"): void {
+  nextMusicSourceHint = source;
+}
+
+function consumeMusicSourceHint(): "user" | "char" {
+  const source = nextMusicSourceHint;
+  nextMusicSourceHint = "user";
+  return source;
+}
+
 function loadPersistedQueue(): MusicTrack[] {
     if (typeof window === "undefined") return [];
     try {
@@ -105,6 +119,11 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     const [volume, setVolumeState] = useState(0.8);
     const [showFullPlayer, setShowFullPlayer] = useState(false);
     const [floatDismissed, setFloatDismissed] = useState(false);
+
+    // KV hydrates asynchronously; re-read the persisted listen-together room once mounted.
+    useEffect(() => {
+        refreshListenTogetherStateFromStorage();
+    }, []);
 
     // Persist queue on change.
     useEffect(() => {
@@ -214,6 +233,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
 
         setCurrentTrack(track);
         setCurrentTime(0);
+        syncListenTogetherTrack(track, consumeMusicSourceHint());
 
         try {
             await audio.play();
@@ -237,6 +257,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
         audio.src = url;
         setCurrentTrack(track);
         setCurrentTime(0);
+        syncListenTogetherTrack(track, consumeMusicSourceHint());
         audio.play().catch(() => {});
     }, [cleanupBlobUrl]);
 
