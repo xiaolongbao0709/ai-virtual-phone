@@ -2886,6 +2886,33 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             textForProcessing = textForProcessing.replace(listenInviteMarker[0], "").trim();
             handleRoleListenInvite(listenInviteMarker[1].trim(), (listenInviteMarker[2] || "").trim());
         }
+        if (!listenInviteMarker && !session.isGroup && character) {
+            let lastUserText = "";
+            for (let i = messages.length - 1; i >= 0; i -= 1) {
+                if (messages[i].role === "user") {
+                    lastUserText = messages[i].content || "";
+                    break;
+                }
+            }
+            const wantsTogetherInvite = /邀请.{0,10}一起听|一起听.{0,10}邀请|来一起听|一起听歌|一起听吧/.test(lastUserText);
+            if (wantsTogetherInvite) {
+                const musicTag = textForProcessing.match(/\[音乐(?:分享)?[：:]([^\]：:]+)(?:[：:]([^\]\n]+))?\]/);
+                const angleSong = !musicTag ? textForProcessing.match(/《([^》]{1,80})》/) : null;
+                let fallbackSong = "";
+                let fallbackArtist = "";
+                if (musicTag) {
+                    fallbackSong = musicTag[1].trim();
+                    fallbackArtist = (musicTag[2] || "").trim();
+                    textForProcessing = textForProcessing.replace(musicTag[0], "").trim();
+                } else if (angleSong) {
+                    fallbackSong = angleSong[1].trim();
+                }
+                if (fallbackSong) {
+                    handleRoleListenInvite(fallbackSong, fallbackArtist);
+                    getMusicControlBridge()?.pause();
+                }
+            }
+        }
         const responseBatchId = options?.responseBatchId || createResponseBatchId();
         const rawResponseText = options?.rawResponseText ?? textForProcessing;
         const previousState = session.isGroup
