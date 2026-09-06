@@ -80,7 +80,7 @@ function buildBootstrap(script: string): string {
 ${script}
 ;self.onmessage = function (event) {
   var data = event.data || {};
-  var names = { sessionStart: "onSessionStart", beforeSend: "onBeforeSend", afterReply: "onAfterReply", sessionEnd: "onSessionEnd" };
+  var names = { sessionStart: "onSessionStart", beforeSend: "onBeforeSend", rawReply: "onRawReply", afterReply: "onAfterReply", sessionEnd: "onSessionEnd" };
   var fn = self[names[data.hook]];
   if (typeof fn !== "function") { self.postMessage({ callId: data.callId, json: "" }); return; }
   function done(value) {

@@ -248,9 +248,10 @@ export const MIX_CRAFT_PROMPTS: Record<MixMaterialKind, string> = {
 若我的想法说得笼统：先在【玩法方案】里用一两句话复述你理解的玩法，把它拆成「钩子做什么 / 界面做什么 / 数据存哪」；拿不准就先做最小可用版本，最后列两三个可选扩展。
 
 ① 钩子逻辑（纯 JS，可选）：定义这些可选的全局函数，应用会在对应时机调用：
-function onSessionStart(ctx) / onBeforeSend(ctx) / onAfterReply(ctx) / onSessionEnd(ctx)
+function onSessionStart(ctx) / onBeforeSend(ctx) / onRawReply(ctx) / onAfterReply(ctx) / onSessionEnd(ctx)
 ctx 字段：turnCount 已发生轮数；state 记住的值；store 本机括自己的存储；charName / userName；text（发送前 = 玩家这句话，回复后 = 模型正文）；ticketRaw / encoreRaw（回复后的状态栏与小剧场原文）；edited（回复后专用：true 表示这是玩家编辑原文后手动要求的重跑，不是新生成。玩家选「替换」时应用已先把存储回滚到这一轮记账前，钩子照常当新一轮记就行；选「追加」则是在现有存储上再跑一遍。一般无需特殊处理，此标记仅供知情）。
 返回一个普通对象（各项都可省略）：{ text: 改写后的 text, note: 只在这一轮生效的临时提示（不限长度，写多少注入多少，用量自己把握）, sections: 挂进系统提示词的段, lastReply: 改写后的最近一条 assistant 消息, state: 要写入的记住值, store: 覆盖自己的存储 }。
+onRawReply 在回复到手、剥状态栏/小剧场块之前跑：ctx.raw 是模型原文一个字不少，返回 { raw } 宿主就拿返回的这份去剥块、存库、画卡。用途：机括要模型伪装成状态栏写的块（如 [状态栏:拍立得]…[/状态栏]）在这里剪走存进 store，宿主就不会把它当状态栏画出来；下一轮再用 lastReply 放回历史。onAfterReply 照旧在剥完之后跑。
 lastReply 只在 onBeforeSend 里有效：ctx.lastReply 是最近一条 assistant 消息将要发给模型的完整文本（状态栏块 + 正文 + 小剧场块），返回同名字段就整条换掉——只改这次请求，不落库，界面与存档不动。典型用法：出杯后从正文里摘走的标记行/块存进 store，下一轮在 lastReply 里放回它当初的位置，模型每轮都能在历史里看到自己上一轮写过它（比只在提示词里要求稳得多）。多件机括按顺序接力，后一件看到的是前一件改过的版本。
 sections 只在 onBeforeSend 里有效，形如 [{ at: "world", text: "## 记忆区\n…" }]：at 是分段键（base / character / persona / world / flavor / glass / ticket / encore / examples / checklist），text 原样接在那一段之后，标题自己带——写 # 就是独立一段，写 ## 就读作那一段的小节。note 挂在最末尾那条 user 消息，离模型开口最近，适合短提醒；sections 进系统提示词，适合档案、格式要求这类要和其他分段并列的内容。两者都只活这一轮，不落库，回溯不受影响。
 限制：单次执行 2 秒超时；无网络、碰不到页面。存储不设上限，但它随对局整份读写，写太大轮轮都要序列化，自己节制。
@@ -263,7 +264,7 @@ sections 只在 onBeforeSend 里有效，形如 [{ at: "world", text: "## 记忆
 
 ③ 信任模式（trusted: true，可选，慎用）：不进沙盒，script 在对局页面里执行一次（与聊天插件同环境），像插件一样拿裸 DOM，能画进正文、能自己 fetch；玩家装入/入柜/导入时会看到风险提示。此模式下不用 panelHtml，界面全由代码画。script 里可用全局 mix：
 - mix.slot(名字, (el, ctx) => { …; return 清理函数 })：坑位。"turn" 每轮 AI 回复下方一块空容器；"prose" 每轮正文容器本身（.mix-prose，可以查它里面的 .mix-dialogue / .mix-narration 等语义类并就地改 DOM）；"float" 铺满对局画面的透明层（你画的元素自己 position:absolute 定位）；"bottom" 最新一轮之下。ctx: { turnId, text（这一轮正文）, index, state, store, charName, userName }（float/bottom 没有 turn 相关字段）。同一坑位每轮各挂一次；state/store 变了会卸载重挂，返回的清理函数在卸载时调。
-- mix.on(时机, fn)：sessionStart / beforeSend / afterReply / sessionEnd 与沙盒钩子同一套 ctx 与返回值（{ text, note, sections, state, store }）；"dialogue" 收 { id, text, turnId }（材料声明了 dialogueButton 才有）。
+- mix.on(时机, fn)：sessionStart / beforeSend / rawReply / afterReply / sessionEnd 与沙盒钩子同一套 ctx 与返回值（{ text, note, sections, state, store }）；"dialogue" 收 { id, text, turnId }（材料声明了 dialogueButton 才有）。
 - mix.state / mix.store（读）、mix.setState(obj)、mix.setStore(obj)、mix.say(text)、mix.toast(text)、mix.mark(id, 状态)、mix.call(连接器名, 参数) → Promise、mix.play(id, 音频, type)、mix.stop()、mix.refresh()（全部坑位重挂）。
 - 不要在坑位回调里做昂贵计算或每轮联网；DOM 用应用已有的类名与配色（深色底、--mix-violet 主色），别把整页样式改掉。只在用户明确要"自由渲染进正文"或必须联网时用信任模式，其余一律沙盒。
 - 美学要求：形态跟着玩法走——一颗胶囊、一条窄边栏、一枚角标、一张卡片，或一块整面的仪表盘都可以。原则只有三条：默认别挡住对话（大面板要能收起或退场）；气质贴合对局，把它当世界里的道具来做（罗盘、签筒、终端、账本），不要做成工程感的调试面板；动效轻、不抢注意力。配色与深色界面协调。

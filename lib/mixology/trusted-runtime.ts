@@ -72,7 +72,7 @@ class TrustedInstance {
                 this.slots.set(key, [...(this.slots.get(key) ?? []), mount as MixTrustedSlotMount]);
                 bump();
             },
-            /** 登记钩子：sessionStart / beforeSend / afterReply / sessionEnd（同沙盒契约），以及 dialogue（对白按钮） */
+            /** 登记钩子：sessionStart / beforeSend / rawReply / afterReply / sessionEnd（同沙盒契约），以及 dialogue（对白按钮） */
             on: (name: unknown, fn: unknown) => {
                 if (typeof fn !== "function") return;
                 this.hooks.set(String(name) as HookName, fn as (payload: unknown) => unknown);

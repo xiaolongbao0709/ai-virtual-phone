@@ -11,12 +11,13 @@
 import type { MixSectionTitleKey, MixState, MixStateValue } from "./types";
 
 /** 钩子点：流水线上开的四个口子（第五个「上桌时」属于常驻界面，不走这条通道） */
-export type MixHook = "sessionStart" | "beforeSend" | "afterReply" | "sessionEnd";
+export type MixHook = "sessionStart" | "beforeSend" | "rawReply" | "afterReply" | "sessionEnd";
 
-/** 界面上就写这四个词，不玩调酒行话——创作者要一眼知道钩子在什么时候被叫起来 */
+/** 界面上就写这几个词，不玩调酒行话——创作者要一眼知道钩子在什么时候被叫起来 */
 export const MIX_HOOK_LABELS: Record<MixHook, string> = {
     sessionStart: "开局时",
     beforeSend: "发送前",
+    rawReply: "回复后·剥块前",
     afterReply: "回复后",
     sessionEnd: "退出时",
 };
@@ -38,6 +39,12 @@ export type MixHookPayload = {
     userName: string;
     /** 落杯前：玩家这一句；出杯后：模型这一段正文 */
     text?: string;
+    /**
+     * rawReply 专用：模型输出的原文一个字不少（状态栏/小剧场块还没剥）。
+     * 返回同名字段，宿主就拿返回的这份去剥块、存库、画卡——机括伪装成状态栏要模型写的块
+     * （[状态栏:拍立得] 这类）在这里剪走，宿主就不会把它当状态栏画出来。
+     */
+    raw?: string;
     /**
      * 落杯前专用：最近一条 assistant 消息将要发给模型的完整文本（状态栏块 + 正文 + 小剧场块拼好的那份）。
      * 钩子返回同名字段就整条换掉——只改这次请求，不落库，界面与存档不动。
@@ -71,6 +78,8 @@ export type MixHookSection = {
 export type MixHookResult = {
     /** 改写 text（落杯前改玩家这句，出杯后改模型正文） */
     text?: string;
+    /** 改写模型原文（rawReply 钩子有效）：宿主拿返回的这份去剥块、存库 */
+    raw?: string;
     /** 追加一段只在这一轮生效的临时提示（挂在最末尾那条 user 消息） */
     note?: string;
     /** 挂进系统提示词指定分段之后的内容（落杯前钩子有效） */
@@ -136,6 +145,7 @@ export function normalizeHookResult(value: unknown): MixHookResult {
     const out: MixHookResult = {};
 
     if (typeof record.text === "string") out.text = cleanText(record.text);
+    if (typeof record.raw === "string") out.raw = cleanText(record.raw);
     if (typeof record.note === "string") {
         const note = cleanText(record.note).trim();
         if (note) out.note = note;
