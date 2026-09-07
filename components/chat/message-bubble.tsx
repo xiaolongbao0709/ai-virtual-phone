@@ -23,6 +23,7 @@ import remarkBreaks from "remark-breaks";
 import { createPortal } from "react-dom";
 import { Blocks, Maximize2, ReceiptText } from "lucide-react";
 import { retryChatGeneratedImage } from "@/lib/generated-image-retry";
+import { hasCharacterReferenceImage, resolvePhotoUseReferenceImage } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { ScanPayCard } from "@/components/chat/scan-pay-card";
 import { payWithWalletBalance } from "@/lib/wallet-storage";
@@ -1178,6 +1179,7 @@ function GeneratedImagePromptDialog({
     onConfirm,
     busy,
     error,
+    characterId,
 }: {
     value: string;
     onChange: (value: string) => void;
@@ -1185,7 +1187,28 @@ function GeneratedImagePromptDialog({
     onConfirm: () => void;
     busy: boolean;
     error?: string;
+    characterId?: string;
 }) {
+    const hasRef = useMemo(() => {
+        return Boolean(characterId && hasCharacterReferenceImage(characterId));
+    }, [characterId]);
+
+    const draftWillUseReference = useMemo(() => {
+        if (!characterId || !hasRef) return false;
+        let characterName: string | undefined;
+        try {
+            const chars = loadCharacters();
+            characterName = chars.find(c => c.id === characterId)?.name;
+        } catch {
+            // ignore
+        }
+        return resolvePhotoUseReferenceImage({
+            description: value,
+            characterId,
+            characterName,
+        });
+    }, [characterId, hasRef, value]);
+
     return (
         <div
             className="modal-overlay"
@@ -1212,6 +1235,21 @@ function GeneratedImagePromptDialog({
                         placeholder="输入图片提示词"
                         disabled={busy}
                     />
+                    <div className="feed-post-photo-ref-hint flex items-center gap-1.5 mt-2 ts-12">
+                        {draftWillUseReference ? (
+                            <span className="text-[var(--c-accent-success,#10b981)] opacity-90 flex items-center gap-1 font-medium">
+                                <span>✨</span> 已识别为角色出镜，将结合参考图生成
+                            </span>
+                        ) : hasRef ? (
+                            <span className="text-[var(--c-icon)] opacity-60 flex items-center gap-1">
+                                <span>🍃</span> 未检测到角色出镜特征，将按场景/静物生成
+                            </span>
+                        ) : (
+                            <span className="text-[var(--c-icon)] opacity-60 flex items-center gap-1">
+                                <span>🍃</span> 角色未配置参考图，将按纯文本直接生成
+                            </span>
+                        )}
+                    </div>
                     {error && <div className="chat-generated-image-retry-error">{error}</div>}
                 </div>
                 <div className="modal-footer" data-ui="modal-footer">
@@ -1317,6 +1355,7 @@ function ImageBubble({
                     onCancel={() => setShowPromptEditor(false)}
                     busy={regenerating}
                     error={retryError}
+                    characterId={characterId || msg.senderCharacterId}
                 />,
                 document.body,
             )}
@@ -2069,6 +2108,7 @@ function MediaFileBubble({
                         onCancel={() => setShowImagePromptEditor(false)}
                         busy={imageRegenerating}
                         error={imageRetryError}
+                        characterId={characterId || msg.senderCharacterId}
                     />,
                     document.body,
                 )}

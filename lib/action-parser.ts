@@ -289,7 +289,8 @@ function resolveActionCharacterName(action: ActionTag, context: ActionContext): 
 async function dispatchMomentsPost(action: ActionTag, context: ActionContext): Promise<void> {
     // Re-wrap content in [朋友圈]...[/朋友圈] so parseMomentPostResponse can parse it
     const wrapped = `[朋友圈]${action.content}[/朋友圈]`;
-    const parsed = parseMomentPostResponse(wrapped);
+    const characterName = resolveActionCharacterName(action, context);
+    const parsed = parseMomentPostResponse(wrapped, { characterId: context.characterId, characterName });
     if (!parsed) {
         console.warn("[ActionParser] Failed to parse moments post content");
         return;

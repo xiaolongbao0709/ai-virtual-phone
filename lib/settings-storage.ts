@@ -1,4 +1,5 @@
 import type {
+    GenerationParameterKey,
     PresetConfig,
     WorldBookConfig,
     WorldBookEntry,
@@ -325,9 +326,9 @@ export function parsePresetFromJson(text: string, fallbackName: string = "导入
         if (typeof obj.openai_max_tokens === "number") preset.openai_max_tokens = obj.openai_max_tokens;
         if (typeof obj.openai_max_context === "number") preset.openai_max_context = obj.openai_max_context;
         if (Array.isArray(obj.enabled_generation_parameters)) {
-            preset.enabled_generation_parameters = [
-                ...new Set(obj.enabled_generation_parameters.filter(isGenerationParameterKey)),
-            ];
+            preset.enabled_generation_parameters = Array.from(
+                new Set<GenerationParameterKey>(obj.enabled_generation_parameters.filter(isGenerationParameterKey)),
+            );
         }
         // New preset globals
         if (typeof obj.top_a === "number") preset.top_a = obj.top_a;

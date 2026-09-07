@@ -724,6 +724,95 @@ export async function fetchNovelAiModels(apiKey: string): Promise<string[]> {
   }
 }
 
+export function hasCharacterReferenceImage(characterId?: string, settings?: ImageGenerationSettings): boolean {
+  const charId = characterId?.trim();
+  if (!charId) return false;
+  const s = settings ?? loadImageGenerationSettings();
+  return Boolean(s.characterReferences?.[charId]?.assetId);
+}
+
+/**
+ * 智能判定是否应该为本次生图使用角色参考图。
+ *
+ * 核心设计原则：
+ * 1. 严格依赖发帖角色是否在设置中上传了参考图（未上传参考图直接返回 false）；
+ * 2. 绝不使用模糊单字“我”做判定，避免与用户 {{user}} 或第一人称混淆；
+ * 3. 严格排斥明确的多人、合照、合影场景（如“合照”、“两人”、“朋友们”等），防止把单人参考图强行塞入多人生图中造成画面崩坏；
+ * 4. 强特征触发：
+ *    - 显式标签为“使用参考图”或常见变体（如“自拍”、“参考图”）；
+ *    - 描述中包含强烈的自拍动作特征（“自拍”、“近景自拍”、“对镜自拍”、“随手自拍”、“对着镜子”等）；
+ *    - 描述中明确出现了发帖角色自己的名字（如“阿达希尔坐在书桌前...”）；
+ * 5. 容错与保底：只要命中第 4 条的强特征，哪怕大模型漏写了标签前缀、或误选了“不使用参考图”，均智能纠正为 true。
+ */
+export function resolvePhotoUseReferenceImage(params: {
+  description?: string;
+  explicitMode?: string;
+  characterId?: string;
+  characterName?: string;
+  settings?: ImageGenerationSettings;
+}): boolean {
+  const charId = params.characterId?.trim();
+  if (!charId) return false;
+
+  const settings = params.settings ?? loadImageGenerationSettings();
+  if (!hasCharacterReferenceImage(charId, settings)) return false;
+
+  const desc = (params.description || "").trim();
+  const explicit = (params.explicitMode || "").trim();
+
+  // 1. 显式声明模式
+  const explicitUsesRef = explicit === "使用参考图" || explicit === "自拍" || explicit === "参考图";
+
+  // 2. 检查多人/合照特征（若明显是多人合影，且不是单人自拍，则谨慎保持 false）
+  const hasGroupIndicators = /(?:合照|合影|两人|二人|同行的人|路人|大家一起|朋友们|\b(?:group|multiple (?:boys|girls|people)|2boys|2girls)\b)/i.test(desc);
+
+  // 3. 检查单人专属自拍动作特征（排除“我”字干扰）
+  const hasSelfieIndicators = /(?:自拍|selfie|对镜拍|对着镜子|举起手机)/i.test(desc);
+
+  // 4. 检查单人主角人像与镜头构图特征：
+  // 单人主体词（全题材通用：现代都市、西幻奇幻、古风仙侠、日常称谓等）：
+  // - 基础人称：男子、男人、男士、男生、男青年、青年、少年、美男子、美少年、帅哥、少年人、青年人；
+  //            女子、女人、女士、女生、女青年、少女、姑娘、美少女、美女；
+  // - 礼称社交：先生、小姐、少爷、夫人、太太；
+  // - 现代职业/身份：学长、学弟、学姐、学妹、医生、警官、调酒师、执事、管家、保镖、总裁；
+  // - 古风仙侠：公子、侠客、剑客、道长、仙尊、神官、王爷、世子、将军、刺客、修士；
+  // - 西幻奇幻：骑士、法师、魔法师、大魔法师、术士、精灵、血族、吸血鬼、恶魔、天使、神父、修女、领主、公爵、伯爵、王女、魔王、勇者、猎魔人、圣骑士、游侠；
+  // - 外貌着装起手：身穿、身着、一袭、一头；
+  // - 英文常用：1boy, 1girl, solo, man, boy, girl, woman, gentleman, lady, knight, mage, elf, vampire 等
+  const hasPortraitSubject = /(?:男子|男人|男士|男生|男青年|青年|少年|美少年|美男子|帅哥|青年人|少年人|女子|女人|女士|女生|女青年|少女|姑娘|美少女|美女|先生|小姐|少爷|夫人|太太|学长|学弟|学姐|学妹|医生|警官|调酒师|执事|管家|保镖|总裁|公子|侠客|剑客|道长|仙尊|神官|王爷|世子|将军|刺客|修士|骑士|法师|魔法师|大魔法师|术士|精灵|血族|吸血鬼|恶魔|天使|神父|修女|领主|公爵|伯爵|王女|魔王|勇者|猎魔人|圣骑士|游侠|身穿|身着|一袭|一头|\b(?:1boy|1girl|solo|man|boy|girl|woman|gentleman|lady|knight|mage|elf|vampire)\b)/i.test(desc);
+
+  // 加上人像姿态或镜头构图（看向镜头、半身、中景、特写、肖像、looking at camera、upper body、portrait等）
+  const hasPortraitComposition = /(?:看向镜头|望向镜头|看着镜头|面对镜头|迎向镜头|正对镜头|凝视镜头|注视镜头|直视镜头|对着镜头|半身|中景|近景|特写|肖像|单人|独坐|立绘|正面照|半身照|近照|全身照|托腮|侧身|侧影|正脸|侧脸|回眸|笑意|搭在|微偏头|微仰头|\b(?:looking at (?:camera|viewer)|portrait|upper body|cowboy shot|close-up|half body|full body|eye contact)\b)/i.test(desc);
+  const isSoloPortrait = hasPortraitSubject && hasPortraitComposition;
+
+  // 5. 检查是否出现发帖角色专属名字（避免单字名在普通词汇中误命中）
+  const rawCharName = (params.characterName || "").trim();
+  let hasCharacterName = false;
+  if (rawCharName.length >= 2) {
+    hasCharacterName = desc.includes(rawCharName);
+  } else if (rawCharName.length === 1) {
+    const escaped = rawCharName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    hasCharacterName = new RegExp(`(?:^|[^\\u4e00-\\u9fa5])${escaped}(?:[^\\u4e00-\\u9fa5]|$)`).test(desc);
+  }
+
+  // 若明显是多人合影，且未明确说明是单人自拍，则不使用单人参考图
+  if (hasGroupIndicators && !hasSelfieIndicators) {
+    return false;
+  }
+
+  // 显式声明使用参考图
+  if (explicitUsesRef) {
+    return true;
+  }
+
+  // 描述中包含强自拍特征、发帖角色姓名、或单人主角面向镜头人像
+  if (hasSelfieIndicators || hasCharacterName || isSoloPortrait) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function generateImageFromConfiguredApi(params: {
   description: string;
   characterId?: string;

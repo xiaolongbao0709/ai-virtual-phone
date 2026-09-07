@@ -35,7 +35,7 @@ import {
     loadRegexes,
     resolveUserIdentity,
 } from "./settings-storage";
-import type { PresetConfig, ApiConfig } from "./settings-types";
+import type { PresetConfig, ApiConfig, ImageGenerationSettings } from "./settings-types";
 import { loadMemoryConfig, incrementEventCounter } from "./memory-storage";
 import { retrieveCoreMemoriesForPrompt, retrieveMemoriesForPrompt } from "./memory-service";
 import { formatCoreMemories, formatLongTermMemories } from "./memory-injector";
@@ -52,7 +52,7 @@ import { bgSetInterval } from "./bg-timer";
 import { sendBrowserNotification } from "./browser-notification";
 import { buildTwoLevelMomentThreads } from "./moments-comment-threading";
 import { DEFAULT_MOMENTS_BILINGUAL_PROMPT, resolveBilingualPrompt } from "./bilingual-prompt-defaults";
-import { generateImageFromConfiguredApi } from "./image-generation-service";
+import { generateImageFromConfiguredApi, resolvePhotoUseReferenceImage } from "./image-generation-service";
 import { isAbortError, throwIfAborted } from "./abort-utils";
 import { getChatImageFromIndexedDB, saveChatImageToIndexedDB } from "./chat-asset-storage";
 import {
@@ -329,7 +329,7 @@ async function triggerAIPost(characterId: string): Promise<void> {
                 .catch(err => console.warn("[Moments] Action dispatch failed:", err));
         }
 
-        const parsed = parseMomentPostResponse(postText);
+        const parsed = parseMomentPostResponse(postText, { characterId, characterName: character.name });
         if (!parsed) return;
 
         // 内容去重：生图前先判重，命中直接丢弃（防止同一内容经多路径重复入库）
@@ -1145,7 +1145,10 @@ export function onUserComment(postId: string): void {
 
 // ── Response Parser ──
 
-export function parseMomentPostResponse(rawText: string): {
+export function parseMomentPostResponse(
+    rawText: string,
+    context?: { characterId?: string; characterName?: string; settings?: ImageGenerationSettings },
+): {
     content: string;
     photoDescription?: string;
     photoUseReferenceImage?: boolean;
@@ -1153,15 +1156,26 @@ export function parseMomentPostResponse(rawText: string): {
     const blockMatch = rawText.match(/\[朋友圈\]\s*([\s\S]*?)\s*\[\/朋友圈\]/);
     const text = blockMatch ? blockMatch[1] : rawText;
 
-    const explicitPhotoMatch = text.match(/\[照片[:：]\s*(使用参考图|不使用参考图)\s*[:：]\s*([\s\S]*?)\]/);
+    // 容错更宽的变体标签，例如：[照片:使用参考图:...]、[照片:不使用参考图:...]、[照片:自拍:...]、[照片:参考图:...]
+    const explicitPhotoMatch = text.match(/\[照片[:：]\s*(使用参考图|不使用参考图|自拍|参考图)\s*[:：]\s*([\s\S]*?)\]/);
     const legacyPhotoMatch = explicitPhotoMatch ? null : text.match(/\[照片[:：]\s*([\s\S]*?)\]/);
     const photoDescription = explicitPhotoMatch
         ? explicitPhotoMatch[2].trim()
         : legacyPhotoMatch ? legacyPhotoMatch[1].trim() : undefined;
-    const photoUseReferenceImage = explicitPhotoMatch ? explicitPhotoMatch[1] === "使用参考图" : false;
+    const explicitMode = explicitPhotoMatch ? explicitPhotoMatch[1].trim() : undefined;
+
+    const photoUseReferenceImage = photoDescription
+        ? resolvePhotoUseReferenceImage({
+            description: photoDescription,
+            explicitMode,
+            characterId: context?.characterId,
+            characterName: context?.characterName,
+            settings: context?.settings,
+        })
+        : false;
 
     const content = text
-        .replace(/\[照片[:：]\s*(?:使用参考图|不使用参考图)\s*[:：]\s*[\s\S]*?\]/g, "")
+        .replace(/\[照片[:：]\s*(?:使用参考图|不使用参考图|自拍|参考图)\s*[:：]\s*[\s\S]*?\]/g, "")
         .replace(/\[照片[:：]\s*[\s\S]*?\]/g, "")
         .replace(/\[朋友圈\]|\[\/朋友圈\]/g, "")
         .trim();

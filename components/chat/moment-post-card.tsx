@@ -19,6 +19,7 @@ import { buildTwoLevelMomentThreads } from "@/lib/moments-comment-threading";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import { splitBilingualText } from "@/lib/bilingual-text";
 import { retryMomentGeneratedPhoto } from "@/lib/generated-image-retry";
+import { hasCharacterReferenceImage, resolvePhotoUseReferenceImage } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { Trash2, MoreHorizontal, MapPin, Heart, MessageCircle, Pencil } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui";
@@ -250,6 +251,19 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
         setPhotoRetryError("");
         setShowPhotoPromptEditor(true);
     }, [post.photoDescription]);
+
+    const hasRefImage = useMemo(() => {
+        return Boolean(contextCharId && hasCharacterReferenceImage(contextCharId));
+    }, [contextCharId]);
+
+    const draftWillUseReference = useMemo(() => {
+        if (!contextCharId || !hasRefImage) return false;
+        return resolvePhotoUseReferenceImage({
+            description: photoPromptDraft,
+            characterId: contextCharId,
+            characterName: getCharName(contextCharId),
+        });
+    }, [contextCharId, hasRefImage, photoPromptDraft]);
     const handleRegeneratePhotoWithPrompt = useCallback(() => {
         const nextDescription = photoPromptDraft.trim();
         if (!nextDescription) {
@@ -398,6 +412,21 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                                 placeholder="输入图片提示词"
                                 disabled={photoRegenerating}
                             />
+                            <div className="feed-post-photo-ref-hint flex items-center gap-1.5 mt-2 ts-12">
+                                {draftWillUseReference ? (
+                                    <span className="text-[var(--c-accent-success,#10b981)] opacity-90 flex items-center gap-1 font-medium">
+                                        <span>✨</span> 已识别为角色出镜，将结合参考图生成
+                                    </span>
+                                ) : hasRefImage ? (
+                                    <span className="text-[var(--c-icon)] opacity-60 flex items-center gap-1">
+                                        <span>🍃</span> 未检测到角色出镜特征，将按场景/静物生成
+                                    </span>
+                                ) : (
+                                    <span className="text-[var(--c-icon)] opacity-60 flex items-center gap-1">
+                                        <span>🍃</span> 角色未配置参考图，将按纯文本直接生成
+                                    </span>
+                                )}
+                            </div>
                             {photoRetryError && <div className="feed-post-photo-retry-error">{photoRetryError}</div>}
                         </div>
                         <div className="modal-footer" data-ui="modal-footer">
