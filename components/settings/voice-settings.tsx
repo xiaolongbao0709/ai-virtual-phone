@@ -45,6 +45,7 @@ const DEFAULT_VOICE_CONFIGS: VoiceApiConfig[] = [
         speechPitch: DEFAULT_SPEECH_PITCH,
         enableSTT: true,
         enableTTS: true,
+        optimizeAudioQuality: false,
     }
 ];
 
@@ -279,6 +280,7 @@ export function VoiceSettings() {
             speechSpeed: DEFAULT_SPEECH_SPEED,
             enableSTT: true,
             enableTTS: true,
+            optimizeAudioQuality: false,
         };
         persist([...configs, newConfig]);
         setIsNewConfig(true);
@@ -929,6 +931,17 @@ export function VoiceSettings() {
                                         <div className="ui-toggle-row">
                                             <span className="menu-label font-medium">启用语音合成 (TTS)</span>
                                             <Toggle checked={config.enableTTS} onChange={(v) => updateConfig(config.id, { enableTTS: v })} />
+                                        </div>
+
+                                        <div className="ui-toggle-row">
+                                            <span className="flex min-w-0 flex-col">
+                                                <span className="menu-label font-medium">高清音质优化 (切换需重启刷新)</span>
+                                                <span className="menu-desc">将保活静音音频升至 48kHz 立体声以防发闷。更改后需大退或刷新小手机生效</span>
+                                            </span>
+                                            <Toggle
+                                                checked={config.optimizeAudioQuality === true}
+                                                onChange={(v) => updateConfig(config.id, { optimizeAudioQuality: v })}
+                                            />
                                         </div>
                                     </div>
                                 )

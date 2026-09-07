@@ -661,6 +661,13 @@ export function loadVoiceConfigs(): VoiceApiConfig[] {
 export function saveVoiceConfigs(configs: VoiceApiConfig[]): void {
     if (typeof window === "undefined") return;
     kvSet(VOICE_CONFIGS_KEY, JSON.stringify(configs));
+    window.dispatchEvent(new CustomEvent("voice-configs-changed"));
+}
+
+export function isAudioQualityOptimizationEnabled(): boolean {
+    if (typeof window === "undefined") return false;
+    const configs = loadVoiceConfigs();
+    return configs.some(c => !!c.optimizeAudioQuality);
 }
 
 // --- Image Generation Settings ──────────────────────────────────────────

@@ -1,7 +1,7 @@
 // lib/tts-service.ts — 语音合成服务
 
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
-import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
+import { loadVoiceConfigs, loadBindingConfig, resolveBinding, isAudioQualityOptimizationEnabled } from "./settings-storage";
 
 export type VoiceApiConfigResolved = VoiceApiConfig;
 
@@ -250,18 +250,25 @@ function getSharedAudio(): HTMLAudioElement {
 }
 
 function silentWavUrl(): string {
-    // A few ms of 8-bit mono PCM silence — a valid source so play() actually
-    // starts (and thus unlocks the element) on iOS.
-    const numSamples = 16;
-    const buffer = new ArrayBuffer(44 + numSamples);
+    // 极短静音 WAV：用于在 iOS 手势中解锁 <audio> 元素
+    // 开启高清优化时为 48kHz 双声道，默认或关闭时为 8kHz 单声道
+    const isHd = isAudioQualityOptimizationEnabled();
+    const sampleRate = isHd ? 48000 : 8000;
+    const numChannels = isHd ? 2 : 1;
+    const bitsPerSample = 16;
+    const blockAlign = numChannels * (bitsPerSample / 8);
+    const byteRate = sampleRate * blockAlign;
+    const numFrames = 32; // ~0.67ms
+    const dataSize = numFrames * blockAlign;
+    const buffer = new ArrayBuffer(44 + dataSize);
     const view = new DataView(buffer);
     const writeStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
-    writeStr(0, "RIFF"); view.setUint32(4, 36 + numSamples, true); writeStr(8, "WAVE");
+    writeStr(0, "RIFF"); view.setUint32(4, 36 + dataSize, true); writeStr(8, "WAVE");
     writeStr(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true); view.setUint32(24, 8000, true); view.setUint32(28, 8000, true);
-    view.setUint16(32, 1, true); view.setUint16(34, 8, true);
-    writeStr(36, "data"); view.setUint32(40, numSamples, true);
-    for (let i = 0; i < numSamples; i++) view.setUint8(44 + i, 128); // 8-bit silence = 128
+    view.setUint16(22, numChannels, true); view.setUint32(24, sampleRate, true); view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true); view.setUint16(34, bitsPerSample, true);
+    writeStr(36, "data"); view.setUint32(40, dataSize, true);
+    // 16-bit PCM 静音为 0（ArrayBuffer 默认全 0）
     return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
 }
 

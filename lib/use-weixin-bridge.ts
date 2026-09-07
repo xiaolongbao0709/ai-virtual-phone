@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { loadWeixinBots, loadKeepAlive, type WeixinBotConfig } from "./weixin-storage";
+import { isAudioQualityOptimizationEnabled } from "./settings-storage";
 import { runBotLoop } from "./weixin-bridge";
 
 export type BotRunStatus = {
@@ -29,42 +30,63 @@ function broadcastStatus() {
 // ── 保活：Wake Lock + 静音音频 ───────────────────────────────
 let _wakeLock: WakeLockSentinel | null = null;
 let _keepAliveAudio: HTMLAudioElement | null = null;
+let _keepAliveAudioRate: number = 0;
 
 let _keepAliveWanted = false; // 标记：想要保活但还没获得用户手势
 let _suspendedForCall = false; // 标记：因语音/视频通话临时暂停了保活
 
 function ensureAudioCreated() {
-    if (_keepAliveAudio) return;
-    _keepAliveAudio = new Audio();
-    // 生成 1 秒静音 WAV
-    const sampleRate = 8000;
-    const samples = sampleRate;
-    const buf = new ArrayBuffer(44 + samples * 2);
+    const isHd = isAudioQualityOptimizationEnabled();
+    const targetRate = isHd ? 48000 : 8000;
+    const numChannels = isHd ? 2 : 1;
+
+    if (!_keepAliveAudio) {
+        _keepAliveAudio = new Audio();
+        _keepAliveAudio.loop = true;
+        _keepAliveAudio.volume = 0.01;
+    }
+
+    if (_keepAliveAudioRate === targetRate && _keepAliveAudio.src) return;
+
+    _keepAliveAudioRate = targetRate;
+
+    // 生成 1 秒静音 WAV（开启高清优化时为 48kHz 双声道；默认或关闭时为 8kHz 单声道）
+    const sampleRate = targetRate;
+    const bitsPerSample = 16;
+    const bytesPerSample = bitsPerSample / 8;
+    const blockAlign = numChannels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const samplesPerChannel = sampleRate; // 1 秒
+    const dataSize = samplesPerChannel * blockAlign;
+    const buf = new ArrayBuffer(44 + dataSize);
     const view = new DataView(buf);
     const writeStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
     writeStr(0, "RIFF");
-    view.setUint32(4, 36 + samples * 2, true);
+    view.setUint32(4, 36 + dataSize, true);
     writeStr(8, "WAVE");
     writeStr(12, "fmt ");
     view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, numChannels, true);
     view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
     writeStr(36, "data");
-    view.setUint32(40, samples * 2, true);
+    view.setUint32(40, dataSize, true);
     // ±1 LSB 微噪声（约 -90dB，不可闻）：纯零波形会被 Chrome 判为"无声页面"，
-    // 安卓后台 5 分钟后定时器被强节流（轮询延迟拉到分钟级）；有能量的音频
+    // 安卓后台 5 分钟后定时器被强节流（轮询延迟拉到分钟级）；有微小能量的音频
     // 可获得 "playing audio" 豁免。
-    for (let i = 0; i < samples; i++) {
+    const totalSamples = samplesPerChannel * numChannels;
+    for (let i = 0; i < totalSamples; i++) {
         view.setInt16(44 + i * 2, i % 2 === 0 ? 1 : -1, true);
     }
     const blob = new Blob([buf], { type: "audio/wav" });
+    const oldSrc = _keepAliveAudio.src;
     _keepAliveAudio.src = URL.createObjectURL(blob);
-    _keepAliveAudio.loop = true;
-    _keepAliveAudio.volume = 0.01;
+    if (oldSrc) {
+        try { URL.revokeObjectURL(oldSrc); } catch {}
+    }
 }
 
 /** 用户触摸时尝试播放（浏览器要求音频必须在用户手势中启动） */
@@ -212,8 +234,22 @@ export function useWeixinBridge() {
             if (on) startKeepAlive(); else stopKeepAlive();
         };
         window.addEventListener("weixin-config-changed", onCfg);
+
+        // 监听语音配置变更（高清音频开关切换时动态切换采样率）
+        const onVoiceCfg = () => {
+            if (loadKeepAlive() && _keepAliveWanted) {
+                const wasPlaying = _keepAliveAudio && !_keepAliveAudio.paused;
+                ensureAudioCreated();
+                if (wasPlaying) {
+                    _keepAliveAudio?.play().catch(() => {});
+                }
+            }
+        };
+        window.addEventListener("voice-configs-changed", onVoiceCfg);
+
         return () => {
             window.removeEventListener("weixin-config-changed", onCfg);
+            window.removeEventListener("voice-configs-changed", onVoiceCfg);
             stopKeepAlive();
         };
     }, []);

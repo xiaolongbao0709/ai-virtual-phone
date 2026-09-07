@@ -40,7 +40,7 @@ const MINIMAX_TTS_BODY = [
     '  "text": "{{text}}",',
     '  "stream": false,',
     '  "voice_setting": { "voice_id": "{{voice_id|male-qn-qingse}}", "speed": {{speed|1}}, "vol": 1, "pitch": 0 },',
-    '  "audio_setting": { "sample_rate": 32000, "bitrate": 128000, "format": "mp3", "channel": 1 }',
+    '  "audio_setting": { "sample_rate": 44100, "bitrate": 256000, "format": "mp3", "channel": 1 }',
     "}",
 ].join("\n");
 

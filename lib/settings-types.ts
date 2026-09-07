@@ -174,6 +174,8 @@ export type VoiceApiConfig = {
     customVoices?: { id: string; name: string; createdAt?: number }[];
     enableSTT: boolean;
     enableTTS: boolean;
+    /** 高清音质优化（防发闷）：将保活与解锁音频提升至 48kHz 立体声，避免系统通道降频压制 TTS */
+    optimizeAudioQuality?: boolean;
 };
 
 // --- Image Generation ---
