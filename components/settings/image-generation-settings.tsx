@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { AlertCircle, Camera, ChevronDown, Image, Info, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
-import type { ImageGenerationSettings as ImageGenerationSettingsType, NovelAiPreset } from "@/lib/settings-types";
+import type { ImageGenerationSettings as ImageGenerationSettingsType, NovelAiPreset, OpenAiImagePreset } from "@/lib/settings-types";
 import {
     DEFAULT_IMAGE_GENERATION_SETTINGS,
     DEFAULT_NOVELAI_PRESET,
@@ -76,6 +76,21 @@ export function ImageGenerationSettings() {
     const [naiTokenStatus, setNaiTokenStatus] = useState<Status | null>(null);
     const [testPreviewUrl, setTestPreviewUrl] = useState<string | null>(null);
     const [pendingDeletePresetId, setPendingDeletePresetId] = useState<string | null>(null);
+    const openaiPresets = settings.openaiPresets?.length ? settings.openaiPresets : [{
+        id: "preset_openai_default",
+        name: "默认方案",
+        requestMode: settings.requestMode,
+        apiKey: settings.apiKey,
+        baseUrl: settings.baseUrl,
+        model: settings.model,
+        size: settings.size,
+        quality: settings.quality,
+        extraPrompt: settings.extraPrompt,
+    } satisfies OpenAiImagePreset];
+    const activeOpenAiPresetId = settings.activeOpenAiPresetId && openaiPresets.some(p => p.id === settings.activeOpenAiPresetId)
+        ? settings.activeOpenAiPresetId
+        : openaiPresets[0].id;
+    const activeOpenAiPreset = openaiPresets.find(p => p.id === activeOpenAiPresetId) || openaiPresets[0];
 
     useEffect(() => {
         // Sync the ratio hint to the saved size on load, so the hint is present
@@ -123,6 +138,31 @@ export function ImageGenerationSettings() {
     const updateSettings = useCallback((patch: Partial<ImageGenerationSettingsType>) => {
         persist({ ...settings, ...patch });
     }, [persist, settings]);
+
+    const updateOpenAiPreset = useCallback((patch: Partial<OpenAiImagePreset>) => {
+        const nextPresets = openaiPresets.map(preset => preset.id === activeOpenAiPresetId ? { ...preset, ...patch } : preset);
+        const active = nextPresets.find(preset => preset.id === activeOpenAiPresetId) || nextPresets[0];
+        persist({ ...settings, openaiPresets: nextPresets, activeOpenAiPresetId, requestMode: active.requestMode, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, size: active.size, quality: active.quality, extraPrompt: active.extraPrompt });
+    }, [activeOpenAiPresetId, openaiPresets, persist, settings]);
+
+    const addOpenAiPreset = useCallback(() => {
+        const newId = `preset_openai_${Date.now()}`;
+        const newPreset = { ...activeOpenAiPreset, id: newId, name: `${activeOpenAiPreset.name || "默认方案"}（副本）` };
+        persist({ ...settings, openaiPresets: [...openaiPresets, newPreset], activeOpenAiPresetId: newId, requestMode: newPreset.requestMode, apiKey: newPreset.apiKey, baseUrl: newPreset.baseUrl, model: newPreset.model, size: newPreset.size, quality: newPreset.quality, extraPrompt: newPreset.extraPrompt });
+    }, [activeOpenAiPreset, openaiPresets, persist, settings]);
+
+    const deleteOpenAiPreset = useCallback(() => {
+        if (openaiPresets.length <= 1) return;
+        const next = openaiPresets.filter(preset => preset.id !== activeOpenAiPresetId);
+        const active = next[0];
+        persist({ ...settings, openaiPresets: next, activeOpenAiPresetId: active.id, requestMode: active.requestMode, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, size: active.size, quality: active.quality, extraPrompt: active.extraPrompt });
+    }, [activeOpenAiPresetId, openaiPresets, persist, settings]);
+
+    const selectOpenAiPreset = useCallback((id: string) => {
+        const active = openaiPresets.find(preset => preset.id === id);
+        if (!active) return;
+        persist({ ...settings, activeOpenAiPresetId: id, requestMode: active.requestMode, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, size: active.size, quality: active.quality, extraPrompt: active.extraPrompt });
+    }, [openaiPresets, persist, settings]);
 
     // NovelAI 预设管理与状态
     const naiSettings = useMemo(() => {
@@ -184,13 +224,6 @@ export function ImageGenerationSettings() {
         });
     }, [naiSettings, updateNovelAi]);
 
-    // Changing the size also refreshes the auto-appended ratio hint in the
-    // 补充提示词 box (replacing any previous hint), so models that ignore the
-    // `size` param still produce the requested orientation.
-    const applySize = useCallback((size: string) => {
-        persist({ ...settings, size, extraPrompt: withRatioHint(settings.extraPrompt, size) });
-    }, [persist, settings]);
-
     const updateImageHosting = useCallback((patch: Partial<ImageGenerationSettingsType["imageHosting"]>) => {
         persist({
             ...settings,
@@ -205,13 +238,13 @@ export function ImageGenerationSettings() {
 
     const fetchModels = async () => {
         setStatus(null);
-        if (!settings.apiKey.trim() || !settings.baseUrl.trim()) {
+        if (!activeOpenAiPreset.apiKey.trim() || !activeOpenAiPreset.baseUrl.trim()) {
             setStatus({ success: false, message: "请先填写 Base URL 和 API Key。" });
             return;
         }
         setIsFetchingModels(true);
         try {
-            const fetched = await fetchImageGenerationModels(settings);
+            const fetched = await fetchImageGenerationModels(activeOpenAiPreset);
             setModels(fetched);
             setStatus({
                 success: true,
@@ -572,12 +605,42 @@ export function ImageGenerationSettings() {
                 ) : (
                     /* --- OpenAI 模式配置面板 --- */
                     <>
+                        <div className="flex flex-col gap-2 rounded-xl bg-[var(--c-input)]/40 p-3 border border-[var(--c-card-border)]">
+                            <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <label className="menu-label text-sm font-semibold">OpenAI API 配置预设</label>
+                                <div className="grid grid-cols-2 gap-2 sm:flex">
+                                    <button type="button" onClick={addOpenAiPreset} className="ui-btn ui-btn-soft-action min-h-11 !px-3 !py-2 text-xs flex items-center gap-1"><Plus size={14} />新建预设</button>
+                                    {openaiPresets.length > 1 && <button type="button" onClick={deleteOpenAiPreset} className="ui-btn ui-btn-danger min-h-11 !px-3 !py-2 text-xs flex items-center gap-1"><Trash2 size={14} />删除预设</button>}
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <div className="flex flex-col gap-1">
+                                    <span className="menu-desc ml-1">当前预设</span>
+                                    <Select value={activeOpenAiPresetId} onChange={(event) => selectOpenAiPreset(event.target.value)}>
+                                        {openaiPresets.map(preset => <option key={preset.id} value={preset.id}>{preset.name.trim() || "未命名预设"}</option>)}
+                                    </Select>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <span className="menu-desc ml-1">预设备注</span>
+                                    <Input type="text" value={activeOpenAiPreset.name} onChange={(event) => updateOpenAiPreset({ name: event.target.value })} placeholder="未命名预设" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">请求方式</label>
+                            <Select value={activeOpenAiPreset.requestMode} onChange={(event) => updateOpenAiPreset({ requestMode: event.target.value as ImageGenerationSettingsType["requestMode"] })}>
+                                <option value="server">服务端转发（推荐，可避免跨域报错）</option>
+                                <option value="direct">浏览器直连（需接口允许 CORS 跨域）</option>
+                            </Select>
+                        </div>
+
                         <div className="flex flex-col gap-1">
                             <label className="menu-desc ml-1">Base URL</label>
                             <Input
                                 type="url"
-                                value={settings.baseUrl}
-                                onChange={(event) => updateSettings({ baseUrl: event.target.value })}
+                                value={activeOpenAiPreset.baseUrl}
+                                onChange={(event) => updateOpenAiPreset({ baseUrl: event.target.value })}
                                 placeholder="https://api.example.com/v1"
                             />
                         </div>
@@ -586,8 +649,8 @@ export function ImageGenerationSettings() {
                             <label className="menu-desc ml-1">API Key</label>
                             <Input
                                 type="password"
-                                value={settings.apiKey}
-                                onChange={(event) => updateSettings({ apiKey: event.target.value })}
+                                value={activeOpenAiPreset.apiKey}
+                                onChange={(event) => updateOpenAiPreset({ apiKey: event.target.value })}
                                 placeholder="sk-..."
                             />
                         </div>
@@ -598,8 +661,8 @@ export function ImageGenerationSettings() {
                                 <div className="relative flex-1">
                                     <Input
                                         type="text"
-                                        value={settings.model}
-                                        onChange={(event) => updateSettings({ model: event.target.value })}
+                                        value={activeOpenAiPreset.model}
+                                        onChange={(event) => updateOpenAiPreset({ model: event.target.value })}
                                         placeholder="gpt-image-2 / image2 / chatgpt-image-latest"
                                         className={likelyModels.length > 0 ? "w-full pr-9" : "w-full"}
                                     />
@@ -610,7 +673,7 @@ export function ImageGenerationSettings() {
                                                 aria-label="选择拉取到的模型"
                                                 value=""
                                                 onChange={(event) => {
-                                                    if (event.target.value) updateSettings({ model: event.target.value });
+                                                    if (event.target.value) updateOpenAiPreset({ model: event.target.value });
                                                 }}
                                                 className="absolute inset-y-0 right-0 w-10 cursor-pointer opacity-0"
                                             >
@@ -635,13 +698,16 @@ export function ImageGenerationSettings() {
                         <div className="grid grid-cols-2 gap-3">
                             <div className="flex flex-col gap-1">
                                 <label className="menu-desc ml-1">尺寸</label>
-                                <Select value={settings.size} onChange={(event) => applySize(event.target.value)}>
+                                <Select value={activeOpenAiPreset.size} onChange={(event) => {
+                                        const size = event.target.value;
+                                        updateOpenAiPreset({ size, extraPrompt: withRatioHint(activeOpenAiPreset.extraPrompt, size) });
+                                    }}>
                                     {SIZE_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
                                 </Select>
                             </div>
                             <div className="flex flex-col gap-1">
                                 <label className="menu-desc ml-1">质量</label>
-                                <Select value={settings.quality} onChange={(event) => updateSettings({ quality: event.target.value })}>
+                                <Select value={activeOpenAiPreset.quality} onChange={(event) => updateOpenAiPreset({ quality: event.target.value })}>
                                     {QUALITY_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
                                 </Select>
                             </div>
@@ -650,8 +716,8 @@ export function ImageGenerationSettings() {
                         <div className="flex flex-col gap-1">
                             <label className="menu-desc ml-1">补充提示词</label>
                             <Textarea
-                                value={settings.extraPrompt}
-                                onChange={(event) => updateSettings({ extraPrompt: event.target.value })}
+                                value={activeOpenAiPreset.extraPrompt}
+                                onChange={(event) => updateOpenAiPreset({ extraPrompt: event.target.value })}
                                 placeholder="会和角色输出的图片描述一起发送给生图模型。"
                                 rows={4}
                             />
