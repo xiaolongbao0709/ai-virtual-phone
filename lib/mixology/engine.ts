@@ -148,6 +148,14 @@ function turnToHistoryContent(turn: MixTurn, isLast: boolean, feedOf?: MixFeedRe
  * 玩家发言）。默认不裁——玩家在对局设置里调了才生效；只裁发给模型的消息，
  * 存储与界面回放永远完整。
  */
+/**
+ * 对局进行了几轮：玩家发一句、模型回一句算一轮，按玩家发言数算。
+ * 开场白不算轮；玩家刚发完还没等到回复的那一轮也算在内。列表页与删除确认用它计数。
+ */
+export function mixRoundCount(turns: MixTurn[]): number {
+    return turns.reduce((n, t) => (t.role === "user" ? n + 1 : n), 0);
+}
+
 export function limitMixTurns(turns: MixTurn[], limit: number | undefined): MixTurn[] {
     if (!limit || limit <= 0) return turns;
     let count = 0;

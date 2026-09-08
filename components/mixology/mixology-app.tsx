@@ -29,7 +29,7 @@ import {
     saveMixRecipe,
     type MixProfile,
 } from "@/lib/mixology/storage";
-import { runMixSessionStart, startMixSession } from "@/lib/mixology/engine";
+import { mixRoundCount, runMixSessionStart, startMixSession } from "@/lib/mixology/engine";
 import { disposeMixSandboxesForMaterial } from "@/lib/mixology/mechanism-runtime";
 import { mixKindRunsActiveCode } from "@/lib/mixology/types";
 import {
@@ -885,7 +885,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                         )}
                                         <div className="mix-session-info">
                                             <div className="mix-session-name">{session.charName} · {session.recipe.name}</div>
-                                            <div className="mix-session-sub">{session.turns.length} 条 · {formatMixTime(session.updatedAt)}</div>
+                                            <div className="mix-session-sub">{mixRoundCount(session.turns)} 轮 · {formatMixTime(session.updatedAt)}</div>
                                         </div>
                                         <button
                                             type="button"
@@ -894,7 +894,7 @@ export function MixologyApp({ onClose }: { onClose: () => void }) {
                                                 e.stopPropagation();
                                                 setConfirm({
                                                     title: "删除这场酒局？",
-                                                    body: <>「{session.charName} · {session.recipe.name}」的 {session.turns.length} 条对话会一起消失，无法找回。</>,
+                                                    body: <>「{session.charName} · {session.recipe.name}」的 {mixRoundCount(session.turns)} 轮对话会一起消失，无法找回。</>,
                                                     confirmText: "删除",
                                                     tone: "danger",
                                                     run: () => { deleteMixSession(session.id); refresh(); },
