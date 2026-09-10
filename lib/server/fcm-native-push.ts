@@ -115,25 +115,17 @@ export async function sendFcmNativePush(token: string, message: FcmNativeMessage
         body: JSON.stringify({
           message: {
             token,
-            notification: {
+            // shiaho777/web-to-app 的 NotificationFcmService 会从 data 读取
+            // title/body/url 并自行创建 Android 系统通知。data-only + high
+            // priority 也避免后台时由系统通知托盘绕过自定义点击 URL 逻辑。
+            data: {
               title: message.title,
               body: message.body,
-            },
-            data: {
-              openUrl: message.openUrl,
+              url: message.openUrl,
             },
             android: {
               priority: "high",
-              notification: {
-                channel_id: "webtoapp_push",
-              },
-            },
-            apns: {
-              payload: {
-                aps: {
-                  sound: "default",
-                },
-              },
+              ttl: "3600s",
             },
           },
         }),
