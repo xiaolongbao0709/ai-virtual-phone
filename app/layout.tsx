@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { ChatPluginBootstrap } from "@/components/chat-plugin-bootstrap";
 import { ChatReasoningVisibilityController } from "@/components/chat-reasoning-visibility-controller";
 import { CSSImportEnhancer } from "@/components/css-import-enhancer";
+import { NativePushBridge } from "@/components/native-push-bridge";
 import { PWAManifestInjector } from "@/components/pwa-manifest-injector";
 import { shellChannel } from "@/lib/mobile-shell";
 import { PWARegistrar } from "@/components/pwa-registrar";
@@ -58,6 +59,7 @@ export default function RootLayout({
       </head>
       <body>
         <PWAManifestInjector />
+        <NativePushBridge />
         <PWARegistrar />
         <CSSImportEnhancer />
         <ChatPluginBootstrap />
