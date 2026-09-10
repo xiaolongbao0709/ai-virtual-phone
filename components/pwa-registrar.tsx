@@ -9,11 +9,18 @@ type NativeBridgeWindow = Window & {
 export function PWARegistrar() {
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") return;
-
-    // WebToApp 的 WebView 由原生 FCM 负责通知。这里如果继续注册网页 SW，
-    // 页面会把 Notification/Web Push 当成主通道，导致出现“站点不对”等网页权限提示。
-    if ((window as NativeBridgeWindow).FlutterWebView) return;
     if (!("serviceWorker" in navigator)) return;
+
+    // WebToApp 的 WebView 由原生 FCM 负责通知。除了不再注册网页 SW，还主动
+    // 注销旧版本曾经留下的 SW，避免 Notification/Web Push 继续触发“站点不对”等提示。
+    if ((window as NativeBridgeWindow).FlutterWebView) {
+      navigator.serviceWorker.getRegistrations()
+        .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+        .catch((error) => {
+          console.warn("[PWA] Failed to unregister legacy service workers in native app:", error);
+        });
+      return;
+    }
 
     let cancelled = false;
     const register = () => {
