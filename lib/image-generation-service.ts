@@ -815,3 +815,10 @@ export function generatedImageFilename(description: string, mimeType = "image/pn
     .slice(0, 28) || "generated-image";
   return `${safe}.${imageExtension(mimeType)}`;
 }
+
+export function hasCharacterReferenceImage(characterId?: string): boolean {
+  if (!characterId) return false;
+  const settings = loadImageGenerationSettings();
+  const ref = settings.characterReferences?.[characterId];
+  return Boolean(ref?.assetId);
+}

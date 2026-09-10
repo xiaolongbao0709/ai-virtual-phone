@@ -175,11 +175,17 @@ const RICH_PATTERNS: {
     },
     {
         regex: new RegExp(`\\[照片${C}([^\\]]+)\\]`),
-        build: (m) => ({
-            content: "",
-            mediaType: "image",
-            mediaData: { label: m[1].trim(), useReferenceImage: false },
-        }),
+        build: (m) => {
+            const label = m[1].trim();
+            return {
+                content: "",
+                mediaType: "image",
+                mediaData: {
+                    label,
+                    useReferenceImage: /(?:自拍|对镜拍|selfie)/i.test(label),
+                },
+            };
+        },
     },
     {
         regex: new RegExp(`\\[位置${C}([^\\]]+)\\]`),
