@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { cleanAccountText } from "@/lib/server/account-auth";
-import { upsertFcmDevice } from "@/lib/server/fcm-device-store";
+import { listFcmDevices, upsertFcmDevice } from "@/lib/server/fcm-device-store";
+import { getFirebaseCredentials } from "@/lib/server/google-service-account";
 
 type RegisterBody = {
   token?: unknown;
@@ -23,6 +24,48 @@ function safeEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+export async function GET() {
+  const userId = cleanAccountText(process.env.FCM_DEFAULT_USER_ID || "local_user", 120) || "local_user";
+  const credentials = getFirebaseCredentials();
+  const registerSecretConfigured = Boolean(process.env.FCM_REGISTER_SECRET?.trim());
+
+  if (!credentials) {
+    return NextResponse.json({
+      ok: false,
+      firebaseConfigured: false,
+      registerSecretConfigured,
+      userId,
+      firestoreReachable: false,
+      deviceCount: 0,
+      error: "缺少 FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY。",
+    });
+  }
+
+  try {
+    const devices = await listFcmDevices(userId);
+    return NextResponse.json({
+      ok: true,
+      firebaseConfigured: true,
+      registerSecretConfigured,
+      userId,
+      firestoreReachable: true,
+      deviceCount: devices.length,
+      projectId: credentials.projectId,
+    });
+  } catch (err) {
+    return NextResponse.json({
+      ok: false,
+      firebaseConfigured: true,
+      registerSecretConfigured,
+      userId,
+      firestoreReachable: false,
+      deviceCount: 0,
+      projectId: credentials.projectId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 export async function POST(request: Request) {
