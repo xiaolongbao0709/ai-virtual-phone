@@ -1,10 +1,11 @@
 // 服务端推送：浏览器 Web Push + WebToApp FCM + 旧安卓壳兼容。
-// VAPID 密钥存 push_server_config 表，设备订阅存 push_subscriptions。
+// 浏览器 Web Push / 旧安卓壳仍可使用 Supabase；WebToApp FCM 设备独立存 Firestore。
 
 import { randomBytes } from "node:crypto";
 
 import webpush from "web-push";
 
+import { deleteFcmDevice, listFcmDevices } from "./fcm-device-store";
 import { sendFcmNativePush } from "./fcm-native-push";
 import { encodeSupabaseFilter, getSupabaseServerConfig, supabaseRestFetch } from "./supabase-rest";
 
@@ -39,9 +40,7 @@ export type PushSendResult = {
   errors: string[];
 };
 
-// 旧 FloatShell 使用 Supabase Realtime；WebToApp 新壳使用真正的系统 FCM。
 const SHELL_ENDPOINT_PREFIX = "shell:";
-const FCM_ENDPOINT_PREFIX = "fcm:";
 
 /** 向旧安卓壳的个人频道 shellpush:<userId> 广播一条通知（兼容保留）。 */
 export async function broadcastShellNotify(
@@ -138,17 +137,12 @@ export async function getOrCreatePushPayloadKey(): Promise<string> {
   return key;
 }
 
-/** 给某个账号的所有订阅设备发一条推送。失效订阅会自动清掉。 */
+/** 给某个账号的所有订阅设备发一条推送。FCM 不依赖 Supabase。 */
 export async function sendPushToUser(
   userId: string,
   message: PushMessage,
   subject: string,
 ): Promise<PushSendResult> {
-  const subs = await supabaseRestFetch<PushSubscriptionRow[]>(
-    `push_subscriptions?user_id=eq.${encodeSupabaseFilter(userId)}&select=endpoint,p256dh,auth`,
-  );
-  if (!subs.ok) throw new Error(subs.error);
-
   const navigate = (() => {
     if (message.url) {
       try {
@@ -185,44 +179,50 @@ export async function sendPushToUser(
       },
     },
   });
-  const result: PushSendResult = { sent: 0, total: subs.data.length, errors: [] };
+
+  const result: PushSendResult = { sent: 0, total: 0, errors: [] };
+
+  // 1) 原生 FCM：独立从 Firestore 读取，因此即使完全没配 Supabase 也能工作。
+  try {
+    const fcmDevices = await listFcmDevices(userId);
+    result.total += fcmDevices.length;
+    for (const device of fcmDevices) {
+      const sent = await sendFcmNativePush(device.token, {
+        title: message.title,
+        body: message.body,
+        openUrl: navigate,
+      });
+      if (sent.ok) {
+        result.sent += 1;
+      } else if (sent.stale) {
+        await deleteFcmDevice(device.id).catch(() => undefined);
+      } else {
+        result.errors.push(sent.error || "FCM native push failed");
+      }
+    }
+  } catch (err) {
+    result.errors.push(err instanceof Error ? err.message : String(err));
+  }
+
+  // 2) 旧壳 / 浏览器 Web Push：只有配置了 Supabase 才加载，未配置时直接跳过。
+  if (!getSupabaseServerConfig()) return result;
+
+  const subs = await supabaseRestFetch<PushSubscriptionRow[]>(
+    `push_subscriptions?user_id=eq.${encodeSupabaseFilter(userId)}&select=endpoint,p256dh,auth`,
+  );
+  if (!subs.ok) {
+    result.errors.push(subs.error);
+    return result;
+  }
+  result.total += subs.data.length;
 
   const shellSubs = subs.data.filter((sub) => sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX));
-  const fcmSubs = subs.data.filter((sub) => sub.endpoint.startsWith(FCM_ENDPOINT_PREFIX));
-  const webSubs = subs.data.filter((sub) =>
-    !sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX) && !sub.endpoint.startsWith(FCM_ENDPOINT_PREFIX)
-  );
+  const webSubs = subs.data.filter((sub) => !sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX));
 
   if (shellSubs.length > 0) {
     const ok = await broadcastShellNotify(userId, { title: message.title, body: message.body, url: navigate });
     if (ok) result.sent += shellSubs.length;
     else result.errors.push("shell broadcast failed");
-  }
-
-  for (const sub of fcmSubs) {
-    const endpointFilter = `push_subscriptions?endpoint=eq.${encodeSupabaseFilter(sub.endpoint)}`;
-    const token = sub.endpoint.slice(FCM_ENDPOINT_PREFIX.length).trim();
-    if (!token) {
-      await supabaseRestFetch(endpointFilter, { method: "DELETE" }).catch(() => undefined);
-      continue;
-    }
-
-    const sent = await sendFcmNativePush(token, {
-      title: message.title,
-      body: message.body,
-      openUrl: navigate,
-    });
-    if (sent.ok) {
-      result.sent += 1;
-      await supabaseRestFetch(endpointFilter, {
-        method: "PATCH",
-        body: JSON.stringify({ last_ok_at: new Date().toISOString(), fail_count: 0 }),
-      }).catch(() => undefined);
-    } else if (sent.stale) {
-      await supabaseRestFetch(endpointFilter, { method: "DELETE" }).catch(() => undefined);
-    } else {
-      result.errors.push(sent.error || "FCM native push failed");
-    }
   }
 
   if (webSubs.length > 0) {
