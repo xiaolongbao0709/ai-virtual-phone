@@ -55,8 +55,39 @@ function constructNotification(title: string, payload: NotificationOptions): voi
 }
 
 /**
- * Send a browser notification if enabled and page is hidden.
- * Does nothing if page is visible, permission denied, or setting is off.
+ * Tell the server to fan this alert out through the native FCM channel.
+ * This is deliberately independent from the browser-notification toggle: WebToApp
+ * uses FCM for the Android system notification, while the toggle below controls
+ * only Notification/ServiceWorker Web Push.
+ */
+function sendNativeFcmNotification(
+    title: string,
+    options?: { body?: string; icon?: string },
+): void {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    if (!document.hidden) return;
+    const body = options?.body?.trim();
+    if (!body) return;
+
+    void fetch("/api/push/fcm/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        keepalive: true,
+        body: JSON.stringify({
+            title,
+            body,
+            url: window.location.href,
+        }),
+    }).catch(() => undefined);
+}
+
+/**
+ * Send a background notification when the page is hidden.
+ *
+ * Native FCM is attempted first and does not depend on the browser-notification
+ * setting. Browser Notification / Service Worker delivery remains optional and
+ * keeps the existing user-facing toggle.
  *
  * Android Chrome/Edge does NOT support the `new Notification()` constructor in
  * pages (throws Illegal constructor) — notifications there must go through the
@@ -67,8 +98,15 @@ export function sendBrowserNotification(
     title: string,
     options?: { body?: string; icon?: string },
 ): void {
+    if (typeof document === "undefined" || !document.hidden) return;
+
+    // WebToApp/native path. The server only sends to FCM devices registered for
+    // the current self-hosted/account identity, so no Supabase subscription is
+    // required for this branch.
+    sendNativeFcmNotification(title, options);
+
+    // Existing browser notification path stays opt-in.
     if (!isNotificationEnabled()) return;
-    if (!document.hidden) return;
 
     const payload: NotificationOptions = {
         body: options?.body,
