@@ -2,12 +2,7 @@ import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { cleanAccountText } from "@/lib/server/account-auth";
-import {
-  encodeSupabaseFilter,
-  formatSupabaseRestError,
-  getSupabaseServerConfig,
-  supabaseRestFetch,
-} from "@/lib/server/supabase-rest";
+import { upsertFcmDevice } from "@/lib/server/fcm-device-store";
 
 type RegisterBody = {
   token?: unknown;
@@ -32,10 +27,6 @@ function safeEqual(left: string, right: string): boolean {
 
 export async function POST(request: Request) {
   try {
-    if (!getSupabaseServerConfig()) {
-      return NextResponse.json({ ok: false, error: "Supabase 环境变量未配置。" }, { status: 503 });
-    }
-
     const expectedSecret = process.env.FCM_REGISTER_SECRET?.trim() || "";
     if (!expectedSecret) {
       return NextResponse.json({ ok: false, error: "FCM_REGISTER_SECRET 未配置。" }, { status: 503 });
@@ -62,44 +53,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "目前仅接受 Android FCM token。" }, { status: 400 });
     }
 
-    // 当前 TAT1123 自部署模式是单用户 local_user。需要多账号时可在部署环境
-    // 中把 FCM_DEFAULT_USER_ID 指向对应账号，避免把用户身份信任交给客户端。
     const userId = cleanAccountText(process.env.FCM_DEFAULT_USER_ID || "local_user", 120) || "local_user";
-    const endpoint = `fcm:${token}`;
-    const userAgent = [
-      "WebToApp FCM",
-      appName && `app=${appName}`,
-      deviceId && `device=${deviceId}`,
-    ].filter(Boolean).join("; ").slice(0, 300);
+    await upsertFcmDevice({ token, userId, deviceId, appName });
 
-    const result = await supabaseRestFetch("push_subscriptions", {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify([{
-        endpoint,
-        user_id: userId,
-        p256dh: "fcm",
-        auth: "fcm",
-        user_agent: userAgent || "WebToApp FCM",
-        fail_count: 0,
-        last_ok_at: new Date().toISOString(),
-      }]),
-    });
-    if (!result.ok) {
-      return NextResponse.json({ ok: false, error: result.error }, { status: 500 });
-    }
-
-    // 新 FCM token 注册成功后，移除旧 FloatShell 的 Realtime 占位订阅，
-    // 防止同一条消息既走旧前台常驻服务又走 FCM 而重复弹两次。
-    await supabaseRestFetch(
-      `push_subscriptions?endpoint=eq.${encodeSupabaseFilter(`shell:${userId}`)}&user_id=eq.${encodeSupabaseFilter(userId)}`,
-      { method: "DELETE" },
-    ).catch(() => undefined);
-
-    return NextResponse.json({ ok: true, provider: "fcm", userId });
+    return NextResponse.json({ ok: true, provider: "fcm", userId, storage: "firestore" });
   } catch (err) {
     return NextResponse.json(
-      { ok: false, error: formatSupabaseRestError(err instanceof Error ? err.message : String(err)) },
+      { ok: false, error: err instanceof Error ? err.message : String(err) },
       { status: 500 },
     );
   }
