@@ -41,6 +41,7 @@ export type PushSendResult = {
 };
 
 const SHELL_ENDPOINT_PREFIX = "shell:";
+const LEGACY_FCM_ENDPOINT_PREFIX = "fcm:";
 
 /** 向旧安卓壳的个人频道 shellpush:<userId> 广播一条通知（兼容保留）。 */
 export async function broadcastShellNotify(
@@ -214,10 +215,12 @@ export async function sendPushToUser(
     result.errors.push(subs.error);
     return result;
   }
-  result.total += subs.data.length;
 
   const shellSubs = subs.data.filter((sub) => sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX));
-  const webSubs = subs.data.filter((sub) => !sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX));
+  const webSubs = subs.data.filter((sub) =>
+    !sub.endpoint.startsWith(SHELL_ENDPOINT_PREFIX) && !sub.endpoint.startsWith(LEGACY_FCM_ENDPOINT_PREFIX)
+  );
+  result.total += shellSubs.length + webSubs.length;
 
   if (shellSubs.length > 0) {
     const ok = await broadcastShellNotify(userId, { title: message.title, body: message.body, url: navigate });
