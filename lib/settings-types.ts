@@ -33,6 +33,17 @@ export type PromptOrderEntry = {
     enabled: boolean;
 };
 
+export type GenerationParameterKey =
+    | "temperature"
+    | "top_p"
+    | "top_k"
+    | "min_p"
+    | "top_a"
+    | "repetition_penalty"
+    | "frequency_penalty"
+    | "presence_penalty"
+    | "max_tokens";
+
 export type Prompt = {
     identifier: string;
     name: string;
@@ -65,6 +76,11 @@ export type PresetConfig = SettingItemMeta & {
     repetition_penalty: number;
     openai_max_tokens: number;
     openai_max_context: number;
+    /**
+     * Explicit allow-list of generation parameters sent to model providers.
+     * Undefined keeps legacy behavior so existing/imported presets remain compatible.
+     */
+    enabled_generation_parameters?: GenerationParameterKey[];
     top_a?: number;
     min_p?: number;
     wrap_in_quotes?: boolean;
@@ -82,6 +98,19 @@ export type PresetConfig = SettingItemMeta & {
     scenario_format?: string;
     personality_format?: string;
     story_summary_tag?: string;
+    /** 线下/剧情模式的思维链标签名：从模型输出的 XML 里提取思考过程（默认 thinking，兼容 thought）。
+     *  仅当 offline_thinking_enabled 开启时才启用标签解析；关闭时走模型原生 reasoning。 */
+    thinking_tag?: string;
+    /** 线上模式的思维链标签名：从模型输出的 XML 里提取思考过程（默认 thinking）。
+     *  仅当 online_thinking_enabled 开启时才启用标签解析；关闭时走模型原生 reasoning。 */
+    online_thinking_tag?: string;
+    /** 线上模式是否启用思维链标签解析（默认关；关 = 走模型原生 reasoning） */
+    online_thinking_enabled?: boolean;
+    /** 线下模式是否启用思维链标签解析（默认关；关 = 走模型原生 reasoning） */
+    offline_thinking_enabled?: boolean;
+    /** 模型回复中直接剔除的文本片段列表（字面量删除，不走正则）：如 <思考结束> 等残留标签，
+     *  生成时即删除，不进入消息、不进入发给模型的记录。 */
+    strip_texts?: string[];
     prompt_order?: PromptOrderEntry[];
     prompts: Prompt[];
 };
@@ -140,12 +169,16 @@ export type VoiceApiConfig = {
     languageBoost?: string;
     /** Minimax voice_setting.speed. Missing values keep the legacy 1.0x behavior. */
     speechSpeed?: number;
+    /** Minimax voice_setting.pitch（半音，±12）。缺省保持旧行为（0，原声）。 */
+    speechPitch?: number;
     customVoices?: { id: string; name: string; createdAt?: number }[];
     enableSTT: boolean;
     enableTTS: boolean;
 };
 
 // --- Image Generation ---
+export type ImageGenerationProvider = "openai" | "novelai";
+
 export type ImageGenerationRequestMode = "server" | "direct";
 
 export type ImageHostingProvider = "none" | "imgbb";
@@ -159,15 +192,41 @@ export type ImageHostingSettings = {
     allowMascotUpload: boolean;
 };
 
+export type NovelAiPreset = {
+    id: string;
+    name: string;
+    model: string;
+    resolution: string; // e.g. "832x1216", "1216x832", "1024x1024", "1024x1536"
+    steps: number;
+    scale: number;
+    sampler: string; // e.g. "k_euler", "k_dpmpp_2m", "k_euler_ancestral"
+    noiseSchedule?: string; // e.g. "karras", "native", "exponential"
+    positivePrompt: string; // 画师串 / 风格 / 质量正向词
+    negativePrompt: string; // 负面提示词 / undesired content
+    qualityToggle?: boolean;
+    smea?: boolean;
+    smeaDyn?: boolean;
+};
+
+export type NovelAiSettings = {
+    apiKey: string;
+    activePresetId: string;
+    presets: NovelAiPreset[];
+};
+
 export type ImageGenerationSettings = {
     enabled: boolean;
+    provider?: ImageGenerationProvider;
     requestMode: ImageGenerationRequestMode;
+    // OpenAI 模式配置
     apiKey: string;
     baseUrl: string;
     model: string;
     size: string;
     quality: string;
     extraPrompt: string;
+    // NovelAI 模式配置
+    novelai?: NovelAiSettings;
     characterReferences: Record<string, {
         assetId: string;
         updatedAt: number;

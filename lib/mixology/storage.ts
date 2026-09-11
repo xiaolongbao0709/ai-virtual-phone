@@ -5,18 +5,25 @@
 
 import { kvGet, kvSet, registerKvMigration } from "../kv-db";
 import type {
+    MixConnector,
     MixMaterial,
     MixMaterialKind,
     MixRecipe,
     MixSession,
     MixSlotEntry,
 } from "./types";
-import { MIX_SLOT_ORDER, mixSlotEntries, normalizeMixSlots } from "./types";
+import { MIX_CONNECTOR_NAME_RE, MIX_SLOT_ORDER, mixSlotEntries, normalizeMixSlots } from "./types";
 import {
     MIX_BUILTIN_BASE_ID,
+    MIX_BUILTIN_CHECKLIST_ID,
     MIX_BUILTIN_GLASS_ID,
+    MIX_BUILTIN_PREFACE_ID,
+    MIX_BUILTIN_READER_ID,
     createBuiltinBase,
+    createBuiltinChecklist,
     createBuiltinGlass,
+    createBuiltinPreface,
+    createBuiltinReader,
 } from "./builtin";
 
 const CABINET_KEY = "mixology_cabinet_v1";
@@ -24,12 +31,14 @@ const RECIPES_KEY = "mixology_recipes_v1";
 const SESSIONS_KEY = "mixology_sessions_v1";
 const BUILTIN_VERSION_KEY = "mixology_builtin_version_v1";
 const PROFILE_KEY = "mixology_profile_v1";
+const CONNECTORS_KEY = "mixology_connectors_v1";
 
 registerKvMigration(CABINET_KEY);
 registerKvMigration(RECIPES_KEY);
 registerKvMigration(SESSIONS_KEY);
 registerKvMigration(BUILTIN_VERSION_KEY);
 registerKvMigration(PROFILE_KEY);
+registerKvMigration(CONNECTORS_KEY);
 
 /**
  * 酒柜被外部改写（小卷工具）后的广播事件：已打开的特调 App 据此重读列表。
@@ -39,8 +48,11 @@ export const MIX_CABINET_UPDATED_EVENT = "mix-cabinet-updated";
 
 /** 官方件不可删除、不可改名（内容永远是当前出厂版） */
 export const MIX_BUILTIN_IDS: readonly string[] = [
+    MIX_BUILTIN_PREFACE_ID,
     MIX_BUILTIN_BASE_ID,
     MIX_BUILTIN_GLASS_ID,
+    MIX_BUILTIN_CHECKLIST_ID,
+    MIX_BUILTIN_READER_ID,
 ];
 
 export function isMixBuiltinId(id: string): boolean {
@@ -49,7 +61,7 @@ export function isMixBuiltinId(id: string): boolean {
 
 /** 出厂件工厂直读：不落库，每次现造，天然随版本更新 */
 export function listMixBuiltins(kind?: MixMaterialKind): MixMaterial[] {
-    const factory: MixMaterial[] = [createBuiltinBase(), createBuiltinGlass()];
+    const factory: MixMaterial[] = [createBuiltinPreface(), createBuiltinBase(), createBuiltinGlass(), createBuiltinChecklist(), createBuiltinReader()];
     return kind ? factory.filter((m) => m.kind === kind) : factory;
 }
 
@@ -96,6 +108,53 @@ export function saveMixProfile(profile: MixProfile): void {
         name: profile.name?.trim() || undefined,
         avatar: profile.avatar || undefined,
     });
+}
+
+// ---------- 连接器 ----------
+// 玩家自己的外部接口配置（地址与密钥）。不是材料：不进酒柜列表、不导出、不上大厅。
+
+export const MIX_CONNECTORS_UPDATED_EVENT = "mix-connectors-updated";
+
+export function loadMixConnectors(): MixConnector[] {
+    const stored = readJson<MixConnector[]>(CONNECTORS_KEY, []);
+    if (!Array.isArray(stored)) return [];
+    return stored
+        .filter((c): c is MixConnector => Boolean(c) && typeof c === "object" && typeof c.id === "string" && typeof c.name === "string")
+        .map((c): MixConnector => ({
+            ...c,
+            name: c.name.trim().toLowerCase(),
+            url: typeof c.url === "string" ? c.url : "",
+            method: c.method === "GET" ? "GET" : "POST",
+            headers: c.headers && typeof c.headers === "object" ? c.headers : {},
+            body: typeof c.body === "string" ? c.body : "",
+            response: c.response === "text" || c.response === "blob" ? c.response : "json",
+        }))
+        .filter((c) => MIX_CONNECTOR_NAME_RE.test(c.name))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** 机括按名字找连接器；同名只会有一件（保存时按名字去重） */
+export function findMixConnector(name: string): MixConnector | null {
+    const key = name.trim().toLowerCase();
+    return loadMixConnectors().find((c) => c.name === key) ?? null;
+}
+
+function broadcastConnectors(): void {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event(MIX_CONNECTORS_UPDATED_EVENT));
+}
+
+/** 新增或覆盖（id 相同即覆盖；改成已有的名字会顶掉同名那件） */
+export function saveMixConnector(connector: MixConnector): void {
+    const name = connector.name.trim().toLowerCase();
+    const list = loadMixConnectors().filter((c) => c.id !== connector.id && c.name !== name);
+    list.push({ ...connector, name, updatedAt: Date.now() });
+    writeJson(CONNECTORS_KEY, list);
+    broadcastConnectors();
+}
+
+export function deleteMixConnector(id: string): void {
+    writeJson(CONNECTORS_KEY, loadMixConnectors().filter((c) => c.id !== id));
+    broadcastConnectors();
 }
 
 // ---------- 酒柜（材料） ----------

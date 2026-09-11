@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useContext, useCallback, useMemo } from "react";
-import { Plus, Upload, Download, Trash2, RotateCcw, ChevronLeft, ChevronDown, GripVertical, MessageSquare, AlertCircle, Maximize2, Copy, Replace } from "lucide-react";
+import { Plus, Upload, Download, Trash2, RotateCcw, ChevronLeft, ChevronDown, GripVertical, MessageSquare, AlertCircle, Maximize2, Copy, Replace, CheckSquare, Check, Filter, MoreHorizontal } from "lucide-react";
 import {
     loadPresets,
     savePresets,
@@ -10,13 +10,18 @@ import {
     resetBuiltinPreset,
     UNSUPPORTED_IMPORT_FORMAT,
 } from "@/lib/settings-storage";
-import type { PresetConfig, Prompt, PromptOrderEntry } from "@/lib/settings-types";
+import type { GenerationParameterKey, PresetConfig, Prompt, PromptOrderEntry } from "@/lib/settings-types";
+import {
+    GENERATION_PARAMETER_KEYS,
+    resolveEnabledGenerationParameters,
+} from "@/lib/generation-parameters";
 import {
     areTagsEqual,
     CONTENT_SCOPE_TAG_GROUPS,
     getPromptTags as getScopedPromptTags,
     getTagsLabel,
     resolveContentTagLabel,
+    type TagGroupProfile,
 } from "@/lib/content-tag-utils";
 import { buildCustomAppTagGroups, findTagGroupForTags, flattenTagGroups } from "@/lib/custom-app-tag-profiles";
 import { CUSTOM_APPS_UPDATED_EVENT, loadInstalledCustomApps } from "@/lib/custom-app-storage";
@@ -30,6 +35,18 @@ import { useTouchSort } from "@/lib/use-touch-sort";
 // ── Tag helpers for backward compat (tags[] > featureTag + followUpOnly) ──
 function getPromptTags(p: Prompt): string[] {
     return getScopedPromptTags(p);
+}
+
+/** 条目是否命中选中的 App 大类集合（多选；空集合视为未筛选，全部命中）。 */
+function matchesSelectedAppTags(p: Prompt, tags: Set<string>): boolean {
+    if (!tags || tags.size === 0) return true;
+    const pt = getPromptTags(p);
+    if (tags.has("__universal__") && pt.length === 0) return true;
+    for (const t of tags) {
+        if (t === "__universal__") continue;
+        if (pt.includes(t)) return true;
+    }
+    return false;
 }
 
 function getPromptTagGroup(p: Prompt, tagGroups = CONTENT_SCOPE_TAG_GROUPS) {
@@ -84,6 +101,153 @@ function matchMarkerByName(name: string): string | null {
     return MARKER_NAMES_NORMALIZED[normalizeMarkerName(name)] ?? null;
 }
 
+// 构建「有序 + 孤儿」的条目列表，并按 identifier 去重。
+// 若 prompt_order 含重复 entry 或 prompts 含重复 identifier，会导致同一条目渲染多次、
+// reorder 索引错位、touch 拖拽拖到错误的条目；这里统一保首个出现，保证渲染与重排视图唯一。
+function buildDisplayedPrompts(preset: PresetConfig): Prompt[] {
+    const seen = new Set<string>();
+    const out: Prompt[] = [];
+    const push = (p?: Prompt) => {
+        if (p && !seen.has(p.identifier)) {
+            seen.add(p.identifier);
+            out.push(p);
+        }
+    };
+    if (preset.prompt_order && preset.prompt_order.length > 0) {
+        for (const e of preset.prompt_order) {
+            push(preset.prompts.find(x => x.identifier === e.identifier));
+        }
+    }
+    for (const p of preset.prompts || []) push(p);
+    return out;
+}
+
+type AppFilterMode = "highlight" | "only-show" | "collapse" | "group-collapse";
+
+const GENERATION_PARAMETER_OPTIONS: Array<{ key: GenerationParameterKey; label: string; title: string }> = [
+    { key: "temperature", label: "Temperature", title: "Temperature" },
+    { key: "top_p", label: "Top P", title: "Top P" },
+    { key: "top_k", label: "Top K", title: "Top K" },
+    { key: "min_p", label: "Min P", title: "Min P" },
+    { key: "top_a", label: "Top A", title: "Top A" },
+    { key: "repetition_penalty", label: "重复惩罚", title: "Repetition Penalty" },
+    { key: "frequency_penalty", label: "频率惩罚", title: "Frequency Penalty" },
+    { key: "presence_penalty", label: "存在惩罚", title: "Presence Penalty" },
+    { key: "max_tokens", label: "Max Tokens", title: "Max Tokens" },
+];
+
+type PromptRenderItem =
+    | { type: "item"; prompt: Prompt }
+    | { type: "collapsed"; prompts: Prompt[]; groupKey: string; label: string }
+    | { type: "collapse-header"; groupKey: string; label: string; count: number };
+
+function buildPromptRenderItems(
+    preset: PresetConfig,
+    tagGroups: TagGroupProfile[],
+    filterMode: AppFilterMode,
+    filterTags: Set<string>,
+    expandedGroups: Set<string>,
+): PromptRenderItem[] {
+    const allPrompts = buildDisplayedPrompts(preset);
+    const matchesFilter = (prompt: Prompt) => matchesSelectedAppTags(prompt, filterTags);
+    const hasFilter = filterTags.size > 0;
+
+    if (filterMode === "only-show" && hasFilter) {
+        return allPrompts.filter(matchesFilter).map(prompt => ({ type: "item", prompt }));
+    }
+
+    const getGroupKey = (prompt: Prompt): string => {
+        const promptTags = getPromptTags(prompt);
+        if (promptTags.length === 0) return "__universal__";
+        const group = findTagGroupForTags(tagGroups, promptTags);
+        return group?.tags[0] || promptTags[0];
+    };
+    const getGroupLabel = (tag: string): string => {
+        if (tag === "__universal__") return "通用";
+        return tagGroups.find(group => group.tags[0] === tag)?.label || tag;
+    };
+
+    if (filterMode !== "collapse" && filterMode !== "group-collapse") {
+        return allPrompts.map(prompt => ({ type: "item", prompt }));
+    }
+
+    const makeCollapsedOrExpanded = (prompts: Prompt[], key: string, label: string): PromptRenderItem[] => {
+        if (expandedGroups.has(key)) {
+            return [
+                { type: "collapse-header", groupKey: key, label, count: prompts.length },
+                ...prompts.map(prompt => ({ type: "item" as const, prompt })),
+            ];
+        }
+        return [{ type: "collapsed", prompts, groupKey: key, label }];
+    };
+    const participates = (prompt: Prompt): boolean => !hasFilter || matchesFilter(prompt);
+
+    if (filterMode === "group-collapse") {
+        const byGroup = new Map<string, Prompt[]>();
+        for (const prompt of allPrompts) {
+            if (!participates(prompt)) continue;
+            const groupKey = getGroupKey(prompt);
+            const group = byGroup.get(groupKey) || [];
+            group.push(prompt);
+            byGroup.set(groupKey, group);
+        }
+
+        const result: PromptRenderItem[] = [];
+        const seenGroups = new Set<string>();
+        for (const prompt of allPrompts) {
+            if (!participates(prompt)) {
+                result.push({ type: "item", prompt });
+                continue;
+            }
+            const groupKey = getGroupKey(prompt);
+            if (seenGroups.has(groupKey)) continue;
+            seenGroups.add(groupKey);
+            const group = byGroup.get(groupKey) || [];
+            if (group.length >= 2) {
+                result.push(...makeCollapsedOrExpanded(group, `g-${groupKey}`, getGroupLabel(groupKey)));
+            } else {
+                result.push({ type: "item", prompt });
+            }
+        }
+        return result;
+    }
+
+    const result: PromptRenderItem[] = [];
+    let index = 0;
+    let segmentIndex = 0;
+    while (index < allPrompts.length) {
+        const prompt = allPrompts[index];
+        const groupKey = getGroupKey(prompt);
+        if (!participates(prompt)) {
+            result.push({ type: "item", prompt });
+            index += 1;
+            continue;
+        }
+
+        const group: Prompt[] = [];
+        let nextIndex = index;
+        while (
+            nextIndex < allPrompts.length
+            && participates(allPrompts[nextIndex])
+            && getGroupKey(allPrompts[nextIndex]) === groupKey
+        ) {
+            group.push(allPrompts[nextIndex]);
+            nextIndex += 1;
+        }
+        if (group.length >= 2) {
+            result.push(...makeCollapsedOrExpanded(
+                group,
+                `g-${groupKey}-seg${segmentIndex++}`,
+                getGroupLabel(groupKey),
+            ));
+        } else {
+            result.push({ type: "item", prompt });
+        }
+        index = nextIndex;
+    }
+    return result;
+}
+
 const MASCOT_PRESET_STORAGE_TOOL_NAMES = new Set([
     "创建剧情预设",
     "克隆内置预设",
@@ -127,9 +291,30 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
     const [confirmDeleteEntry, setConfirmDeleteEntry] = useState<string | null>(null);
     const [isLoaded, setIsLoaded] = useState(false);
     const [paramsOpen, setParamsOpen] = useState(false);
+    const [parameterPickerOpen, setParameterPickerOpen] = useState(false);
     const [expandTarget, setExpandTarget] = useState<{ identifier: string; field: string } | null>(null);
     const [importError, setImportError] = useState<string | null>(null);
     const [customApps, setCustomApps] = useState<InstalledCustomApp[]>([]);
+    // ── 多选模式（右滑选中 / 批量操作 / 多选拖拽） ──
+    const [selectMode, setSelectMode] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [selectionPresetId, setSelectionPresetId] = useState<string | null>(null);
+    const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
+
+    // ── 按 App 筛选（高亮/仅显示/仅折叠/同类折叠） ──
+    const [appFilterOpen, setAppFilterOpen] = useState(false);
+    const [appFilterMode, setAppFilterMode] = useState<AppFilterMode>("highlight");
+    const [appFilterTags, setAppFilterTags] = useState<Set<string>>(new Set()); // 选中的大类 tag 集合（可多选）
+    const [expandedCollapseGroups, setExpandedCollapseGroups] = useState<Set<string>>(new Set()); // 已展开的折叠组 key
+
+    const toggleFilterTag = useCallback((tag: string) => {
+        setAppFilterTags(prev => {
+            const next = new Set(prev);
+            if (next.has(tag)) next.delete(tag);
+            else next.add(tag);
+            return next;
+        });
+    }, []);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -164,6 +349,44 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
     ], [customApps, presets]);
 
     const tagProfiles = useMemo(() => flattenTagGroups(tagGroups), [tagGroups]);
+    const activePreset = useMemo(
+        () => presets.find(preset => preset.id === editingId) ?? null,
+        [editingId, presets],
+    );
+    const promptRenderItems = useMemo(
+        () => activePreset
+            ? buildPromptRenderItems(activePreset, tagGroups, appFilterMode, appFilterTags, expandedCollapseGroups)
+            : [],
+        [activePreset, appFilterMode, appFilterTags, expandedCollapseGroups, tagGroups],
+    );
+    const visiblePromptIds = useMemo(
+        () => new Set(
+            promptRenderItems
+                .filter((item): item is Extract<PromptRenderItem, { type: "item" }> => item.type === "item")
+                .map(item => item.prompt.identifier),
+        ),
+        [promptRenderItems],
+    );
+    const actionableSelectedIds = useMemo(() => {
+        if (!editingId || selectionPresetId !== editingId) return new Set<string>();
+        return new Set([...selectedIds].filter(identifier => visiblePromptIds.has(identifier)));
+    }, [editingId, selectedIds, selectionPresetId, visiblePromptIds]);
+
+    useEffect(() => {
+        setSelectMode(false);
+        setSelectedIds(new Set());
+        setSelectionPresetId(null);
+        setConfirmDeleteSelected(false);
+        setParameterPickerOpen(false);
+    }, [editingId, viewMode]);
+
+    useEffect(() => {
+        setSelectedIds(previous => {
+            const next = new Set([...previous].filter(identifier => visiblePromptIds.has(identifier)));
+            if (next.size === previous.size && [...next].every(identifier => previous.has(identifier))) return previous;
+            return next;
+        });
+    }, [visiblePromptIds]);
 
     const containerRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -313,6 +536,7 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                             });
                         }
                         const prompt = { ...prompts[promptIdx] };
+                        const previousIdentifier = prompt.identifier;
                         if (subfield === "identifier") {
                             prompt.identifier = value;
                             handled = true;
@@ -361,8 +585,24 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                         for (let pi = 0; pi < prompts.length; pi++) {
                             prompts[pi] = { ...prompts[pi], system_prompt: pi === firstSystemIdx };
                         }
-                        // Auto-generate prompt_order from array order
-                        preset.prompt_order = prompts.filter(p => p.identifier && !p.identifier.startsWith("_placeholder")).map(p => ({ identifier: p.identifier, enabled: true }));
+                        // 顺序表保留现有顺序与开关：被改名的条目映射到新 identifier，新条目追加到
+                        // 末尾，已不存在或仍是占位符的剔除。不能按数组顺序重建，否则用户拖好的顺序
+                        // 会被打回创建顺序，开关状态也会全部变成开启。
+                        const validIds = new Set(prompts.filter(p => p.identifier && !p.identifier.startsWith("_placeholder")).map(p => p.identifier));
+                        const seenIds = new Set<string>();
+                        const nextOrder: PromptOrderEntry[] = [];
+                        for (const entry of preset.prompt_order ?? []) {
+                            const id = entry.identifier === previousIdentifier ? prompt.identifier : entry.identifier;
+                            if (!validIds.has(id) || seenIds.has(id)) continue;
+                            seenIds.add(id);
+                            nextOrder.push({ identifier: id, enabled: entry.enabled !== false });
+                        }
+                        for (const p of prompts) {
+                            if (!validIds.has(p.identifier) || seenIds.has(p.identifier)) continue;
+                            seenIds.add(p.identifier);
+                            nextOrder.push({ identifier: p.identifier, enabled: true });
+                        }
+                        preset.prompt_order = nextOrder;
                     }
                 }
 
@@ -439,6 +679,23 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
         persist(presets.map(p => p.id === id ? { ...p, ...updates, updatedAt: Date.now() } : p));
     };
 
+    const toggleGenerationParameter = (preset: PresetConfig, key: GenerationParameterKey) => {
+        const enabled = resolveEnabledGenerationParameters(preset);
+        const willEnable = !enabled.has(key);
+        if (willEnable) enabled.add(key);
+        else enabled.delete(key);
+
+        const updates: Partial<PresetConfig> = {
+            enabled_generation_parameters: GENERATION_PARAMETER_KEYS.filter(item => enabled.has(item)),
+        };
+        // 0 在 Max Tokens 中表示“不发送”。用户主动开启时给一个可用值，
+        // 避免胶囊显示已选、请求里却仍然没有该字段。
+        if (key === "max_tokens" && willEnable && preset.openai_max_tokens <= 0) {
+            updates.openai_max_tokens = 4096;
+        }
+        updatePreset(preset.id, updates);
+    };
+
     const updatePrompt = (
         preset: PresetConfig,
         promptId: string,
@@ -452,33 +709,156 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
     };
 
     // ── Prompt reorder (shared by HTML5 drag & touch sort) ──
-    const handlePromptReorder = useCallback((fromIndex: number, toIndex: number) => {
+    // 多选模式下拖动选中的条目 → 整组批量移动；否则单条目移动。
+    const handlePromptReorder = useCallback((fromRenderIndex: number, toRenderIndex: number) => {
         if (!editingId) return;
         const preset = presets.find(p => p.id === editingId);
         if (!preset) return;
-        // Build full display list (same logic as render: ordered + orphans)
-        const ordered = preset.prompt_order && preset.prompt_order.length > 0
-            ? preset.prompt_order.map(e => preset.prompts.find(p => p.identifier === e.identifier)).filter((p): p is Prompt => !!p)
-            : [...preset.prompts];
-        const orderedIds = new Set(ordered.map(p => p.identifier));
-        const orphans = preset.prompts.filter(p => !orderedIds.has(p.identifier));
-        const displayed = [...ordered, ...orphans];
-        // Reorder
-        const [item] = displayed.splice(fromIndex, 1);
-        displayed.splice(toIndex, 0, item);
-        const newOrder = displayed.map(p => ({
+        const fromRenderItem = promptRenderItems[fromRenderIndex];
+        const toRenderItem = promptRenderItems[toRenderIndex];
+        if (fromRenderItem?.type !== "item" || toRenderItem?.type !== "item") return;
+
+        // DOM 索引来自当前筛选/折叠视图；先按 identifier 映射回完整顺序，避免拖错条目。
+        const displayed = buildDisplayedPrompts(preset);
+        const fromIndex = displayed.findIndex(prompt => prompt.identifier === fromRenderItem.prompt.identifier);
+        const toIndex = displayed.findIndex(prompt => prompt.identifier === toRenderItem.prompt.identifier);
+        if (fromIndex < 0 || toIndex < 0) return;
+        const dragged = displayed[fromIndex];
+
+        let newDisplayed: Prompt[];
+        const isBulk = selectMode
+            && actionableSelectedIds.size > 1
+            && actionableSelectedIds.has(dragged.identifier);
+        if (isBulk) {
+            // 整组选中条目一起移动（选中集内部相对顺序保持不变）
+            const selected = displayed.filter(p => actionableSelectedIds.has(p.identifier));
+            if (selected.length === displayed.length) return; // 全选时移动无意义
+            const rest = displayed.filter(p => !actionableSelectedIds.has(p.identifier));
+            // 锚点：向下拖时插到「原位置 > to 的第一个未选中条目」之前；向上拖同理用 >= to
+            const anchor = rest.find(p => {
+                const idx = displayed.indexOf(p);
+                return toIndex > fromIndex ? idx > toIndex : idx >= toIndex;
+            });
+            const insertPos = anchor ? rest.indexOf(anchor) : rest.length;
+            newDisplayed = [...rest.slice(0, insertPos), ...selected, ...rest.slice(insertPos)];
+        } else {
+            // 单条目移动（未选中条目 / 单选）
+            const [item] = displayed.splice(fromIndex, 1);
+            displayed.splice(toIndex, 0, item);
+            newDisplayed = displayed;
+        }
+        const newOrder = newDisplayed.map(p => ({
             identifier: p.identifier,
             enabled: preset.prompt_order
                 ? (preset.prompt_order.find(o => o.identifier === p.identifier)?.enabled ?? p.enabled)
                 : p.enabled,
         }));
-        updatePreset(preset.id, { prompts: displayed, prompt_order: newOrder });
-    }, [editingId, presets]);
+        // 排序只更新 prompt_order；prompts 是原始数据源，不能用去重后的显示投影覆盖。
+        updatePreset(preset.id, { prompt_order: newOrder });
+    }, [actionableSelectedIds, editingId, presets, promptRenderItems, selectMode]);
 
-    const { containerRef: promptListRef, onTouchStart: onPromptTouchStart, onTouchMove: onPromptTouchMove, onTouchEnd: onPromptTouchEnd } = useTouchSort(handlePromptReorder);
+    const getPromptDragIndices = useCallback((pressedIndex: number) => {
+        const pressedItem = promptRenderItems[pressedIndex];
+        if (
+            !selectMode
+            || pressedItem?.type !== "item"
+            || !actionableSelectedIds.has(pressedItem.prompt.identifier)
+        ) {
+            return [pressedIndex];
+        }
+        return promptRenderItems.flatMap((item, index) => (
+            item.type === "item" && actionableSelectedIds.has(item.prompt.identifier) ? [index] : []
+        ));
+    }, [actionableSelectedIds, promptRenderItems, selectMode]);
+
+    const { containerRef: promptListRef, onTouchStart: onPromptTouchStart, onTouchMove: onPromptTouchMove, onTouchEnd: onPromptTouchEnd } = useTouchSort(
+        handlePromptReorder,
+        400,
+        getPromptDragIndices,
+    );
 
     // ── 条目左滑操作（微信式：左滑露出「新增/删除」） ──
     const swipe = useSwipeActions();
+
+    // ── 多选模式：右滑选中 / 批量操作 / 多选拖拽 ──
+    const enterSelectMode = useCallback(() => {
+        if (!editingId) return;
+        setSelectMode(true);
+        setSelectionPresetId(editingId);
+        setSelectedIds(new Set());
+        setEditingPromptId(null); // 收起展开的编辑，避免手势冲突
+        swipe.close();
+    }, [editingId, swipe]);
+
+    const exitSelectMode = useCallback(() => {
+        setSelectMode(false);
+        setSelectedIds(new Set());
+        setSelectionPresetId(null);
+        swipe.close();
+    }, [swipe]);
+
+    const toggleSelect = useCallback((identifier: string) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(identifier)) next.delete(identifier);
+            else next.add(identifier);
+            return next;
+        });
+    }, []);
+
+    // 右滑条目 → 选中并进入多选模式；已处于多选模式时追加选中
+    const handleSwipeRightSelect = useCallback((identifier: string) => {
+        if (!editingId) return;
+        setSelectMode(true);
+        setEditingPromptId(null);
+        setSelectedIds(prev => {
+            const next = selectionPresetId === editingId ? new Set(prev) : new Set<string>();
+            next.add(identifier);
+            return next;
+        });
+        setSelectionPresetId(editingId);
+        swipe.close();
+    }, [editingId, selectionPresetId, swipe]);
+
+    const selectAllPrompts = useCallback(() => {
+        if (!editingId) return;
+        setSelectionPresetId(editingId);
+        setSelectedIds(new Set(visiblePromptIds));
+    }, [editingId, visiblePromptIds]);
+
+    const bulkSetEnabled = useCallback((enabled: boolean) => {
+        const preset = presets.find(p => p.id === editingId);
+        if (!preset || actionableSelectedIds.size === 0) return;
+        const newPrompts = preset.prompts.map(p =>
+            actionableSelectedIds.has(p.identifier) ? { ...p, enabled } : p,
+        );
+        const newOrder = preset.prompt_order?.map(o =>
+            actionableSelectedIds.has(o.identifier) ? { ...o, enabled } : o,
+        );
+        updatePreset(preset.id, { prompts: newPrompts, ...(newOrder ? { prompt_order: newOrder } : {}) });
+    }, [actionableSelectedIds, presets, editingId]);
+
+    const bulkExportSelected = useCallback(async () => {
+        const preset = presets.find(p => p.id === editingId);
+        if (!preset || actionableSelectedIds.size === 0) return;
+        const selected = preset.prompts.filter(p => actionableSelectedIds.has(p.identifier));
+        const { downloadFile } = await import("@/lib/download-utils");
+        const blob = new Blob([JSON.stringify(selected, null, 2)], { type: "application/json" });
+        await downloadFile(blob, `${preset.name || "preset"}-entries.json`);
+    }, [actionableSelectedIds, presets, editingId]);
+
+    const deleteSelectedPrompts = useCallback(() => {
+        const preset = presets.find(p => p.id === editingId);
+        if (!preset || actionableSelectedIds.size === 0) return;
+        const newPrompts = preset.prompts.filter(p => !actionableSelectedIds.has(p.identifier));
+        const newOrder = (preset.prompt_order || []).filter(o => !actionableSelectedIds.has(o.identifier));
+        updatePreset(preset.id, { prompts: newPrompts, prompt_order: newOrder });
+        if (editingPromptId && actionableSelectedIds.has(editingPromptId)) setEditingPromptId(null);
+        setSelectedIds(new Set());
+        setSelectionPresetId(null);
+        setConfirmDeleteSelected(false);
+        setSelectMode(false);
+    }, [actionableSelectedIds, presets, editingId, editingPromptId]);
 
     const insertPromptAfter = (preset: PresetConfig, afterIdentifier: string) => {
         const newPrompt = {
@@ -489,13 +869,8 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
             injection_depth: 0,
             enabled: true,
         };
-        // 与渲染一致的显示顺序（prompt_order + 孤儿条目）
-        const ordered = preset.prompt_order && preset.prompt_order.length > 0
-            ? preset.prompt_order.map(entry => preset.prompts.find(p => p.identifier === entry.identifier)).filter((p): p is Prompt => !!p)
-            : [...(preset.prompts || [])];
-        const orderedIds = new Set(ordered.map(p => p.identifier));
-        const orphans = (preset.prompts || []).filter(p => !orderedIds.has(p.identifier));
-        const displayed = [...ordered, ...orphans];
+        // 与渲染一致的显示顺序（去重后的 prompt_order + 孤儿条目）
+        const displayed = buildDisplayedPrompts(preset);
         const idx = displayed.findIndex(p => p.identifier === afterIdentifier);
         if (idx >= 0) displayed.splice(idx + 1, 0, newPrompt);
         else displayed.push(newPrompt);
@@ -507,7 +882,7 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                     ? (preset.prompt_order.find(o => o.identifier === p.identifier)?.enabled ?? p.enabled)
                     : p.enabled),
         }));
-        updatePreset(preset.id, { prompts: displayed, prompt_order: newOrder });
+        updatePreset(preset.id, { prompts: [...preset.prompts, newPrompt], prompt_order: newOrder });
         swipe.close();
         setEditingPromptId(newPrompt.identifier);
         window.setTimeout(() => {
@@ -554,14 +929,18 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
             injection_depth: 0,
             enabled: true,
         };
-        const newPrompts = [...(preset.prompts || []), newPrompt];
-        const newOrder = newPrompts.map(p => ({
+        // 顺序表以当前显示顺序为基础追加，不能按 prompts 数组重建：拖动排序只改
+        // prompt_order、不动数组，按数组重建会把用户拖好的顺序打回创建顺序。
+        const displayed = buildDisplayedPrompts(preset);
+        const newOrder = [...displayed, newPrompt].map(p => ({
             identifier: p.identifier,
-            enabled: preset.prompt_order
-                ? (preset.prompt_order.find(o => o.identifier === p.identifier)?.enabled ?? p.enabled)
-                : p.enabled,
+            enabled: p.identifier === newPrompt.identifier
+                ? true
+                : (preset.prompt_order
+                    ? (preset.prompt_order.find(o => o.identifier === p.identifier)?.enabled ?? p.enabled)
+                    : p.enabled),
         }));
-        updatePreset(preset.id, { prompts: newPrompts, prompt_order: newOrder });
+        updatePreset(preset.id, { prompts: [...(preset.prompts || []), newPrompt], prompt_order: newOrder });
     };
 
     const appendImportedPrompts = (preset: PresetConfig, raws: unknown[]) => {
@@ -582,11 +961,15 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
             return { ...p, identifier: id };
         });
         const newPrompts = [...(preset.prompts || []), ...appended];
-        const newOrder = newPrompts.map(p => ({
+        // 同 createPromptAtEnd：以显示顺序为基础追加，保住用户拖好的顺序
+        const appendedIds = new Set(appended.map(p => p.identifier));
+        const newOrder = [...buildDisplayedPrompts(preset), ...appended].map(p => ({
             identifier: p.identifier,
-            enabled: preset.prompt_order
-                ? (preset.prompt_order.find(o => o.identifier === p.identifier)?.enabled ?? p.enabled)
-                : p.enabled,
+            enabled: appendedIds.has(p.identifier)
+                ? p.enabled
+                : (preset.prompt_order
+                    ? (preset.prompt_order.find(o => o.identifier === p.identifier)?.enabled ?? p.enabled)
+                    : p.enabled),
         }));
         updatePreset(preset.id, { prompts: newPrompts, prompt_order: newOrder });
         if (appended.length === 1) setEditingPromptId(appended[0].identifier);
@@ -754,6 +1137,7 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                 <>
                     {presets.map(preset => {
                         if (preset.id !== editingId) return null;
+                        const enabledGenerationParameters = resolveEnabledGenerationParameters(preset);
                         return (
                             <div key={preset.id} className="flex flex-col gap-4 pb-[24px]">
                                 <div className="flex justify-center gap-2">
@@ -784,14 +1168,16 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                             <span>重置默认</span>
                                         </button>
                                     ) : (
-                                        <button
-                                            type="button"
-                                            onClick={() => setConfirmDeleteId(preset.id)}
-                                            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[20px] border border-black/10 bg-white px-4 text-xs font-bold text-[var(--c-danger)] shadow-sm transition-all hover:bg-gray-50 hover:shadow-md active:scale-95"
-                                        >
-                                            <Trash2 size={15} strokeWidth={1.8} />
-                                            <span>删除预设</span>
-                                        </button>
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => setConfirmDeleteId(preset.id)}
+                                                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[20px] border border-black/10 bg-white px-4 text-xs font-bold text-[var(--c-danger)] shadow-sm transition-all hover:bg-gray-50 hover:shadow-md active:scale-95"
+                                            >
+                                                <Trash2 size={15} strokeWidth={1.8} />
+                                                <span>删除预设</span>
+                                            </button>
+                                        </>
                                     )}
                                 </div>
                                 <h2 className="mx-2 mb-0 mt-2 ts-20 font-bold leading-none text-black">Preset Info</h2>
@@ -828,113 +1214,127 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                 data-open={paramsOpen}
                                             >
                                                 <span className="menu-label ts-13 font-semibold">生成参数</span>
-                                                <ChevronDown size={16} className="text-[var(--c-text)]" style={{ transition: "transform 0.2s", transform: paramsOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
+                                                <div className="generation-parameter-header-actions">
+                                                    <button
+                                                        type="button"
+                                                        className="generation-parameter-picker-btn"
+                                                        aria-label="选择发送的生成参数"
+                                                        title="选择发送的生成参数"
+                                                        onClick={(event) => {
+                                                            event.stopPropagation();
+                                                            setParameterPickerOpen(true);
+                                                        }}
+                                                    >
+                                                        <MoreHorizontal size={18} />
+                                                    </button>
+                                                    <ChevronDown size={16} className="text-[var(--c-text)]" style={{ transition: "transform 0.2s", transform: paramsOpen ? "rotate(180deg)" : "rotate(0deg)" }} />
+                                                </div>
                                             </div>
                                             {paramsOpen && (
                                                 <div className="p-[14px]">
                                                     <div className="grid grid-cols-2 gap-3">
-                                                        <div className="flex flex-col gap-1">
+                                                        <div className="generation-parameter-control flex flex-col gap-1" data-disabled={enabledGenerationParameters.has("temperature") ? undefined : ""}>
                                                             <div className="flex justify-between">
                                                                 <label className="ui-slider-label">Temperature</label>
                                                                 <span className="ui-slider-value">{preset.temperature.toFixed(2)}</span>
                                                             </div>
-                                                            <input className="ui-slider" type="range" min="0" max="2" step="any" value={preset.temperature} onChange={(e) => updatePreset(preset.id, { temperature: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
+                                                            <input className="ui-slider" type="range" min="0" max="2" step="any" value={preset.temperature} disabled={!enabledGenerationParameters.has("temperature")} onChange={(e) => updatePreset(preset.id, { temperature: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
                                                             <div className="ui-slider-hints">
                                                                 <span className="ui-slider-hint">稳定保守</span>
                                                                 <span className="ui-slider-hint">发散创造</span>
                                                             </div>
                                                         </div>
 
-                                                        <div className="flex flex-col gap-1">
+                                                        <div className="generation-parameter-control flex flex-col gap-1" data-disabled={enabledGenerationParameters.has("top_p") ? undefined : ""}>
                                                             <div className="flex justify-between">
                                                                 <label className="ui-slider-label">Top P</label>
                                                                 <span className="ui-slider-value">{preset.top_p.toFixed(2)}</span>
                                                             </div>
-                                                            <input className="ui-slider" type="range" min="0" max="1" step="any" value={preset.top_p} onChange={(e) => updatePreset(preset.id, { top_p: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
+                                                            <input className="ui-slider" type="range" min="0" max="1" step="any" value={preset.top_p} disabled={!enabledGenerationParameters.has("top_p")} onChange={(e) => updatePreset(preset.id, { top_p: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
                                                             <div className="ui-slider-hints">
                                                                 <span className="ui-slider-hint">用词精准</span>
                                                                 <span className="ui-slider-hint">词汇丰富</span>
                                                             </div>
                                                         </div>
 
-                                                        <div className="flex flex-col gap-1">
+                                                        <div className="generation-parameter-control flex flex-col gap-1" data-disabled={enabledGenerationParameters.has("top_k") ? undefined : ""}>
                                                             <div className="flex justify-between">
                                                                 <label className="ui-slider-label">Top K</label>
                                                                 <span className="ui-slider-value">{preset.top_k}</span>
                                                             </div>
-                                                            <input className="ui-slider" type="range" min="0" max="100" step="1" value={preset.top_k} onChange={(e) => updatePreset(preset.id, { top_k: parseInt(e.target.value) })} />
+                                                            <input className="ui-slider" type="range" min="0" max="100" step="1" value={preset.top_k} disabled={!enabledGenerationParameters.has("top_k")} onChange={(e) => updatePreset(preset.id, { top_k: parseInt(e.target.value) })} />
                                                             <div className="ui-slider-hints">
                                                                 <span className="ui-slider-hint">用词精准</span>
                                                                 <span className="ui-slider-hint">词汇丰富</span>
                                                             </div>
                                                         </div>
 
-                                                        <div className="flex flex-col gap-1">
+                                                        <div className="generation-parameter-control flex flex-col gap-1" data-disabled={enabledGenerationParameters.has("min_p") ? undefined : ""}>
                                                             <div className="flex justify-between">
                                                                 <label className="ui-slider-label">Min P</label>
                                                                 <span className="ui-slider-value">{(preset.min_p || 0).toFixed(2)}</span>
                                                             </div>
-                                                            <input className="ui-slider" type="range" min="0" max="1" step="any" value={preset.min_p || 0} onChange={(e) => updatePreset(preset.id, { min_p: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
+                                                            <input className="ui-slider" type="range" min="0" max="1" step="any" value={preset.min_p || 0} disabled={!enabledGenerationParameters.has("min_p")} onChange={(e) => updatePreset(preset.id, { min_p: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
                                                             <div className="ui-slider-hints">
                                                                 <span className="ui-slider-hint">发散跳跃</span>
                                                                 <span className="ui-slider-hint">逻辑连贯</span>
                                                             </div>
                                                         </div>
 
-                                                        <div className="flex flex-col gap-1">
+                                                        <div className="generation-parameter-control flex flex-col gap-1" data-disabled={enabledGenerationParameters.has("top_a") ? undefined : ""}>
                                                             <div className="flex justify-between">
                                                                 <label className="ui-slider-label">Top A</label>
                                                                 <span className="ui-slider-value">{(preset.top_a || 0).toFixed(2)}</span>
                                                             </div>
-                                                            <input className="ui-slider" type="range" min="0" max="1" step="any" value={preset.top_a || 0} onChange={(e) => updatePreset(preset.id, { top_a: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
+                                                            <input className="ui-slider" type="range" min="0" max="1" step="any" value={preset.top_a || 0} disabled={!enabledGenerationParameters.has("top_a")} onChange={(e) => updatePreset(preset.id, { top_a: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
                                                             <div className="ui-slider-hints">
                                                                 <span className="ui-slider-hint">自由发散</span>
                                                                 <span className="ui-slider-hint">限制胡言乱语</span>
                                                             </div>
                                                         </div>
 
-                                                        <div className="flex flex-col gap-1">
+                                                        <div className="generation-parameter-control flex flex-col gap-1" data-disabled={enabledGenerationParameters.has("repetition_penalty") ? undefined : ""}>
                                                             <div className="flex justify-between">
                                                                 <label className="ui-slider-label">Repetition Penalty</label>
                                                                 <span className="ui-slider-value">{preset.repetition_penalty.toFixed(2)}</span>
                                                             </div>
-                                                            <input className="ui-slider" type="range" min="1" max="2" step="any" value={preset.repetition_penalty} onChange={(e) => updatePreset(preset.id, { repetition_penalty: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
+                                                            <input className="ui-slider" type="range" min="1" max="2" step="any" value={preset.repetition_penalty} disabled={!enabledGenerationParameters.has("repetition_penalty")} onChange={(e) => updatePreset(preset.id, { repetition_penalty: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
                                                             <div className="ui-slider-hints">
                                                                 <span className="ui-slider-hint">允许重复</span>
                                                                 <span className="ui-slider-hint">极力惩罚重复</span>
                                                             </div>
                                                         </div>
 
-                                                        <div className="flex flex-col gap-1">
+                                                        <div className="generation-parameter-control flex flex-col gap-1" data-disabled={enabledGenerationParameters.has("frequency_penalty") ? undefined : ""}>
                                                             <div className="flex justify-between">
                                                                 <label className="ui-slider-label">Frequency Penalty</label>
                                                                 <span className="ui-slider-value">{preset.frequency_penalty.toFixed(2)}</span>
                                                             </div>
-                                                            <input className="ui-slider" type="range" min="0" max="2" step="any" value={preset.frequency_penalty} onChange={(e) => updatePreset(preset.id, { frequency_penalty: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
+                                                            <input className="ui-slider" type="range" min="0" max="2" step="any" value={preset.frequency_penalty} disabled={!enabledGenerationParameters.has("frequency_penalty")} onChange={(e) => updatePreset(preset.id, { frequency_penalty: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
                                                             <div className="ui-slider-hints">
                                                                 <span className="ui-slider-hint">自然口癖</span>
                                                                 <span className="ui-slider-hint">杜绝车轱辘话</span>
                                                             </div>
                                                         </div>
 
-                                                        <div className="flex flex-col gap-1">
+                                                        <div className="generation-parameter-control flex flex-col gap-1" data-disabled={enabledGenerationParameters.has("presence_penalty") ? undefined : ""}>
                                                             <div className="flex justify-between">
                                                                 <label className="ui-slider-label">Presence Penalty</label>
                                                                 <span className="ui-slider-value">{preset.presence_penalty.toFixed(2)}</span>
                                                             </div>
-                                                            <input className="ui-slider" type="range" min="0" max="2" step="any" value={preset.presence_penalty} onChange={(e) => updatePreset(preset.id, { presence_penalty: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
+                                                            <input className="ui-slider" type="range" min="0" max="2" step="any" value={preset.presence_penalty} disabled={!enabledGenerationParameters.has("presence_penalty")} onChange={(e) => updatePreset(preset.id, { presence_penalty: Math.round(parseFloat(e.target.value) * 100) / 100 })} />
                                                             <div className="ui-slider-hints">
                                                                 <span className="ui-slider-hint">聚焦当前话题</span>
                                                                 <span className="ui-slider-hint">积极拓展新话题</span>
                                                             </div>
                                                         </div>
 
-                                                        <div className="flex flex-col gap-1 col-span-full">
+                                                        <div className="generation-parameter-control flex flex-col gap-1 col-span-full" data-disabled={enabledGenerationParameters.has("max_tokens") ? undefined : ""}>
                                                             <div className="flex justify-between">
                                                                 <label className="ui-slider-label">Max Tokens</label>
                                                                 <span className="ui-slider-value">{preset.openai_max_tokens || "自动"}</span>
                                                             </div>
-                                                            <input className="ui-slider" type="range" min="0" max="8192" step="128" value={preset.openai_max_tokens} onChange={(e) => updatePreset(preset.id, { openai_max_tokens: parseInt(e.target.value) })} />
+                                                            <input className="ui-slider" type="range" min="0" max="8192" step="128" value={preset.openai_max_tokens} disabled={!enabledGenerationParameters.has("max_tokens")} onChange={(e) => updatePreset(preset.id, { openai_max_tokens: parseInt(e.target.value) })} />
                                                             <div className="ui-slider-hints">
                                                                 <span className="ui-slider-hint">自动 (推荐)</span>
                                                                 <span className="ui-slider-hint">限制回复长度</span>
@@ -954,6 +1354,73 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                                 用于从剧情模式和聊天线下模式的原始 XML 输出中提取事件摘要字段名。默认读取 {"<summary>"}。
                                                             </div>
                                                         </div>
+                                                        <div className="flex flex-col gap-2 col-span-full">
+                                                            <label className="ui-slider-label">剧情/线下模式思维链字段</label>
+                                                            <input
+                                                                type="text"
+                                                                value={preset.thinking_tag || "thinking"}
+                                                                onChange={(e) => updatePreset(preset.id, { thinking_tag: e.target.value })}
+                                                                placeholder="thinking"
+                                                                className="ui-input"
+                                                            />
+                                                            <div className="ui-slider-hint">
+                                                                从线下模式原始 XML 中提取思考过程（思维链）的字段名。仅当下方「线下思维链解析」开启时生效；关闭时走模型原生思维链。
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex flex-col gap-2 col-span-full">
+                                                            <label className="ui-slider-label">线上模式思维链字段</label>
+                                                            <input
+                                                                type="text"
+                                                                value={preset.online_thinking_tag || "thinking"}
+                                                                onChange={(e) => updatePreset(preset.id, { online_thinking_tag: e.target.value })}
+                                                                placeholder="thinking"
+                                                                className="ui-input"
+                                                            />
+                                                            <div className="ui-slider-hint">
+                                                                从线上模式 AI 输出中提取思考过程（思维链）的标签字段名。仅当下方「线上思维链解析」开启时生效；关闭时走模型原生思维链。
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center justify-between gap-3 col-span-full">
+                                                            <div className="flex flex-col gap-1">
+                                                                <label className="ui-slider-label">线上思维链解析</label>
+                                                                <span className="ui-slider-hint">开启后按上方标签字段解析线上思维链；关闭走模型原生思维链（官方默认）</span>
+                                                            </div>
+                                                            <label className="ui-mini-toggle" onClick={(e) => e.stopPropagation()}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={preset.online_thinking_enabled === true}
+                                                                    onChange={(e) => updatePreset(preset.id, { online_thinking_enabled: e.target.checked })}
+                                                                />
+                                                            </label>
+                                                        </div>
+                                                        <div className="flex items-center justify-between gap-3 col-span-full">
+                                                            <div className="flex flex-col gap-1">
+                                                                <label className="ui-slider-label">线下思维链解析</label>
+                                                                <span className="ui-slider-hint">开启后按「剧情/线下模式思维链字段」解析线下思维链；关闭走模型原生思维链（官方默认）</span>
+                                                            </div>
+                                                            <label className="ui-mini-toggle" onClick={(e) => e.stopPropagation()}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={preset.offline_thinking_enabled === true}
+                                                                    onChange={(e) => updatePreset(preset.id, { offline_thinking_enabled: e.target.checked })}
+                                                                />
+                                                            </label>
+                                                        </div>
+                                                        <div className="flex flex-col gap-2 col-span-full">
+                                                            <label className="ui-slider-label">剔除文本（一行一个）</label>
+                                                            <textarea
+                                                                rows={3}
+                                                                value={(preset.strip_texts || []).join("\n")}
+                                                                onChange={(e) => updatePreset(preset.id, {
+                                                                    strip_texts: e.target.value.split("\n").map(s => s.trim()).filter(Boolean),
+                                                                })}
+                                                                placeholder={"<思考结束>\n</思考结束>"}
+                                                                className="ui-input"
+                                                            />
+                                                            <div className="ui-slider-hint">
+                                                                模型回复中出现这些文本时直接删除，不进入消息、不进入发给模型的记录（如思维链残留标签）。字面量删除，不走正则。
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             )}
@@ -962,26 +1429,111 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
 
                                 {/* Prompts Section */}
                                 <div className="flex flex-col gap-4 mt-3">
-                                    <h2 className="mx-2 mb-0 mt-2 ts-20 font-bold leading-none text-black">Prompt Entries ({preset.prompts?.length || 0})</h2>
+                                    <div className="mx-2 mb-0 mt-2 flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <h2 className="ts-20 font-bold leading-none text-black">Prompt Entries ({preset.prompts?.length || 0})</h2>
+                                            <button
+                                                type="button"
+                                                onClick={() => setAppFilterOpen(true)}
+                                                className={`inline-flex h-8 items-center justify-center gap-1 rounded-full border px-3 text-xs font-bold shadow-sm transition-all active:scale-95 ${appFilterTags.size > 0 || appFilterMode !== "highlight" ? "border-[var(--c-icon-active)] bg-[var(--c-icon-active)] text-white" : "border-black/10 bg-white text-gray-800 hover:bg-gray-50"}`}
+                                            >
+                                                <Filter size={14} strokeWidth={1.8} />
+                                                <span>按 App{appFilterTags.size > 0 ? ` · ${appFilterTags.size} 个` : ""}</span>
+                                            </button>
+                                        </div>
+                                        {!selectMode && (
+                                            <button
+                                                type="button"
+                                                onClick={enterSelectMode}
+                                                className="inline-flex h-8 items-center justify-center gap-1 rounded-full border border-black/10 bg-white px-3 text-xs font-bold text-gray-800 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
+                                            >
+                                                <CheckSquare size={14} strokeWidth={1.8} />
+                                                <span>多选</span>
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {selectMode && (
+                                        <div className="multi-select-float-bar">
+                                            <div className="msfb-main">
+                                                <span className="msfb-count">已选 {actionableSelectedIds.size} 项</span>
+                                                <button type="button" className="msfb-btn" onClick={selectAllPrompts}>
+                                                    <CheckSquare size={15} strokeWidth={1.8} />
+                                                    <span>全选可见</span>
+                                                </button>
+                                                <button type="button" className="msfb-btn" onClick={() => bulkSetEnabled(true)} disabled={actionableSelectedIds.size === 0}>
+                                                    <Check size={15} strokeWidth={2} />
+                                                    <span>启用</span>
+                                                </button>
+                                                <button type="button" className="msfb-btn" onClick={() => bulkSetEnabled(false)} disabled={actionableSelectedIds.size === 0}>
+                                                    <RotateCcw size={15} strokeWidth={1.8} />
+                                                    <span>禁用</span>
+                                                </button>
+                                                <button type="button" className="msfb-btn" onClick={() => bulkExportSelected()} disabled={actionableSelectedIds.size === 0}>
+                                                    <Download size={15} strokeWidth={1.8} />
+                                                    <span>导出</span>
+                                                </button>
+                                                <button type="button" className="msfb-btn msfb-danger" onClick={() => setConfirmDeleteSelected(true)} disabled={actionableSelectedIds.size === 0}>
+                                                    <Trash2 size={15} strokeWidth={1.8} />
+                                                    <span>删除</span>
+                                                </button>
+                                            </div>
+                                            <div className="msfb-actions">
+                                                <button type="button" className="msfb-btn msfb-done" onClick={exitSelectMode}>
+                                                    <Check size={15} strokeWidth={2} />
+                                                    <span>完成</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
 
                                     <div ref={promptListRef} className="flex flex-col gap-2"
                                         onTouchMove={onPromptTouchMove}
                                         onTouchEnd={onPromptTouchEnd}
                                         onTouchCancel={onPromptTouchEnd}
                                     >
-                                        {(() => {
-                                            // Display prompts in prompt_order sequence
-                                            const orderedPrompts = preset.prompt_order && preset.prompt_order.length > 0
-                                                ? preset.prompt_order
-                                                    .map(entry => preset.prompts.find(p => p.identifier === entry.identifier))
-                                                    .filter((p): p is Prompt => !!p)
-                                                : preset.prompts || [];
-                                            // Append any prompts not in prompt_order (orphans)
-                                            const orderedIds = new Set(orderedPrompts.map(p => p.identifier));
-                                            const orphans = (preset.prompts || []).filter(p => !orderedIds.has(p.identifier));
-                                            return [...orderedPrompts, ...orphans];
-                                        })().map((prompt, index) => {
+                                        {promptRenderItems.flatMap((renderItem, _flatIndex) => {
+                                            const toggleExpand = (gKey: string) => {
+                                                setExpandedCollapseGroups(prev => {
+                                                    const next = new Set(prev);
+                                                    if (next.has(gKey)) next.delete(gKey);
+                                                    else next.add(gKey);
+                                                    return next;
+                                                });
+                                            };
+
+                                            if (renderItem.type === "collapse-header") {
+                                                return [
+                                                    <div key={`collapse-header-${renderItem.groupKey}`} className="ui-entry-card ui-entry-collapsed-group" data-app-match="1" onClick={() => toggleExpand(renderItem.groupKey)}>
+                                                        <div className="flex items-center justify-between cursor-pointer">
+                                                            <div className="flex items-center gap-2">
+                                                                <ChevronDown size={16} />
+                                                                <span className="text-xs font-bold text-gray-800">{renderItem.label}</span>
+                                                                <span className="menu-desc ts-11">· {renderItem.count} 个条目</span>
+                                                            </div>
+                                                            <span className="menu-desc ts-11">点击收起</span>
+                                                        </div>
+                                                    </div>,
+                                                ];
+                                            }
+
+                                            if (renderItem.type === "collapsed") {
+                                                return [
+                                                    <div key={`collapsed-${renderItem.groupKey}`} className="ui-entry-card ui-entry-collapsed-group" data-app-match="1" onClick={() => toggleExpand(renderItem.groupKey)}>
+                                                        <div className="flex items-center justify-between cursor-pointer">
+                                                            <div className="flex items-center gap-2">
+                                                                <ChevronDown size={16} style={{ transform: "rotate(-90deg)" }} />
+                                                                <span className="text-xs font-bold text-gray-800">{renderItem.label}</span>
+                                                                <span className="menu-desc ts-11">· {renderItem.prompts.length} 个条目已折叠</span>
+                                                            </div>
+                                                            <span className="menu-desc ts-11">点击展开</span>
+                                                        </div>
+                                                    </div>,
+                                                ];
+                                            }
+                                            const prompt = renderItem.prompt;
                                             const isEditing = editingPromptId === prompt.identifier;
+                                            const isPromptSelected = selectionPresetId === editingId && selectedIds.has(prompt.identifier);
                                             // Effective enabled: prompt_order overrides prompt.enabled
                                             const effectiveEnabled = preset.prompt_order
                                                 ? (preset.prompt_order.find(e => e.identifier === prompt.identifier)?.enabled ?? prompt.enabled)
@@ -998,8 +1550,11 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                     controller={swipe}
                                                     id={prompt.identifier}
                                                     disabled={isEditing}
-                                                    onTouchStart={isEditing ? undefined : (e) => onPromptTouchStart(index, e)}
-                                                    actions={
+                                                    leftSwipeDisabled={selectMode}
+                                                    rightSwipeEnabled
+                                                    onSwipeRight={() => handleSwipeRightSelect(prompt.identifier)}
+                                                    onTouchStart={isEditing ? undefined : (e) => onPromptTouchStart(_flatIndex, e)}
+                                                    actions={selectMode ? null : (
                                                         <>
                                                             <button
                                                                 type="button"
@@ -1047,13 +1602,19 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                                 <Trash2 size={18} strokeWidth={2} />
                                                                 <span>删除</span>
                                                             </button>
-                                                        </>
+                                                        </>)
                                                     }
                                                 >
                                                     <div
                                                     className="ui-entry-card"
                                                     data-active={isEditing}
+                                                    data-selected={selectMode && isPromptSelected ? "true" : undefined}
                                                     data-disabled={!effectiveEnabled}
+                                                    data-app-match={(() => {
+                                                        if (appFilterTags.size === 0) return undefined;
+                                                        if (appFilterMode === "only-show") return undefined;
+                                                        return matchesSelectedAppTags(prompt, appFilterTags) ? "1" : "0";
+                                                    })()}
                                                     style={{
                                                         gap: isEditing ? "12px" : "0px",
                                                         userSelect: isEditing ? undefined : "none",
@@ -1068,14 +1629,31 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                                 swipe.close();
                                                                 return;
                                                             }
+                                                            if (selectMode) {
+                                                                toggleSelect(prompt.identifier);
+                                                                return;
+                                                            }
                                                             setEditingPromptId(isEditing ? null : prompt.identifier);
                                                         }}
                                                         className="flex justify-between items-start gap-2 cursor-pointer"
                                                     >
                                                         <div className="flex gap-3 flex-1 min-w-0 items-start" style={{ cursor: isEditing ? "default" : "grab" }}>
-                                                            <div className="ui-entry-icon mt-[2px]">
-                                                                <MessageSquare size={20} />
-                                                            </div>
+                                                            {selectMode ? (
+                                                                <div
+                                                                    className="mt-[2px] flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2"
+                                                                    style={{
+                                                                        borderColor: isPromptSelected ? "var(--c-icon-active)" : "rgba(0,0,0,0.25)",
+                                                                        background: isPromptSelected ? "var(--c-icon-active)" : "transparent",
+                                                                        color: "#fff",
+                                                                    }}
+                                                                >
+                                                                    {isPromptSelected && <Check size={13} strokeWidth={3} />}
+                                                                </div>
+                                                            ) : (
+                                                                <div className="ui-entry-icon mt-[2px]">
+                                                                    <MessageSquare size={20} />
+                                                                </div>
+                                                            )}
                                                             <div className="flex flex-col gap-1 flex-1">
                                                                 <div className="flex items-center gap-[6px]">
                                                                     {/* Drag Handle shown subtly */}
@@ -1428,6 +2006,18 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                     onCancel={() => setConfirmDeleteEntry(null)}
                 />
             )}
+            {/* Confirm bulk delete selected entries */}
+            {confirmDeleteSelected && editingId && (
+                <ConfirmDialog
+                    title="确认批量删除？"
+                    message={`将删除当前可见并已选中的 ${actionableSelectedIds.size} 个条目，删除后无法恢复。是否继续？`}
+                    icon={AlertCircle}
+                    variant="danger"
+                    confirmLabel="确认删除"
+                    onConfirm={() => deleteSelectedPrompts()}
+                    onCancel={() => setConfirmDeleteSelected(false)}
+                />
+            )}
 
             {importError && (
                 <ConfirmDialog
@@ -1474,6 +2064,37 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                 );
             })()}
 
+            {parameterPickerOpen && activePreset && (
+                <BottomSheet title="选择发送的参数" onClose={() => setParameterPickerOpen(false)}>
+                    <div className="generation-parameter-picker">
+                        <p className="menu-desc generation-parameter-picker-desc">
+                            高亮参数允许随请求发送；未选择的参数会从请求中移除，并在设置中置灰。接口不适用的参数会自动忽略。
+                        </p>
+                        <div className="generation-parameter-chips" role="group" aria-label="选择发送的生成参数">
+                            {GENERATION_PARAMETER_OPTIONS.map(option => {
+                                const selected = resolveEnabledGenerationParameters(activePreset).has(option.key);
+                                return (
+                                    <button
+                                        key={option.key}
+                                        type="button"
+                                        className="generation-parameter-chip"
+                                        data-selected={selected ? "" : undefined}
+                                        aria-pressed={selected}
+                                        title={option.title}
+                                        onClick={() => toggleGenerationParameter(activePreset, option.key)}
+                                    >
+                                        {option.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <p className="ui-slider-hint generation-parameter-picker-note">
+                            原生 Anthropic 接口要求 Max Tokens 必须存在；关闭后仍会使用安全默认值，其余接口会正常省略。
+                        </p>
+                    </div>
+                </BottomSheet>
+            )}
+
             {expandTarget && editingId && (() => {
                 const preset = presets.find(p => p.id === editingId);
                 const promptIdx = preset?.prompts.findIndex(p => p.identifier === expandTarget.identifier) ?? -1;
@@ -1491,6 +2112,84 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                         placeholder="在此输入提示词内容..."
                         onClose={() => setExpandTarget(null)}
                     />
+                );
+            })()}
+
+            {/* ── 按 App 筛选弹窗 ── */}
+            {appFilterOpen && editingId && (() => {
+                return (
+                    <BottomSheet title="按 App 筛选条目" onClose={() => setAppFilterOpen(false)}>
+                        <div className="flex flex-col gap-4">
+                            {/* 选择 App 大类（可多选，不细分 minor / 起效范围） */}
+                            <div>
+                                <div className="menu-label ts-12 mb-2">选择 App{appFilterTags.size > 0 ? `（已选 ${appFilterTags.size} 个）` : "（可多选）"}</div>
+                                <div className="flex flex-wrap gap-2">
+                                    {tagGroups.map(g => {
+                                        const tag = g.tags.length > 0 ? g.tags[0] : "__universal__";
+                                        const selected = appFilterTags.has(tag);
+                                        return (
+                                            <button
+                                                key={g.id}
+                                                type="button"
+                                                onClick={() => toggleFilterTag(tag)}
+                                                className={`inline-flex items-center justify-center gap-1 rounded-full border px-3 py-1.5 text-xs font-bold transition-all active:scale-95 ${selected ? "border-[var(--c-icon-active)] bg-[var(--c-icon-active)] text-white" : "border-black/10 bg-white text-gray-800 hover:bg-gray-50"}`}
+                                            >
+                                                {g.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* 选择模式（再次点击折叠模式可退出） */}
+                            <div>
+                                <div className="menu-label ts-12 mb-2">操作模式</div>
+                                <div className="flex flex-col gap-2">
+                                    {([
+                                        { id: "highlight", label: "高亮显示", desc: "匹配条目高亮，其它变暗" },
+                                        { id: "only-show", label: "仅显示", desc: "只显示匹配条目，隐藏其它" },
+                                        { id: "collapse", label: "仅折叠", desc: "相邻同类条目折叠为摘要，可点击展开/收起；再次点击退出折叠" },
+                                        { id: "group-collapse", label: "同类折叠", desc: "所有同类条目折叠成一组（不管分散在哪）；再次点击退出折叠" },
+                                    ] as const).map(opt => {
+                                        const isActive = appFilterMode === opt.id;
+                                        return (
+                                            <button
+                                                key={opt.id}
+                                                type="button"
+                                                onClick={() => {
+                                                    if (isActive && (opt.id === "collapse" || opt.id === "group-collapse")) {
+                                                        // 再次点击折叠模式 → 退出折叠（回到高亮，保留 App 选中用于高亮/仅显示）
+                                                        setAppFilterMode("highlight");
+                                                        setExpandedCollapseGroups(new Set());
+                                                    } else {
+                                                        setAppFilterMode(opt.id);
+                                                    }
+                                                }}
+                                                className={`flex items-center justify-between rounded-xl border px-4 py-3 text-left transition-all active:scale-[0.98] ${isActive ? "border-[var(--c-icon-active)] bg-[var(--c-icon-active)]/5" : "border-black/10 bg-white hover:bg-gray-50"}`}
+                                            >
+                                                <div className="flex flex-col gap-0.5">
+                                                    <span className="text-xs font-bold text-gray-800">{opt.label}</span>
+                                                    <span className="menu-desc ts-11">{opt.desc}</span>
+                                                </div>
+                                                <div className={`h-4 w-4 rounded-full border-2 ${isActive ? "border-[var(--c-icon-active)] bg-[var(--c-icon-active)]" : "border-gray-300"}`} />
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* 清除按钮 */}
+                            {(appFilterTags.size > 0 || appFilterMode !== "highlight") && (
+                                <button
+                                    type="button"
+                                    onClick={() => { setAppFilterTags(new Set()); setAppFilterMode("highlight"); setExpandedCollapseGroups(new Set()); }}
+                                    className="ui-btn w-full"
+                                >
+                                    清除筛选
+                                </button>
+                            )}
+                        </div>
+                    </BottomSheet>
                 );
             })()}
         </div>

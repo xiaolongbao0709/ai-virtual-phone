@@ -33,6 +33,7 @@ import {
     type GroupAdminAction,
 } from "@/lib/group-admin";
 import { clearChatOfflineTurns } from "@/lib/chat-offline-storage";
+import { removeChatSessionCompletely } from "@/lib/chat-session-remove";
 import { triggerDeleteFriendReaction } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
 import { isAgentComputerConfigured } from "@/lib/agent-computer";
@@ -186,6 +187,7 @@ type ChatSettingsPanelProps = {
     onClose: () => void;
     onJumpToMessage?: (messageId: string) => void;
     onDeleteFriend?: () => void;
+    onSessionDeleted?: () => void;
     onToolHistoryCleared?: () => void;
     onOfflineHistoryCleared?: () => void;
     offlineHistoryBusy?: boolean;
@@ -286,6 +288,7 @@ export function ChatSettingsPanel({
     onClose,
     onJumpToMessage,
     onDeleteFriend,
+    onSessionDeleted,
     onToolHistoryCleared,
     onOfflineHistoryCleared,
     offlineHistoryBusy = false,
@@ -387,8 +390,12 @@ export function ChatSettingsPanel({
     };
     const [visionImagePromptLimit, setVisionImagePromptLimit] = useState(() => normalizeVisionImagePromptLimit(session.visionImagePromptLimit));
     const [bilingualTranslationEnabled, setBilingualTranslationEnabled] = useState(session.bilingualTranslationEnabled !== false);
+    const [offlineSummaryRetry, setOfflineSummaryRetry] = useState(session.offlineSummaryRetry !== false);
     const [collapseBilingualTranslation, setCollapseBilingualTranslation] = useState(session.collapseBilingualTranslation !== false);
     const [discardInvalidStickers, setDiscardInvalidStickers] = useState(session.discardInvalidStickers === true);
+    // 流式生成：按会话区分（线上/线下），存 ChatSession 字段，默认关
+    const [streamOnline, setStreamOnline] = useState(session.streamOnline === true);
+    const [streamOffline, setStreamOffline] = useState(session.streamOffline === true);
     const defaultBilingualPrompt = session.isGroup ? DEFAULT_GROUP_CHAT_BILINGUAL_PROMPT : DEFAULT_CHAT_BILINGUAL_PROMPT;
     const defaultOfflineBilingualPrompt = session.isGroup ? DEFAULT_GROUP_OFFLINE_CHAT_BILINGUAL_PROMPT : DEFAULT_OFFLINE_CHAT_BILINGUAL_PROMPT;
     const [bilingualTranslationPrompt, setBilingualTranslationPrompt] = useState(session.bilingualTranslationPrompt || defaultBilingualPrompt);
@@ -405,6 +412,7 @@ export function ChatSettingsPanel({
     const [showConfirmClear, setShowConfirmClear] = useState(false);
     const [showConfirmClearOffline, setShowConfirmClearOffline] = useState(false);
     const [showConfirmClearTools, setShowConfirmClearTools] = useState(false);
+    const [showConfirmDeleteSession, setShowConfirmDeleteSession] = useState(false);
     const [showConfirmDelete, setShowConfirmDelete] = useState(false);
     const [editingAlias, setEditingAlias] = useState(false);
     const [editingBilingualPrompt, setEditingBilingualPrompt] = useState(false);
@@ -639,6 +647,13 @@ export function ChatSettingsPanel({
         clearChatSessionToolHistory(session.id);
         onToolHistoryCleared?.();
         setShowConfirmClearTools(false);
+    };
+
+    const handleDeleteSession = () => {
+        if (offlineHistoryBusy) return;
+        removeChatSessionCompletely(session.id);
+        setShowConfirmDeleteSession(false);
+        onSessionDeleted?.();
     };
 
     const updateVisionImagePromptLimit = (value: unknown) => {
@@ -1077,6 +1092,54 @@ export function ChatSettingsPanel({
                                 />
                             </div>
                         </div>
+                        <div className="menu-item">
+                            <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.api} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">线上流式生成</span>
+                                <span className="menu-desc">仅当前会话：线上 AI 回复边生成边显示；关闭则整段返回</span>
+                            </div>
+                            <div className="menu-right">
+                                <Toggle
+                                    checked={streamOnline}
+                                    onChange={c => {
+                                        setStreamOnline(c);
+                                        updateSession({ streamOnline: c });
+                                    }}
+                                />
+                            </div>
+                        </div>
+                        <div className="menu-item">
+                            <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">线下流式生成</span>
+                                <span className="menu-desc">仅当前会话：线下 AI 回复边生成边显示；关闭则整段返回</span>
+                            </div>
+                            <div className="menu-right">
+                                <Toggle
+                                    checked={streamOffline}
+                                    onChange={c => {
+                                        setStreamOffline(c);
+                                        updateSession({ streamOffline: c });
+                                    }}
+                                />
+                            </div>
+                        </div>
+                        <div className="menu-item">
+                            <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">线下摘要自动补提</span>
+                                <span className="menu-desc">仅当前会话：模型漏写 &lt;summary&gt; 时再发一次请求让它补；关闭则只调一次 API，漏了那轮就没摘要</span>
+                            </div>
+                            <div className="menu-right">
+                                <Toggle
+                                    checked={offlineSummaryRetry}
+                                    onChange={c => {
+                                        setOfflineSummaryRetry(c);
+                                        updateSession({ offlineSummaryRetry: c });
+                                    }}
+                                />
+                            </div>
+                        </div>
                         <button className="menu-item" onClick={() => setShowScreenEffects(true)}>
                             <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />
                             <div className="menu-label-group">
@@ -1206,6 +1269,26 @@ export function ChatSettingsPanel({
                             <span className="menu-label menu-label-danger">清空线下聊天记录</span>
                             <span className="menu-desc">
                                 {offlineHistoryBusy ? "线下回复生成中，完成后再清空" : "同步移除该会话的线下短期记忆事件"}
+                            </span>
+                        </div>
+                    </button>
+                    <button
+                        className="menu-item"
+                        disabled={offlineHistoryBusy}
+                        onClick={() => {
+                            if (!offlineHistoryBusy) setShowConfirmDeleteSession(true);
+                        }}
+                        style={offlineHistoryBusy ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
+                    >
+                        <ChatInfoIcon icon={Trash2} color="var(--c-danger)" />
+                        <div className="menu-label-group">
+                            <span className="menu-label menu-label-danger">删除会话</span>
+                            <span className="menu-desc">
+                                {offlineHistoryBusy
+                                    ? "线下回复生成中，完成后再删除"
+                                    : session.isGroup
+                                        ? "解散并移除该群聊，线上线下记录一并删除"
+                                        : "移除该会话及线上线下记录，好友保留"}
                             </span>
                         </div>
                     </button>
@@ -1429,6 +1512,22 @@ export function ChatSettingsPanel({
                     cancelLabel="取消"
                     onConfirm={handleClearToolHistory}
                     onCancel={() => setShowConfirmClearTools(false)}
+                />
+            )}
+
+            {/* Modal: Confirm Delete Session */}
+            {showConfirmDeleteSession && (
+                <ConfirmDialog
+                    title="确定要删除该会话吗？"
+                    message={session.isGroup
+                        ? "群聊将从列表移除，线上与线下聊天记录一并删除，无法恢复。是否继续？"
+                        : "会话将从列表移除，线上与线下聊天记录一并删除，好友不受影响，重新发起聊天会从空白开始。是否继续？"}
+                    icon={AlertCircle}
+                    variant="danger"
+                    confirmLabel="删除"
+                    cancelLabel="取消"
+                    onConfirm={handleDeleteSession}
+                    onCancel={() => setShowConfirmDeleteSession(false)}
                 />
             )}
 

@@ -1723,6 +1723,7 @@
   width: 100%;
 }
 
+.chat-generated-image-prompt-check,
 .feed-post-edit-check {
   display: flex;
   align-items: center;
@@ -1731,12 +1732,24 @@
   color: var(--c-text);
   font-size: calc(12px*var(--app-text-scale,1));
   cursor: pointer;
+  user-select: none;
 }
 
+.chat-generated-image-prompt-check input,
 .feed-post-edit-check input {
   width: 16px;
   height: 16px;
   accent-color: var(--c-icon-active);
+}
+
+.chat-generated-image-prompt-empty-hint {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--c-icon);
+  font-size: calc(12px*var(--app-text-scale,1));
+  user-select: none;
+  text-align: left;
 }
 
 @keyframes chat-generated-image-spin {
@@ -6671,6 +6684,17 @@
   color: var(--c-danger, #e5484d);
 }
 
+/* ── 底层调用日志：「查看原始」按钮 + 思维链 / 真实原始响应 ── */
+.api-log-reasoning {
+  padding: 8px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.4;
+  background: rgba(255,149,0,0.12);
+  border-left: 3px solid var(--c-warning);
+}
+
 /* ── 全屏特效设置弹窗（底部全宽弹层）── */
 .screen-fx-sheet {
   background: var(--c-page-body-bg);
@@ -7034,4 +7058,70 @@
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* ── 流式生成预览 ──
+   开启「流式生成」后，线上/线下、单聊/群聊回复在生成过程中实时显示。
+   预览气泡复用普通气泡底色，末尾带闪烁光标提示仍在生成。 */
+.chat-stream-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  opacity: 0.92;
+}
+
+.chat-stream-bubble {
+  position: relative;
+  background: var(--c-bubble-other, #FFFFFF);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* 流式预览正文：轻量渲染，避免每帧 markdown/双语解析导致闪烁卡顿。
+   保留换行与基础间距观感，与正式气泡（BilingualTextBlock）视觉接近。 */
+.chat-stream-text {
+  font-size: calc(14px * var(--app-text-scale, 1));
+  line-height: 1.7;
+  color: var(--c-text-title, var(--c-text));
+  overflow-wrap: break-word;
+}
+
+.chat-stream-bubble .chat-stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: currentColor;
+  animation: chat-stream-cursor-blink 1s steps(2, start) infinite;
+}
+
+@keyframes chat-stream-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* 线下模式生成中的实时正文预览：比普通文案稍浅，区分「未落库」 */
+.chat-offline-stream-preview {
+  margin-top: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--c-input, rgba(0, 0, 0, 0.04));
+  color: var(--c-text, inherit);
+  text-align: left;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.chat-offline-stream-preview .chat-stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: currentColor;
+  animation: chat-stream-cursor-blink 1s steps(2, start) infinite;
 }

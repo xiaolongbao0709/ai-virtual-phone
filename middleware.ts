@@ -9,6 +9,15 @@ const PUBLIC_ROUTE_PREFIXES = [
   "/verify",
   "/api/auth/",
   "/api/verify/",
+  // iPhone Shortcuts does not share the PWA's login cookies. These handlers
+  // validate either the bridge token or a short-lived per-command ticket.
+  "/shortcut-run/",
+  "/api/push/bridge-wake/",
+  "/api/push/shortcut-commands/result/",
+  "/api/push/shortcut-commands/media/",
+  // 个人云的离线生成把「代发触发邮件」外包给站点，同样没有登录 cookie，
+  // 凭 bridge_token 认账号（见该路由内的说明）。
+  "/api/push/shortcut-commands/deliver-email/",
 ];
 
 const STATIC_ROUTE_PREFIXES = [

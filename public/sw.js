@@ -1,4 +1,4 @@
-const CACHE_VERSION = "ai-phone-pwa-v4";
+const CACHE_VERSION = "ai-phone-pwa-v12";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -70,14 +70,103 @@ async function cacheFirst(request) {
   return response;
 }
 
+// 离线推送：App 被杀后由系统唤起 SW 弹通知。payload 由服务端 JSON 编码。
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (error) {
+    data = { body: event.data ? event.data.text() : "" };
+  }
+  const declarative = data.web_push === 8030 && data.notification && typeof data.notification === "object"
+    ? data.notification
+    : null;
+  const notificationData = declarative && declarative.data && typeof declarative.data === "object"
+    ? declarative.data
+    : data;
+  const title = (declarative && declarative.title) || data.title || "小手机";
+  event.waitUntil((async () => {
+    if (notificationData.type === "chat_outbox") {
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const visible = windows.filter((client) => client.visibilityState === "visible");
+      if (visible.length > 0) {
+        visible.forEach((client) => client.postMessage({ type: "push_outbox_ready" }));
+        return;
+      }
+    }
+    // 来电推送：页面可见时直接进页面振铃（来电横幅），不弹系统通知
+    if (notificationData.type === "incoming_call") {
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const visible = windows.filter((client) => client.visibilityState === "visible");
+      if (visible.length > 0) {
+        visible.forEach((client) => client.postMessage({
+          type: "incoming_call_push",
+          sessionId: notificationData.sessionId || "",
+          callTs: notificationData.callTs || 0,
+        }));
+        visible.forEach((client) => client.postMessage({ type: "push_outbox_ready" }));
+        return;
+      }
+    }
+    await self.registration.showNotification(title, {
+      body: (declarative && declarative.body) || data.body || "",
+      icon: (declarative && declarative.icon) || data.icon || "/icon-192.png",
+      badge: (declarative && declarative.badge) || "/icon-192.png",
+      tag: (declarative && declarative.tag) || data.tag || `push-${Date.now()}`,
+      data: {
+        url: (declarative && declarative.navigate) || notificationData.url || "/",
+        type: notificationData.type || "",
+        commandId: notificationData.commandId || "",
+        sessionId: notificationData.sessionId || "",
+        callTs: notificationData.callTs || 0,
+      },
+    });
+  })());
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const notificationData = event.notification.data || {};
+  const targetUrl = notificationData.url || "/";
+  if (notificationData.type === "shortcut_command") {
+    // iOS silently ignores custom URL schemes passed to clients.openWindow().
+    event.waitUntil((async () => {
+      const absoluteUrl = new URL(targetUrl, self.location.origin).href;
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      // 有活窗口：不导航（navigate 会杀掉 SPA，回来一片空白、进行中的生成全断）。
+      // 交给页面自己 location 到 /shortcut-run——302 到 shortcuts:// 属于外部 App
+      // 启动，WebKit 不会卸载当前页面，聊天界面与本地生成原地保留。
+      for (const client of windows) {
+        if ("focus" in client) {
+          client.postMessage({ type: "run_shortcut", url: absoluteUrl });
+          return client.focus();
+        }
+      }
+      // App 已被杀：没有页面可保，开新窗口走 /shortcut-run 跳转
+      return self.clients.openWindow(absoluteUrl);
+    })());
+    return;
+  }
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
-        if ("focus" in client) return client.focus();
+        if ("focus" in client) {
+          if (notificationData.type === "chat_outbox") {
+            client.postMessage({ type: "push_outbox_ready" });
+          }
+          if (notificationData.type === "incoming_call") {
+            // 有活窗口：不导航（会杀掉 SPA），交给页面弹来电横幅 + 合并 outbox
+            client.postMessage({
+              type: "incoming_call_push",
+              sessionId: notificationData.sessionId || "",
+              callTs: notificationData.callTs || 0,
+            });
+            client.postMessage({ type: "push_outbox_ready" });
+          }
+          return client.focus();
+        }
       }
-      return self.clients.openWindow("/");
+      return self.clients.openWindow(targetUrl);
     })
   );
 });

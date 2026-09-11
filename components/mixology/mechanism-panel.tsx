@@ -11,7 +11,8 @@
 // 层级不许压过应用自己的弹窗。除此之外不干涉排版。
 //
 // 能做的事仍是一张白名单：写自己的存储、写记住的值、以玩家身份发一句话、
-// 收起/展开、挪自己、改自己大小、报一下内容多高。白名单以外的消息一律不理会。
+// 收起/展开、挪自己、改自己大小、报一下内容多高，以及请宿主代调一个玩家配好的
+// 连接器（mix.call，见 lib/mixology/connectors）。白名单以外的消息一律不理会。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -21,13 +22,20 @@ import {
     MIX_PANEL_MAX_Z,
     MIX_PANEL_MIN_H,
     MIX_PANEL_MIN_W,
+    normalizeMixDialogueButton,
+    type MixDialogueButton,
+    type MixDialogueState,
     type MixPanelLayout,
     type MixState,
 } from "@/lib/mixology/types";
 import { normalizeMechanismStore, type MixMechanismStore } from "@/lib/mixology/mechanism-protocol";
+import { normalizeMixConnectorParams, runMixConnector, takeMixConnectorQuota } from "@/lib/mixology/connectors";
+import { findMixConnector } from "@/lib/mixology/storage";
+import { playMixAudio, stopMixAudio } from "@/lib/mixology/audio-player";
 
 /** 界面能请求的动作，就这几条 */
 type PanelCommand =
+    | { name: "boot" }
     | { name: "setStore"; store: unknown }
     | { name: "setState"; state: unknown }
     | { name: "say"; text: unknown }
@@ -39,9 +47,158 @@ type PanelCommand =
     | { name: "flag"; key: unknown; on: unknown }
     | { name: "grab"; cx: unknown; cy: unknown }
     | { name: "drag"; cx: unknown; cy: unknown }
-    | { name: "dragEnd" };
+    | { name: "dragEnd" }
+    | { name: "call"; id: unknown; connector: unknown; params: unknown }
+    | { name: "mark"; id: unknown; state: unknown }
+    | { name: "dialogueButton"; icon: unknown; title: unknown }
+    | { name: "play"; id: unknown; audio: unknown; type: unknown }
+    | { name: "stop" }
+    | { name: "toast"; text: unknown };
 
 const MAX_SAY_LENGTH = 2_000;
+const MAX_TOAST_LENGTH = 120;
+const MAX_AUDIO_BYTES = 24 * 1024 * 1024;
+
+/**
+ * 界面递上来的音频转成 Blob：data: URL 字符串、ArrayBuffer、类型化数组、Blob 都收。
+ * 沙盒是不透明源，它自己造的 blob: URL 宿主打不开，所以只收"内容本身"。
+ */
+export function audioToBlob(audio: unknown, type: unknown): Blob | null {
+    const mime = typeof type === "string" && type.trim() ? type.trim() : "audio/mpeg";
+    if (audio instanceof Blob) return audio.size <= MAX_AUDIO_BYTES ? audio : null;
+    if (audio instanceof ArrayBuffer) return audio.byteLength <= MAX_AUDIO_BYTES ? new Blob([audio], { type: mime }) : null;
+    if (ArrayBuffer.isView(audio)) return audio.byteLength <= MAX_AUDIO_BYTES ? new Blob([audio as ArrayBufferView<ArrayBuffer>], { type: mime }) : null;
+    if (typeof audio === "string" && audio.startsWith("data:")) {
+        const comma = audio.indexOf(",");
+        if (comma < 0) return null;
+        const head = audio.slice(5, comma);
+        const body = audio.slice(comma + 1);
+        const dataMime = head.split(";")[0] || mime;
+        try {
+            if (/;base64$/i.test(head)) {
+                const bin = atob(body);
+                if (bin.length > MAX_AUDIO_BYTES) return null;
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+                return new Blob([bytes], { type: dataMime });
+            }
+            return new Blob([decodeURIComponent(body)], { type: dataMime });
+        } catch {
+            return null;
+        }
+    }
+    return null;
+}
+
+/**
+ * mix.play：宿主替界面放音频。对白按钮的点击落在宿主上，iframe 没有手势、iOS 会拦它的
+ * play()，所以音频一律递给宿主放（点击时宿主已经 prime 过自己的播放元素）。
+ * 播放状态由宿主直接回报给对白按钮：开始出声标 playing，放完/失败恢复。
+ */
+function handlePlay(
+    command: { id: unknown; audio: unknown; type: unknown },
+    materialId: string,
+    onMark: ((materialId: string, id: string, state: MixDialogueState) => void) | undefined,
+    onToast: ((text: string) => void) | undefined,
+): void {
+    const id = String(command.id ?? "").trim();
+    const blob = audioToBlob(command.audio, command.type);
+    if (!blob) {
+        onToast?.("机括递上来的音频格式不对（要 data: URL、ArrayBuffer 或 Blob，24MB 以内）。");
+        if (id) onMark?.(materialId, id, "");
+        return;
+    }
+    playMixAudio(blob, {
+        onStart: () => { if (id) onMark?.(materialId, id, "playing"); },
+        onEnd: () => { if (id) onMark?.(materialId, id, ""); },
+        onError: (message) => { if (id) onMark?.(materialId, id, ""); onToast?.(message); },
+    });
+}
+
+// ── 对白按钮：宿主 → 界面的事件通道 ─────────────────────
+// 宿主在每句「对白」后画的小图标被点了，把这句话递给声明了对白按钮的那件机括。
+// 面板组件挂载后在这里登记；面板还没挂上（按钮位面板关着刚被打开）或 iframe
+// 还没 boot 时先排队，挂上/boot 后补发，点一下不会石沉大海。
+
+export type MixDialogueEvent = {
+    /** 这句对白在这一局里的唯一 id（回报状态用） */
+    id: string;
+    /** 对白文字（不含「」） */
+    text: string;
+    turnId?: string;
+};
+
+const dialogueListeners = new Map<string, (event: MixDialogueEvent) => void>();
+const dialoguePending = new Map<string, MixDialogueEvent[]>();
+const DIALOGUE_PENDING_MAX = 5;
+
+export function sendMixDialogue(materialId: string, event: MixDialogueEvent): void {
+    const listener = dialogueListeners.get(materialId);
+    if (listener) { listener(event); return; }
+    const queue = dialoguePending.get(materialId) ?? [];
+    queue.push(event);
+    dialoguePending.set(materialId, queue.slice(-DIALOGUE_PENDING_MAX));
+}
+
+/** 面板侧：登记监听，boot 之前的事件先攒着，boot 后一并递进 iframe */
+function useDialogueFeed(materialId: string, post: (payload: Record<string, unknown>) => void) {
+    const bootedRef = useRef(false);
+    const queueRef = useRef<MixDialogueEvent[]>([]);
+    const flush = useCallback(() => {
+        for (const event of queueRef.current) post({ type: "dialogue", event });
+        queueRef.current = [];
+    }, [post]);
+    useEffect(() => {
+        const listener = (event: MixDialogueEvent) => {
+            if (bootedRef.current) post({ type: "dialogue", event });
+            else queueRef.current = [...queueRef.current, event].slice(-DIALOGUE_PENDING_MAX);
+        };
+        dialogueListeners.set(materialId, listener);
+        for (const event of dialoguePending.get(materialId) ?? []) listener(event);
+        dialoguePending.delete(materialId);
+        return () => {
+            if (dialogueListeners.get(materialId) === listener) dialogueListeners.delete(materialId);
+        };
+    }, [materialId, post]);
+    const onBoot = useCallback(() => { bootedRef.current = true; flush(); }, [flush]);
+    return onBoot;
+}
+
+function normalizeMark(command: { id: unknown; state: unknown }): { id: string; state: MixDialogueState } | null {
+    const id = String(command.id ?? "").trim();
+    if (!id) return null;
+    const state = command.state === "busy" || command.state === "playing" ? command.state : "";
+    return { id, state };
+}
+
+/**
+ * 界面请宿主代调一个连接器（mix.call）。沙盒自己发不了请求，这里是唯一的出口：
+ * 名字必须在材料里声明过、玩家本机得配了同名连接器、每分钟有次数上限。
+ * 结果按 id 递回沙盒，界面那头的 Promise 才能落定。
+ */
+async function handleConnectorCall(
+    command: { id: unknown; connector: unknown; params: unknown },
+    materialId: string,
+    declared: string[] | undefined,
+    post: (payload: Record<string, unknown>) => void,
+): Promise<void> {
+    const id = Number(command.id);
+    if (!Number.isFinite(id)) return;
+    const reply = (payload: Record<string, unknown>) => post({ type: "call-result", callId: id, ...payload });
+    const name = String(command.connector ?? "").trim().toLowerCase();
+    if (!name) { reply({ ok: false, error: "mix.call 需要连接器名字。" }); return; }
+    if (!declared?.includes(name)) {
+        reply({ ok: false, error: `这件机括没有声明连接器「${name}」（材料的「需要的连接器」里没写它）。` });
+        return;
+    }
+    const connector = findMixConnector(name);
+    if (!connector) { reply({ ok: false, error: `本机还没有叫「${name}」的连接器，到酒柜的「连接器」里创建一个。`, missing: true }); return; }
+    const normalized = normalizeMixConnectorParams(command.params);
+    if ("err" in normalized) { reply({ ok: false, error: normalized.err }); return; }
+    if (!takeMixConnectorQuota(materialId)) { reply({ ok: false, error: "调用太频繁：每件机括每分钟最多 30 次。" }); return; }
+    const result = await runMixConnector(connector, normalized.params);
+    reply(result.ok ? { ok: true, status: result.status, data: result.data } : { ok: false, error: result.error });
+}
 
 type Box = { x: number; y: number; w: number; h: number };
 
@@ -68,7 +225,7 @@ function clampBox(box: Box): Box {
     };
 }
 
-function buildPanelDoc(html: string, state: MixState, store: MixMechanismStore, autoHeight: boolean): string {
+export function buildPanelDoc(html: string, state: MixState, store: MixMechanismStore, autoHeight: boolean): string {
     const bridge = `
 <script>
 (function(){
@@ -103,8 +260,32 @@ function buildPanelDoc(html: string, state: MixState, store: MixMechanismStore, 
     plate: function(on){ send("flag", { key: "plate", on: on !== false }); },
     z: function(n){ send("flag", { key: "z", on: n }); },
     // 从界面内部起拖：在自己画的标题条上 pointerdown 时调一下
-    grab: startDrag
+    grab: startDrag,
+    // 请宿主代调一个连接器（玩家在酒柜里配的外部接口，材料要在「需要的连接器」里声明名字）。
+    // 返回 Promise：成功 resolve { status, data }（data 按连接器的响应类型：对象 / 字符串 / data: URL），
+    // 失败 reject Error（没声明、没配、限流、网络错）。
+    call: function(name, params){
+      return new Promise(function(resolve, reject){
+        var id = ++callSeq;
+        calls[id] = { resolve: resolve, reject: reject };
+        send("call", { id: id, connector: String(name == null ? "" : name), params: params || {} });
+      });
+    },
+    // 对白按钮的状态回报：宿主把那颗图标画成转圈（busy）/ 播放中（playing）/ 恢复（""）。
+    // id 就是 onMixDialogue 收到的那个 id
+    mark: function(id, state){ send("mark", { id: String(id == null ? "" : id), state: state || "" }); },
+    // 登记对白按钮：宿主在每句「对白」后画这颗图标，点击递进 window.onMixDialogue。
+    // icon 写内置名字（speaker / play / translate / note / bookmark / star / heart / quote / spark）或一个 emoji；传 null 撤掉
+    dialogueButton: function(spec){ spec = spec || {}; send("dialogueButton", { icon: spec.icon == null ? "" : String(spec.icon), title: spec.title == null ? "" : String(spec.title) }); },
+    // 让宿主放一段音频（对白按钮的点击在宿主那边，iframe 自己 play 会被 iOS 拦）。
+    // audio 收 data: URL 字符串、ArrayBuffer、Uint8Array 或 Blob；type 是 MIME（默认 audio/mpeg）。
+    // 传了 id（onMixDialogue 收到的那个），那颗按钮会自动标成播放中、放完自动恢复。
+    play: function(id, audio, type){ send("play", { id: id == null ? "" : String(id), audio: audio, type: type || "" }); },
+    stop: function(){ send("stop", {}); },
+    // 给玩家弹一句短提示（出错、缺连接器之类）；无界面的机括靠它说话
+    toast: function(text){ send("toast", { text: String(text == null ? "" : text) }); }
   };
+  var callSeq = 0, calls = {};
 
   // 界面内部起拖：手指按在 iframe 里时，这一串移动事件会被锁在 iframe 上，
   // 宿主那边一条都收不到，所以这里自己听一份报上去。
@@ -153,12 +334,32 @@ function buildPanelDoc(html: string, state: MixState, store: MixMechanismStore, 
   window.addEventListener("message", function(event){
     var data = event.data;
     if (!data || data.source !== "mix-panel-host") return;
+    if (data.type === "call-result") {
+      var pending = calls[data.callId];
+      if (!pending) return;
+      delete calls[data.callId];
+      if (data.ok) pending.resolve({ status: data.status, data: data.data });
+      else { var err = new Error(data.error || "连接器调用失败"); err.missing = !!data.missing; pending.reject(err); }
+      return;
+    }
+    // 玩家点了某句对白后面的按钮（材料声明了 dialogueButton 才会有）：
+    // 界面定义 window.onMixDialogue({ id, text, turnId }) 接收，之后可用 mix.mark(id, 状态) 回报
+    if (data.type === "dialogue") {
+      if (typeof window.onMixDialogue === "function") {
+        try { window.onMixDialogue(data.event || {}); } catch (e) {}
+      }
+      return;
+    }
     window.MIX_STATE = data.state || {};
     window.MIX_STORE = data.store || {};
     if (typeof window.onMixSync === "function") {
       try { window.onMixSync(window.MIX_STATE, window.MIX_STORE); } catch (e) {}
     }
   });
+  // 启动握手：上面烘进文档的 MIX_STATE/MIX_STORE 是宿主生成这份文档时的快照。
+  // 手机浏览器退后台会回收沙盒 iframe 的进程，回前台时 iframe 拿这份旧文档重启，
+  // 快照就成了旧账——喊一声让宿主把当前值无条件补推一份，界面永远从最新值起步。
+  send("boot", {});
   ${autoHeight ? `
   // 开了「高度随内容」就自动量，作者不用自己调 mix.fit
   var last = -1;
@@ -207,6 +408,10 @@ export function MixMechanismPanel({
     onState,
     onSay,
     onBox,
+    connectors,
+    onMark,
+    onDialogueButton,
+    onToast,
 }: {
     materialId: string;
     name: string;
@@ -219,6 +424,14 @@ export function MixMechanismPanel({
     onSay: (text: string) => void;
     /** 玩家拖动/缩放之后落库，只影响这一局 */
     onBox: (materialId: string, box: Box) => void;
+    /** 材料声明要用的连接器名字；mix.call 只放行这些 */
+    connectors?: string[];
+    /** 界面用 mix.mark 回报某句对白按钮的状态 */
+    onMark?: (materialId: string, id: string, state: MixDialogueState) => void;
+    /** 界面用 mix.dialogueButton 登记对白按钮（null = 撤掉） */
+    onDialogueButton?: (materialId: string, button: MixDialogueButton | null) => void;
+    /** 界面用 mix.toast 给玩家弹一句短提示 */
+    onToast?: (text: string) => void;
 }) {
     const frameRef = useRef<HTMLIFrameElement | null>(null);
     const rootRef = useRef<HTMLDivElement | null>(null);
@@ -304,6 +517,11 @@ export function MixMechanismPanel({
         post({ state, store });
     }, [state, store, post]);
 
+    /** 最新的 state/store：boot 补推发生在消息回调里，闭包里的是旧引用，得走 ref */
+    const latestSyncRef = useRef({ state, store });
+    latestSyncRef.current = { state, store };
+    const onDialogueBoot = useDialogueFeed(materialId, post);
+
     /** 把一次几何变化落到面板上；拖完（commit）才写进对局 */
     const applyBox = useCallback((next: Box, commit: boolean) => {
         const clamped = clampBox(next);
@@ -364,6 +582,15 @@ export function MixMechanismPanel({
             if (!data || data.source !== "mix-panel") return;
             const command = data as unknown as PanelCommand;
             switch (command.name) {
+                case "boot": {
+                    // iframe（重）启动完成。退后台被系统回收的面板回前台时会拿旧文档重启，
+                    // 文档里烘的快照已经过期——这里无条件把当前值补推一份，别管变没变。
+                    const fresh = latestSyncRef.current;
+                    syncedRef.current = JSON.stringify(fresh);
+                    post({ ...fresh });
+                    onDialogueBoot();
+                    break;
+                }
                 case "setStore":
                     onStore(materialId, normalizeMechanismStore(command.store));
                     break;
@@ -485,6 +712,28 @@ export function MixMechanismPanel({
                         return current;
                     });
                     break;
+                case "call":
+                    void handleConnectorCall(command, materialId, connectors, post);
+                    break;
+                case "mark": {
+                    const mark = normalizeMark(command);
+                    if (mark) onMark?.(materialId, mark.id, mark.state);
+                    break;
+                }
+                case "dialogueButton":
+                    onDialogueButton?.(materialId, normalizeMixDialogueButton({ icon: command.icon, title: command.title }) ?? null);
+                    break;
+                case "play":
+                    handlePlay(command, materialId, onMark, onToast);
+                    break;
+                case "stop":
+                    stopMixAudio();
+                    break;
+                case "toast": {
+                    const text = String(command.text ?? "").trim().slice(0, MAX_TOAST_LENGTH);
+                    if (text) onToast?.(text);
+                    break;
+                }
                 default:
                     // 白名单以外一律不理会
                     break;
@@ -492,7 +741,7 @@ export function MixMechanismPanel({
         };
         window.addEventListener("message", onMessage);
         return () => window.removeEventListener("message", onMessage);
-    }, [materialId, onStore, onState, onSay, onBox, canDrag, applyBox, scale]);
+    }, [materialId, onStore, onState, onSay, onBox, canDrag, applyBox, scale, post, connectors, onMark, onDialogueButton, onDialogueBoot, onToast]);
 
     const style: React.CSSProperties = {
         left: `${box.x}%`,
@@ -586,6 +835,199 @@ export function MixMechanismPanel({
             {grabbing && typeof document !== "undefined"
                 ? createPortal(<div className="mix-panel-catch" data-mode={grabbing} aria-hidden="true" />, document.body)
                 : null}
+        </div>
+    );
+}
+
+/**
+ * 内嵌形态的机括界面：按钮位（header/inputbar-*）打开的下拉/上升面板，
+ * 与流内位（flow-top/flow-bottom）的内嵌卡共用这一个组件。
+ * 与悬浮面板的差别只在"位置归宿主管"：宽度铺满容器、高度永远随内容（fit），
+ * 拖动/缩放/挪位的白名单命令一律不理会；能做的事不变——写存储、写记住的值、
+ * 以玩家身份发言、报高、要求设计宽度、开关底板。沙盒与消息协议完全同一套。
+ */
+export function MixMechanismInline({
+    materialId,
+    name,
+    html,
+    state,
+    store,
+    plateDefault,
+    onStore,
+    onState,
+    onSay,
+    connectors,
+    onMark,
+    onDialogueButton,
+    onToast,
+}: {
+    materialId: string;
+    name: string;
+    html: string;
+    state: MixState;
+    store: MixMechanismStore;
+    /** 摆放里的底板偏好（layout.plate），界面代码里 mix.plate() 说了算 */
+    plateDefault?: boolean;
+    onStore: (materialId: string, store: MixMechanismStore) => void;
+    onState: (state: MixState) => void;
+    onSay: (text: string) => void;
+    /** 材料声明要用的连接器名字；mix.call 只放行这些 */
+    connectors?: string[];
+    /** 界面用 mix.mark 回报某句对白按钮的状态 */
+    onMark?: (materialId: string, id: string, state: MixDialogueState) => void;
+    /** 界面用 mix.dialogueButton 登记对白按钮（null = 撤掉） */
+    onDialogueButton?: (materialId: string, button: MixDialogueButton | null) => void;
+    /** 界面用 mix.toast 给玩家弹一句短提示 */
+    onToast?: (text: string) => void;
+}) {
+    const frameRef = useRef<HTMLIFrameElement | null>(null);
+    const stageRef = useRef<HTMLDivElement | null>(null);
+    const [fitPx, setFitPx] = useState(0);
+    const [designPx, setDesignPx] = useState<number | null>(null);
+    const [plateFlag, setPlateFlag] = useState<boolean | null>(null);
+    const [width, setWidth] = useState(0);
+
+    const plate = plateFlag ?? plateDefault ?? false;
+
+    useEffect(() => {
+        const node = stageRef.current;
+        if (!node || typeof ResizeObserver === "undefined") return;
+        const read = () => {
+            const rect = node.getBoundingClientRect();
+            setWidth((prev) => (Math.abs(prev - rect.width) < 0.5 ? prev : rect.width));
+        };
+        read();
+        const observer = new ResizeObserver(read);
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, []);
+
+    // 内嵌卡的高度只能随内容走，所以量高桥永远开着
+    const srcDoc = useMemo(() => buildPanelDoc(html, state, store, true), [html]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const post = useCallback((payload: Record<string, unknown>) => {
+        try {
+            frameRef.current?.contentWindow?.postMessage({ source: "mix-panel-host", ...payload }, "*");
+        } catch { /* 递不进去就等下一次同步 */ }
+    }, []);
+
+    const syncedRef = useRef("");
+    useEffect(() => {
+        const snapshot = JSON.stringify({ state, store });
+        if (snapshot === syncedRef.current) return;
+        syncedRef.current = snapshot;
+        post({ state, store });
+    }, [state, store, post]);
+
+    /** 最新的 state/store：boot 补推发生在消息回调里，闭包里的是旧引用，得走 ref */
+    const latestSyncRef = useRef({ state, store });
+    latestSyncRef.current = { state, store };
+    const onDialogueBoot = useDialogueFeed(materialId, post);
+
+    useEffect(() => {
+        const onMessage = (event: MessageEvent) => {
+            if (!frameRef.current || event.source !== frameRef.current.contentWindow) return;
+            const data = event.data as (Record<string, unknown> & { source?: string }) | null;
+            if (!data || data.source !== "mix-panel") return;
+            const command = data as unknown as PanelCommand;
+            switch (command.name) {
+                case "boot": {
+                    // 同悬浮面板：iframe 重启后拿的是旧文档快照，无条件补推当前值
+                    const fresh = latestSyncRef.current;
+                    syncedRef.current = JSON.stringify(fresh);
+                    post({ ...fresh });
+                    onDialogueBoot();
+                    break;
+                }
+                case "setStore":
+                    onStore(materialId, normalizeMechanismStore(command.store));
+                    break;
+                case "setState": {
+                    const raw = command.state;
+                    if (!raw || typeof raw !== "object" || Array.isArray(raw)) break;
+                    const patch: MixState = {};
+                    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+                        const name2 = key.trim().slice(0, 40);
+                        if (!name2) continue;
+                        if (typeof value === "number" && Number.isFinite(value)) patch[name2] = value;
+                        else if (typeof value === "string" && value.trim()) patch[name2] = value.trim().slice(0, 200);
+                        if (Object.keys(patch).length >= 50) break;
+                    }
+                    if (Object.keys(patch).length) onState(patch);
+                    break;
+                }
+                case "say": {
+                    const text = String(command.text ?? "").trim().slice(0, MAX_SAY_LENGTH);
+                    if (text) onSay(text);
+                    break;
+                }
+                case "fit": {
+                    const px = Number(command.px);
+                    if (Number.isFinite(px) && px >= 0) setFitPx(Math.min(4000, Math.ceil(px)));
+                    break;
+                }
+                case "design": {
+                    const px = Number(command.px);
+                    if (!Number.isFinite(px)) break;
+                    setDesignPx(px <= 0 ? 0 : Math.min(1600, Math.max(120, Math.round(px))));
+                    break;
+                }
+                case "flag": {
+                    if (String(command.key ?? "") !== "plate") break;
+                    setPlateFlag(command.on !== false);
+                    break;
+                }
+                case "call":
+                    void handleConnectorCall(command, materialId, connectors, post);
+                    break;
+                case "mark": {
+                    const mark = normalizeMark(command);
+                    if (mark) onMark?.(materialId, mark.id, mark.state);
+                    break;
+                }
+                case "dialogueButton":
+                    onDialogueButton?.(materialId, normalizeMixDialogueButton({ icon: command.icon, title: command.title }) ?? null);
+                    break;
+                case "play":
+                    handlePlay(command, materialId, onMark, onToast);
+                    break;
+                case "stop":
+                    stopMixAudio();
+                    break;
+                case "toast": {
+                    const text = String(command.text ?? "").trim().slice(0, MAX_TOAST_LENGTH);
+                    if (text) onToast?.(text);
+                    break;
+                }
+                default:
+                    // 位置类命令（box/grab/drag/setOpen…）在内嵌形态下没有意义，一律不理会
+                    break;
+            }
+        };
+        window.addEventListener("message", onMessage);
+        return () => window.removeEventListener("message", onMessage);
+    }, [materialId, onStore, onState, onSay, post, connectors, onMark, onDialogueButton, onDialogueBoot, onToast]);
+
+    const designWidth = designPx === null ? 0 : designPx;
+    const scale = designWidth && width > 0 ? width / designWidth : 1;
+    const height = Math.max(24, fitPx || 48);
+
+    return (
+        <div className="mix-inline-panel" data-plate={plate ? "true" : undefined}>
+            <div ref={stageRef} className="mix-inline-stage" style={{ height }}>
+                <iframe
+                    ref={frameRef}
+                    className="mix-panel-frame"
+                    title={name}
+                    sandbox="allow-scripts"
+                    srcDoc={srcDoc}
+                    style={
+                        scale !== 1
+                            ? { width: designWidth, height: height / scale, transform: `scale(${scale})`, transformOrigin: "top left" }
+                            : undefined
+                    }
+                />
+            </div>
         </div>
     );
 }

@@ -28,7 +28,10 @@ const MAX_API_LOGS = 150;
 // 工坊环容量：只有答疑引擎写入，量小，维持原值。
 const MAX_QA_API_LOGS = 50;
 // 单环序列化字符预算：超预算时从最旧开始丢弃，控制 IndexedDB 常驻体积与序列化开销。
-const MAX_API_LOGS_SERIALIZED_CHARS = 2 * 1024 * 1024;
+// 原为 2MB：特调对局一次调用带整段历史，单条日志逼近 100K，二十来轮就把预算塞满，
+// 把普通聊天、记忆总结这些小记录全挤出去，来源过滤里只剩一个角色。提到 8MB 能装
+// 八十来条这样的大记录；存在 IndexedDB 里，这个量级没有压力。
+const MAX_API_LOGS_SERIALIZED_CHARS = 8 * 1024 * 1024;
 const MAX_QA_LOGS_SERIALIZED_CHARS = 1024 * 1024;
 // 单条文本截断上限：记忆总结类调用的完整 prompt 动辄几十 KB，写日志前先截断，
 // 控制每次 push 的 parse/stringify 写放大与常驻体积。

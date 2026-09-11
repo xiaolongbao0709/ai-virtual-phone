@@ -1030,6 +1030,15 @@
     height: calc(22px + env(safe-area-inset-bottom, 0px));
 }
 
+/* 编辑器 portal 到应用根层的速查弹层的抬升容器：对局画面（.mix-game）是
+   z-index:45 的全屏层，弹层 mask 自身只有 40，从对局内打开会被整个压在
+   画面底下。抬到 50——对局之上、toast(60)/确认弹窗(70)之下。 */
+.mix-overlay-raise {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+}
+
 @keyframes mixFadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
@@ -1295,6 +1304,26 @@
     height: 24px;
 }
 
+/* 旧轮次懒加载：顶上一颗「查看更早」 */
+.mix-load-more {
+    display: block;
+    margin: 6px auto 14px;
+    padding: 6px 14px;
+    border: none;
+    border-radius: 999px;
+    background: var(--mix-panel);
+    color: var(--mix-dim);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, transform 0.16s;
+}
+
+.mix-load-more:active {
+    transform: scale(0.96);
+    color: var(--mix-violet);
+}
+
 /* AI 正文：无气泡全宽，左右对称 */
 .mix-prose {
     margin: 14px 0;
@@ -1309,6 +1338,35 @@
 /* 叙述单独留一条规则：装饰材料要改叙述色时有正经的钩子，不必去动容器 */
 .mix-narration {
     color: var(--mix-prose);
+}
+
+/* 正文里的 HTML 片段：沙盒框，透明底，占满一行，不吃首行缩进 */
+.mix-html-block {
+    margin: 0 0 15px;
+    text-indent: 0;
+}
+
+.mix-html-block:last-child {
+    margin-bottom: 0;
+}
+
+/* 代码块：等宽、可横向滚，不吃首行缩进 */
+.mix-code {
+    margin: 0 0 15px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.32);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: rgba(var(--mix-prose-rgb), 0.9);
+    font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    text-indent: 0;
+    white-space: pre;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.mix-code:last-child {
+    margin-bottom: 0;
 }
 
 /* 首行缩进两字，书籍排版。场景过场行（.mix-scene）是同级的另一种段，不吃缩进 */
@@ -1452,6 +1510,65 @@
 }
 
 /* 输入区 */
+/* ── 机括挂点 ──
+   按钮位：宿主画的图标按钮（标题栏/输入栏），点击开合下方的停靠面板；
+   流内位：嵌进滚动流的内嵌卡。按钮与容器都是宿主的，沙盒只画格子里的内容 */
+.mix-slot-btn {
+    font-size: 15px;
+    line-height: 1;
+}
+
+.mix-slot-btn[data-on="true"] {
+    background: rgba(141, 123, 245, 0.22);
+    color: var(--mix-violet);
+}
+
+.mix-dock-drop {
+    flex: 0 0 auto;
+    max-height: 46%;
+    overflow-y: auto;
+    padding: 8px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(10, 9, 16, 0.72);
+    backdrop-filter: blur(10px);
+    animation: mixFadeIn 0.16s ease;
+}
+
+.mix-dock-drop[data-from="header"] {
+    border-bottom: 1px solid var(--mix-line);
+}
+
+.mix-dock-drop[data-from="input"] {
+    border-top: 1px solid var(--mix-line);
+}
+
+.mix-flow-panel {
+    margin: 10px 0;
+}
+
+.mix-inline-panel[data-plate="true"] {
+    background: rgba(14, 12, 22, 0.66);
+    border: 1px solid var(--mix-line);
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+.mix-inline-stage {
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+}
+
+.mix-inline-stage .mix-panel-frame {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: transparent;
+}
+
 .mix-game-inputbar {
     position: relative;
     flex: 0 0 auto;
@@ -2107,6 +2224,16 @@
     );
 }
 
+/* 缩样卡（实时缩样 data-live / 渲染缩略图封面 data-flow）：缩样本身就是内容，
+   文字压上去会挡住看的东西——文案区改走文档流，落在缩样下面单独一段。
+   角色卡等配图海报仍用压图 + 渐变纱的经典样式 */
+.mix-mat-card[data-poster="true"][data-live="true"] .mix-poster-veil,
+.mix-mat-card[data-poster="true"][data-flow="true"] .mix-poster-veil {
+    position: static;
+    padding: 9px 11px 11px;
+    background: none;
+}
+
 .mix-poster-name {
     font-size: 14.5px;
     font-weight: 700;
@@ -2311,10 +2438,34 @@
     pointer-events: none;
 }
 
-/* 有缩样的海报卡：放开固定比例，高度由缩样决定；给个下限护住底部文案区 */
-.mix-mat-card[data-poster="true"][data-live="true"] {
+/* 有缩样的海报卡：放开固定比例，高度由缩样决定；给个下限护住底部文案区。
+   data-flow 是小票/尾调的静态封面（渲染缩样拍成的图）：同样随内容走 */
+.mix-mat-card[data-poster="true"][data-live="true"],
+.mix-mat-card[data-poster="true"][data-flow="true"] {
     aspect-ratio: auto;
     min-height: 96px;
+}
+
+/* 缩样封面回到文档流按原比例摆：固定海报框 + object-fit: cover 会把
+   收起状态的矮小票放大裁剪成一条，和酒柜的实时缩样对不上 */
+.mix-mat-card[data-poster="true"][data-flow="true"] .mix-mat-cover {
+    position: static;
+    height: auto;
+    aspect-ratio: auto;
+    /* 与酒柜实时缩样同一个下限（HalfScale 的 60px）：折叠条这类矮渲染贴顶摆，
+       底下留出空档，不会只剩一条紧贴文字；contain 保证图不被拉伸 */
+    min-height: 60px;
+    object-fit: contain;
+    object-position: top;
+}
+
+/* 缩样卡上的作者标签：不压封面，落在文字区名字上方 */
+.mix-poster-author[data-inline="true"] {
+    position: static;
+    display: inline-block;
+    margin-bottom: 6px;
+    backdrop-filter: none;
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .mix-poster-blank {
@@ -2475,6 +2626,24 @@
     padding: 10px 12px;
     border-radius: 14px;
     background: var(--mix-panel);
+    /* 长按拖动排序：不让系统弹出选中/长按菜单；竖向滚动仍交给浏览器，长按成立后再由脚本拦 */
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.mix-stack-list[data-dragging="true"] {
+    touch-action: none;
+}
+
+.mix-stack-row[data-dragging="true"] {
+    position: relative;
+    z-index: 2;
+    transition: box-shadow 0.18s ease, background 0.18s ease;
+    background: var(--mix-panel-2);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(141, 123, 245, 0.35);
 }
 
 .mix-stack-order {
@@ -2781,6 +2950,49 @@
     gap: 8px;
 }
 
+/* 修改方案弹窗里的操作行：几颗 chip 平分撑满一排（容器本体定义在机括段落） */
+.mix-panel-ops .mix-dock-chip {
+    flex: 1;
+    /* 四颗并排要在 390 宽的屏上对齐上方文字：允许收窄，实在放不下就截尾，不许挤出去 */
+    min-width: 0;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-left: 4px;
+    padding-right: 4px;
+}
+
+/* 回传轮数调节行 */
+.mix-histlimit {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: -2px 0 10px;
+    padding: 9px 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 12px;
+    color: var(--mix-dim);
+}
+
+.mix-histlimit input[type="range"] {
+    flex: 1;
+    min-width: 0;
+    accent-color: var(--mix-violet);
+}
+
+.mix-histlimit b {
+    min-width: 30px;
+    text-align: center;
+    color: var(--mix-violet);
+}
+
+.mix-histlimit .mix-dock-chip {
+    flex: 0 0 auto;
+    padding: 5px 12px;
+}
+
 .mix-dock-chip {
     border: 1px solid var(--mix-line);
     border-radius: 999px;
@@ -2942,7 +3154,7 @@
 /* 对局里的逃生口：一键收起全部机括界面 / 把拖乱的位置归位 */
 .mix-panel-ops {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     margin: 8px 0 2px;
 }
 
@@ -3035,4 +3247,157 @@
 .mix-mat-badge[data-tone="code"] {
     background: rgba(217, 176, 106, 0.18);
     color: var(--mix-gold);
+}
+
+/* ── 连接器（酒柜页头部的弹层） ── */
+.mix-conn-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.mix-conn-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    border: 1px solid var(--mix-line);
+    border-radius: 14px;
+    padding: 10px 8px 10px 12px;
+    background: rgba(255, 255, 255, 0.04);
+    color: inherit;
+    cursor: pointer;
+}
+
+.mix-conn-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: rgba(141, 123, 245, 0.18);
+    color: var(--mix-violet);
+    flex: 0 0 auto;
+}
+
+.mix-conn-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.mix-conn-name {
+    font-size: 13px;
+    font-weight: 700;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.mix-conn-sub {
+    font-size: 11px;
+    color: var(--mix-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mix-conn-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.mix-conn-two {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.mix-conn-field {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.mix-conn-field .mix-form-label {
+    margin-left: 2px;
+}
+
+.mix-form-error {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #ff8f8f;
+}
+
+/* ── 对白按钮：机括声明后宿主画在每句「对白」后面的小图标 ── */
+.mix-say-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    vertical-align: -0.18em;
+    width: 1.5em;
+    height: 1.5em;
+    /* 前面是全角「」」，字形自带右半边留白，这里不再加左边距（甚至往回收一点）；
+       右边补一格，别贴着后面的叙述 */
+    margin: 0 0.3em 0 -0.08em;
+    border: 1px solid rgba(141, 123, 245, 0.35);
+    border-radius: 999px;
+    background: rgba(141, 123, 245, 0.14);
+    color: var(--mix-violet);
+    font-size: 0.8em;
+    line-height: 1;
+    text-indent: 0;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, transform 0.2s, color 0.2s;
+}
+
+.mix-say-btn svg {
+    width: 0.95em;
+    height: 0.95em;
+}
+
+.mix-say-btn:active {
+    transform: scale(0.9);
+}
+
+.mix-say-btn[data-state="busy"] {
+    animation: mix-say-pulse 0.9s ease-in-out infinite;
+}
+
+.mix-say-btn[data-state="playing"] {
+    background: var(--mix-violet);
+    border-color: var(--mix-violet);
+    color: #fff;
+    box-shadow: 0 0 0 3px rgba(141, 123, 245, 0.22);
+}
+
+@keyframes mix-say-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.55; }
+    50% { transform: scale(1.1); opacity: 1; }
+}
+
+/* ── 信任模式机括的坑位 ── */
+/* 每轮下方 / 最新一轮之下：一块普通的块级容器，机括自己排版 */
+.mix-trusted-slot {
+    text-indent: 0;
+}
+
+.mix-trusted-turn:empty {
+    display: none;
+}
+
+/* 悬浮层：铺满对局画面的透明层，机括画的元素自己定位；层本身不挡点击，元素挡 */
+.mix-trusted-float {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.mix-trusted-float > * {
+    pointer-events: auto;
 }

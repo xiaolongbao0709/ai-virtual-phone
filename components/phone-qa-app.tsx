@@ -3,8 +3,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+// CommonMark 的 flanking 规则会让 **「加粗」** 这类紧贴全角标点的写法解析失败
+// （** 后跟标点时要求前面是空格/标点，中文里前面通常是汉字），中文消息大量中招。
+import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkBreaks from "remark-breaks";
-import { AppWindow, ArrowUp, BrushCleaning, Check, ChevronLeft, ChevronRight, Copy, Drama, Gamepad2, Github, Loader2, Menu, Pencil, Play, Plus, Square, Trash2, Wrench, X } from "lucide-react";
+import { AppWindow, ArrowUp, BrushCleaning, Check, ChevronLeft, ChevronRight, Copy, Drama, FileCode2, FileText, Gamepad2, Github, Image as ImageIcon, Loader2, Menu, MoreVertical, Paperclip, Pencil, Pin, PinOff, Play, Plus, Square, Trash2, Wrench, X } from "lucide-react";
+import { getQaApiLogs, clearQaApiLogs, type DebugInfo } from "@/lib/api-log-store";
 import { QaFileCard } from "@/components/qa-file-card";
 import { parseQaFileMarker } from "@/lib/qa-computer-tools";
 import { mdiHammerWrench } from "@mdi/js";
@@ -20,24 +24,32 @@ import {
   clearQaToolHistory,
   createQaSession,
   deleteQaSession,
+  editAndResendQaMessage,
   getQaActiveContextChars,
   getQaChatSnapshot,
   getQaContextBudgetChars,
+  getQaEditAndResendBlockReason,
   hasQaToolHistory,
   hydrateQaChat,
   QA_CONTEXT_BUDGET_MAX,
   QA_CONTEXT_BUDGET_MIN,
   QA_DEFAULT_CONTEXT_BUDGET_CHARS,
+  QA_TEXT_ATTACHMENT_MAX_BYTES,
+  QA_TEXT_ATTACHMENTS_MAX_COUNT,
+  QA_TEXT_ATTACHMENTS_MAX_CHARS,
   setQaContextBudgetChars,
   retryQaMessage,
+  renameQaSession,
   revertQaAppliedCommit,
   sendQaMessage,
   stopQaGeneration,
   subscribeQaChat,
   switchQaSession,
+  toggleQaSessionPin,
   updateQaMessageContent,
   type QaMsg,
   type QaSession,
+  type QaTextAttachment,
   type QaToolStatus,
 } from "@/lib/qa-chat-store";
 import {
@@ -259,7 +271,7 @@ function QaToolRow({ tool }: { tool: QaToolStatus }) {
 // 低端机 WebView OOM 崩溃的主因（几万字 × 每秒多次解析）。文本不变就不重渲。
 const QaMarkdownBlock = memo(function QaMarkdownBlock({ text }: { text: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={QA_MARKDOWN_COMPONENTS}>
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks, remarkCjkFriendly]} components={QA_MARKDOWN_COMPONENTS}>
       {text}
     </ReactMarkdown>
   );
@@ -304,7 +316,7 @@ const QaMessageItem = memo(function QaMessageItem({
           <button type="button" className="qa-msg-action" aria-label="复制原始内容" title="复制" onClick={() => onCopy(msg.content)}>
             <Copy size={14} strokeWidth={2} />
           </button>
-          <button type="button" className="qa-msg-action" aria-label="编辑原始内容" title="编辑" onClick={() => onEdit(msg)}>
+          <button type="button" className="qa-msg-action" aria-label="修改原始内容" title="修改" onClick={() => onEdit(msg)}>
             <Pencil size={14} strokeWidth={2} />
           </button>
         </div>
@@ -340,6 +352,16 @@ const QaMessageItem = memo(function QaMessageItem({
                 <button key={i} type="button" className="qa-msg-image" onClick={() => onViewImage(url)} aria-label="查看图片">
                   <img src={url} alt="" />
                 </button>
+              ))}
+            </div>
+          )}
+          {msg.files && msg.files.length > 0 && (
+            <div className="qa-msg-files">
+              {msg.files.map((file) => (
+                <span className="qa-file-chip" key={file.name} title={file.name}>
+                  <FileText size={13} />
+                  <span>{file.name}</span>
+                </span>
               ))}
             </div>
           )}
@@ -418,6 +440,7 @@ function QaSessionDrawer({
   onDelete,
   onCreate,
   onOpenSettings,
+  onRenameRequest,
 }: {
   sessions: QaSession[];
   activeId: string | null;
@@ -425,35 +448,95 @@ function QaSessionDrawer({
   onDelete: (id: string) => void;
   onCreate: () => void;
   onOpenSettings: () => void;
+  onRenameRequest: (id: string, title: string) => void;
 }) {
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+
+  // 置顶的排最前，其余保持时间序。只在渲染层排，存储顺序不动
+  const sortedSessions = useMemo(() => {
+    return [...sessions].sort((a, b) => {
+      if (Boolean(a.isPinned) !== Boolean(b.isPinned)) return a.isPinned ? -1 : 1;
+      return b.updatedAt - a.updatedAt;
+    });
+  }, [sessions]);
+
   return (
     <aside className="qa-drawer">
       <div className="qa-drawer-head">
         <span className="qa-drawer-title">对话记录</span>
       </div>
-      <div className="qa-drawer-list hide-scrollbar">
-        {sessions.length === 0 && <div className="qa-drawer-empty">还没有对话</div>}
-        {sessions.map((session) => (
+      <div
+        className="qa-drawer-list hide-scrollbar"
+        onClick={() => { if (menuOpenId) setMenuOpenId(null); }}
+      >
+        {sortedSessions.length === 0 && <div className="qa-drawer-empty">还没有对话</div>}
+        {sortedSessions.map((session) => (
           <div
             key={session.id}
             className={`qa-drawer-item ${session.id === activeId ? "is-active" : ""}`}
             onClick={() => onSelect(session.id)}
           >
             <div className="qa-drawer-item-main">
-              <span className="qa-drawer-item-title">{session.title}</span>
+              <span className="qa-drawer-item-title">
+                {session.isPinned && <Pin size={12} className="qa-drawer-pin-mark" aria-label="已置顶" />}
+                {session.title}
+              </span>
               <span className="qa-drawer-item-time">{formatRelativeTime(session.updatedAt)}</span>
             </div>
             <button
               type="button"
-              className="qa-icon-btn qa-drawer-item-delete"
-              aria-label="删除对话"
+              className="qa-icon-btn qa-drawer-item-more"
+              aria-label="更多操作"
+              aria-expanded={menuOpenId === session.id}
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete(session.id);
+                setMenuOpenId(menuOpenId === session.id ? null : session.id);
               }}
             >
-              <Trash2 size={14} />
+              <MoreVertical size={14} />
             </button>
+
+            {menuOpenId === session.id && (
+              <div className="qa-drawer-item-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="qa-drawer-menu-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleQaSessionPin(session.id);
+                    setMenuOpenId(null);
+                  }}
+                >
+                  {session.isPinned ? <PinOff size={14} /> : <Pin size={14} />}
+                  {session.isPinned ? "取消置顶" : "置顶"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="qa-drawer-menu-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRenameRequest(session.id, session.title);
+                    setMenuOpenId(null);
+                  }}
+                >
+                  <Pencil size={14} /> 重命名
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="qa-drawer-menu-btn is-danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(session.id);
+                    setMenuOpenId(null);
+                  }}
+                >
+                  <Trash2 size={14} /> 删除
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -733,12 +816,24 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
   const [repoConnected, setRepoConnected] = useState(false);
   const [clearToolsOpen, setClearToolsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [apiLogOpen, setApiLogOpen] = useState(false);
+  /** 会话重命名弹窗：抽屉菜单里点「重命名」打开 */
+  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<QaTextAttachment[]>([]);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [viewerImage, setViewerImage] = useState<string | null>(null);
   const [editingMsg, setEditingMsg] = useState<QaMsg | null>(null);
   const [editText, setEditText] = useState("");
+  const [editImages, setEditImages] = useState<string[]>([]);
+  const [editFiles, setEditFiles] = useState<QaTextAttachment[]>([]);
+  const [editAttachMenuOpen, setEditAttachMenuOpen] = useState(false);
   const [visionEnabled, setVisionEnabled] = useState(false);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const editImageInputRef = useRef<HTMLInputElement | null>(null);
+  const editFileInputRef = useRef<HTMLInputElement | null>(null);
   const [apiReady, setApiReady] = useState(true);
   const [modelName, setModelName] = useState("");
   const [repoWritable, setRepoWritable] = useState(false);
@@ -827,18 +922,22 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
 
   const handleSend = useCallback(() => {
     const text = input.trim();
-    if ((!text && pendingImages.length === 0) || snapshot.isGenerating) return;
+    if ((!text && pendingImages.length === 0 && pendingFiles.length === 0) || snapshot.isGenerating || snapshot.isCompacting) return;
     setInput("");
     const images = pendingImages;
+    const files = pendingFiles;
     setPendingImages([]);
+    setPendingFiles([]);
+    setAttachMenuOpen(false);
     stickToBottomRef.current = true;
     requestAnimationFrame(autoGrow);
-    void sendQaMessage(text, images.length ? images : undefined);
-  }, [input, pendingImages, snapshot.isGenerating, autoGrow]);
+    void sendQaMessage(text, images.length ? images : undefined, files.length ? files : undefined);
+  }, [input, pendingImages, pendingFiles, snapshot.isGenerating, snapshot.isCompacting, autoGrow]);
 
   // 附加图片：仅识图已开启的 API 显示入口；读为 dataURL，单张限 4MB
-  const handlePickImages = useCallback((files: FileList | null) => {
+  const handlePickImages = useCallback((files: FileList | null, target: "composer" | "edit") => {
     if (!files?.length) return;
+    const setter = target === "edit" ? setEditImages : setPendingImages;
     for (const file of Array.from(files).slice(0, 6)) {
       if (file.size > 4 * 1024 * 1024) {
         onNotice?.(`「${file.name}」超过 4MB，已跳过。`);
@@ -847,11 +946,43 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
       const reader = new FileReader();
       reader.onload = () => {
         const url = typeof reader.result === "string" ? reader.result : "";
-        if (url) setPendingImages((current) => (current.length >= 6 ? current : [...current, url]));
+        if (url) setter((current) => (current.length >= 6 ? current : [...current, url]));
       };
       reader.readAsDataURL(file);
     }
-    if (imageInputRef.current) imageInputRef.current.value = "";
+  }, [onNotice]);
+
+  const handlePickTextFiles = useCallback((files: FileList | null, target: "composer" | "edit") => {
+    if (!files?.length) return;
+    const setter = target === "edit" ? setEditFiles : setPendingFiles;
+    const allowedExtensions = [".txt", ".md", ".json", ".csv", ".js", ".ts", ".tsx", ".jsx", ".html", ".css"];
+    for (const file of Array.from(files).slice(0, QA_TEXT_ATTACHMENTS_MAX_COUNT)) {
+      const lowerName = file.name.toLowerCase();
+      if (!allowedExtensions.some((extension) => lowerName.endsWith(extension))) {
+        const extension = lowerName.includes(".") ? `.${lowerName.split(".").pop()}` : "无后缀";
+        onNotice?.(`不支持 ${extension} 文件，只能读取纯文本或代码附件。`);
+        continue;
+      }
+      if (file.size > QA_TEXT_ATTACHMENT_MAX_BYTES) {
+        onNotice?.(`「${file.name}」超过 1MB，已跳过。`);
+        continue;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const content = typeof reader.result === "string" ? reader.result : "";
+        setter((current) => {
+          if (current.length >= QA_TEXT_ATTACHMENTS_MAX_COUNT || current.some((candidate) => candidate.name === file.name)) return current;
+          const next = [...current, { name: file.name, content }];
+          const totalChars = next.reduce((sum, candidate) => sum + candidate.name.length + candidate.content.length, 0);
+          if (totalChars > QA_TEXT_ATTACHMENTS_MAX_CHARS) {
+            onNotice?.(`附件文本合计不能超过 ${Math.floor(QA_TEXT_ATTACHMENTS_MAX_CHARS / 1000)}K 字符。`);
+            return current;
+          }
+          return next;
+        });
+      };
+      reader.readAsText(file);
+    }
   }, [onNotice]);
 
   const handleRetry = useCallback((assistantMsgId: string) => {
@@ -869,14 +1000,40 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
   const handleEditMessage = useCallback((msg: QaMsg) => {
     setEditingMsg(msg);
     setEditText(msg.content);
+    setEditImages(msg.images ?? []);
+    setEditFiles(msg.files ?? []);
+    setEditAttachMenuOpen(false);
   }, []);
 
-  const handleSaveEdit = useCallback(() => {
+  const handleSaveEdit = useCallback((andResend: boolean) => {
     if (!editingMsg || !snapshot.activeSessionId) return;
-    updateQaMessageContent(snapshot.activeSessionId, editingMsg.id, editText);
+    const result = andResend
+      ? editAndResendQaMessage(
+          snapshot.activeSessionId,
+          editingMsg.id,
+          editText,
+          editImages.length ? editImages : undefined,
+          editFiles.length ? editFiles : undefined,
+        )
+      : updateQaMessageContent(
+          snapshot.activeSessionId,
+          editingMsg.id,
+          editText,
+          editingMsg.role === "user" && editImages.length ? editImages : undefined,
+          editingMsg.role === "user" && editFiles.length ? editFiles : undefined,
+        );
+    if (!result.ok) {
+      onNotice?.(result.reason);
+      return;
+    }
     setEditingMsg(null);
-    onNotice?.("已保存消息内容");
-  }, [editingMsg, editText, snapshot.activeSessionId, onNotice]);
+    onNotice?.(andResend ? "已修改并重新发送" : "已保存消息内容");
+  }, [editingMsg, editText, editImages, editFiles, snapshot.activeSessionId, onNotice]);
+
+  const editResendBlockReason = editingMsg?.role === "user" && snapshot.activeSessionId
+    ? getQaEditAndResendBlockReason(snapshot.activeSessionId, editingMsg.id)
+    : null;
+  const editIsEmpty = !editText.trim() && editImages.length === 0 && editFiles.length === 0;
 
   const streamingMsgId =
     snapshot.isGenerating && messages.length > 0 && messages[messages.length - 1].role === "assistant"
@@ -901,6 +1058,10 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
           setSettingsOpen(true);
           setDrawerOpen(false);
         }}
+        onRenameRequest={(id, title) => {
+          setRenameTarget({ id, title });
+          setRenameTitle(title);
+        }}
       />
       <div className={`qa-stage ${drawerOpen ? "is-pushed" : ""}`}>
       <div className="qa-ambient" aria-hidden />
@@ -915,6 +1076,15 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
           {repoConnected && <span className="qa-header-sub">已连接仓库</span>}
         </div>
         <div className="qa-header-right">
+          <button
+            type="button"
+            className="qa-icon-btn"
+            onClick={() => setApiLogOpen(true)}
+            aria-label="调用记录"
+            title="查看工坊的 AI 调用记录"
+          >
+            <FileCode2 size={17} strokeWidth={1.75} />
+          </button>
           <button
             type="button"
             className="qa-icon-btn"
@@ -995,6 +1165,23 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
               ))}
             </div>
           )}
+          {pendingFiles.length > 0 && (
+            <div className="qa-file-strip">
+              {pendingFiles.map((file) => (
+                <span className="qa-file-chip is-removable" key={file.name} title={file.name}>
+                  <FileText size={13} />
+                  <span>{file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingFiles((current) => current.filter((candidate) => candidate.name !== file.name))}
+                    aria-label={`移除附件 ${file.name}`}
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             className="qa-composer-input hide-scrollbar"
@@ -1007,26 +1194,55 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
             }}
           />
           <div className="qa-composer-toolbar">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.md,.json,.csv,.js,.ts,.tsx,.jsx,.html,.css"
+              multiple
+              hidden
+              onChange={(event) => {
+                handlePickTextFiles(event.target.files, "composer");
+                event.currentTarget.value = "";
+              }}
+            />
             {visionEnabled && (
-              <>
-                <input
-                  ref={imageInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => handlePickImages(e.target.files)}
-                />
-                <button
-                  type="button"
-                  className="qa-circle-btn qa-attach-btn"
-                  onClick={() => imageInputRef.current?.click()}
-                  aria-label="发送图片"
-                >
-                  <Plus size={17} strokeWidth={2.2} />
-                </button>
-              </>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(event) => {
+                  handlePickImages(event.target.files, "composer");
+                  event.currentTarget.value = "";
+                }}
+              />
             )}
+            <div className="qa-attach-menu-wrap">
+              <button
+                type="button"
+                className="qa-circle-btn qa-attach-btn"
+                onClick={() => setAttachMenuOpen((open) => !open)}
+                aria-label="添加附件或图片"
+                aria-expanded={attachMenuOpen}
+              >
+                <Plus size={17} strokeWidth={2.2} />
+              </button>
+              {attachMenuOpen && (
+                <div className="qa-attach-menu">
+                  <button type="button" onClick={() => { fileInputRef.current?.click(); setAttachMenuOpen(false); }}>
+                    <Paperclip size={15} />
+                    上传附件
+                  </button>
+                  {visionEnabled && (
+                    <button type="button" onClick={() => { imageInputRef.current?.click(); setAttachMenuOpen(false); }}>
+                      <ImageIcon size={15} />
+                      添加图片
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
             {modelName && <span className="qa-model-pill">{modelName}</span>}
 
             {repoWritable && (
@@ -1066,8 +1282,8 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
                 type="button"
                 className="qa-circle-btn qa-send-btn"
                 onClick={handleSend}
-                disabled={!input.trim()}
-                aria-label="发送"
+                disabled={(!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0) || snapshot.isCompacting}
+                aria-label={snapshot.isCompacting ? "正在整理上下文" : "发送"}
               >
                 <ArrowUp size={20} strokeWidth={2.4} />
               </button>
@@ -1096,6 +1312,40 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
         />
       )}
       </div>
+
+      {renameTarget && (
+        <div className="qa-rename-backdrop" role="presentation" onClick={() => setRenameTarget(null)}>
+          <form
+            className="qa-rename-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="qa-rename-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const title = renameTitle.trim();
+              if (!title) return;
+              renameQaSession(renameTarget.id, title);
+              setRenameTarget(null);
+            }}
+          >
+            <div id="qa-rename-dialog-title" className="qa-rename-title">重命名对话</div>
+            <input
+              className="qa-rename-input"
+              autoFocus
+              value={renameTitle}
+              maxLength={80}
+              aria-label="新对话名称"
+              onChange={(e) => setRenameTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") setRenameTarget(null); }}
+            />
+            <div className="qa-rename-actions">
+              <button type="button" className="qa-rename-cancel" onClick={() => setRenameTarget(null)}>取消</button>
+              <button type="submit" className="qa-drawer-new qa-rename-confirm" disabled={!renameTitle.trim()}>确认</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {clearToolsOpen && (
         <div className="qa-devnotice-backdrop" onClick={() => setClearToolsOpen(false)}>
@@ -1127,9 +1377,9 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
 
       {editingMsg && (
         <div className="qa-edit-backdrop" onClick={() => setEditingMsg(null)}>
-          <div className="qa-edit-dialog" role="dialog" aria-label="编辑消息" onClick={(e) => e.stopPropagation()}>
+          <div className="qa-edit-dialog" role="dialog" aria-label="修改消息" onClick={(e) => e.stopPropagation()}>
             <div className="qa-edit-head">
-              <span className="qa-edit-title">编辑消息（未渲染原始内容）</span>
+              <span className="qa-edit-title">修改消息（原始内容）</span>
               <button type="button" className="qa-icon-btn" onClick={() => setEditingMsg(null)} aria-label="关闭">
                 <X size={16} />
               </button>
@@ -1140,15 +1390,126 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
               onChange={(e) => setEditText(e.target.value)}
               spellCheck={false}
               autoFocus
+              aria-label="消息原始内容"
               placeholder="这里显示的是消息的原始内容，不会被前端渲染，可放心查看特殊标签。"
             />
+            {editingMsg.role === "user" && editImages.length > 0 && (
+              <div className="qa-attach-strip">
+                {editImages.map((url, index) => (
+                  <div className="qa-attach-thumb" key={index}>
+                    <button type="button" className="qa-attach-view" onClick={() => setViewerImage(url)} aria-label="查看图片">
+                      <img src={url} alt="" />
+                    </button>
+                    <button
+                      type="button"
+                      className="qa-attach-remove"
+                      onClick={() => setEditImages((current) => current.filter((_, candidateIndex) => candidateIndex !== index))}
+                      aria-label="移除图片"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {editingMsg.role === "user" && editFiles.length > 0 && (
+              <div className="qa-file-strip">
+                {editFiles.map((file) => (
+                  <span className="qa-file-chip is-removable" key={file.name} title={file.name}>
+                    <FileText size={13} />
+                    <span>{file.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setEditFiles((current) => current.filter((candidate) => candidate.name !== file.name))}
+                      aria-label={`移除附件 ${file.name}`}
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {editingMsg.role === "user" && (
+              <div className="qa-edit-attachment-row">
+                <input
+                  ref={editFileInputRef}
+                  type="file"
+                  accept=".txt,.md,.json,.csv,.js,.ts,.tsx,.jsx,.html,.css"
+                  multiple
+                  hidden
+                  onChange={(event) => {
+                    handlePickTextFiles(event.target.files, "edit");
+                    event.currentTarget.value = "";
+                  }}
+                />
+                {visionEnabled && (
+                  <input
+                    ref={editImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    hidden
+                    onChange={(event) => {
+                      handlePickImages(event.target.files, "edit");
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                )}
+                <div className="qa-attach-menu-wrap">
+                  <button
+                    type="button"
+                    className="qa-circle-btn qa-attach-btn"
+                    onClick={() => setEditAttachMenuOpen((open) => !open)}
+                    aria-label="添加附件或图片"
+                    aria-expanded={editAttachMenuOpen}
+                  >
+                    <Plus size={17} />
+                  </button>
+                  {editAttachMenuOpen && (
+                    <div className="qa-attach-menu is-edit">
+                      <button type="button" onClick={() => { editFileInputRef.current?.click(); setEditAttachMenuOpen(false); }}>
+                        <Paperclip size={15} />
+                        上传附件
+                      </button>
+                      {visionEnabled && (
+                        <button type="button" onClick={() => { editImageInputRef.current?.click(); setEditAttachMenuOpen(false); }}>
+                          <ImageIcon size={15} />
+                          添加图片
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {editingMsg.role === "user" && editResendBlockReason && (
+              <div className="qa-edit-warning" role="status">{editResendBlockReason}</div>
+            )}
+            {editingMsg.role === "user" && !editResendBlockReason && (
+              <div className="qa-edit-hint">保存并发送会删除这条消息及其后续回复，再根据修改后的内容重新生成。</div>
+            )}
             <div className="qa-edit-actions">
               <button type="button" className="qa-devnotice-btn" onClick={() => setEditingMsg(null)}>
                 取消
               </button>
-              <button type="button" className="qa-devnotice-btn is-primary" onClick={handleSaveEdit}>
+              <button
+                type="button"
+                className={`qa-devnotice-btn ${editingMsg.role === "assistant" ? "is-primary" : ""}`}
+                onClick={() => handleSaveEdit(false)}
+                disabled={editIsEmpty || snapshot.isGenerating || snapshot.isCompacting}
+              >
                 保存
               </button>
+              {editingMsg.role === "user" && (
+                <button
+                  type="button"
+                  className="qa-devnotice-btn is-primary"
+                  onClick={() => handleSaveEdit(true)}
+                  disabled={editIsEmpty || Boolean(editResendBlockReason) || snapshot.isGenerating || snapshot.isCompacting}
+                >
+                  保存并发送
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1156,6 +1517,10 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
 
       {settingsOpen && (
         <QaSettingsSheet onClose={() => setSettingsOpen(false)} onNotice={onNotice} />
+      )}
+
+      {apiLogOpen && (
+        <QaApiLogSheet onClose={() => setApiLogOpen(false)} onNotice={onNotice} />
       )}
 
       {repoSheetOpen && (
@@ -1225,6 +1590,108 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   工坊调用记录面板：右上角「调用记录」按钮进入，
+   只展示工坊自己的 LLM 调用（与聊天页底层日志完全独立）。
+   ══════════════════════════════════════════ */
+function QaApiLogSheet({ onClose, onNotice }: { onClose: () => void; onNotice?: (msg: string) => void }) {
+  const [logs, setLogs] = useState<DebugInfo[]>(() => [...getQaApiLogs()].reverse());
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const refresh = useCallback(() => setLogs([...getQaApiLogs()].reverse()), []);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleClear = () => {
+    clearQaApiLogs();
+    setLogs([]);
+    onNotice?.("已清空工坊调用记录");
+  };
+
+  const formatTime = (ts: string) => {
+    const d = new Date(ts);
+    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+  };
+
+  return (
+    <div className="qa-sheet-backdrop" onClick={onClose}>
+      <div className="qa-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="qa-sheet-head">
+          <span className="qa-sheet-title">
+            <FileCode2 size={16} /> 调用记录
+          </span>
+          <div className="qa-sheet-head-actions">
+            {logs.length > 0 && (
+              <button type="button" className="qa-sheet-btn" onClick={handleClear}>
+                <Trash2 size={14} /> 清空
+              </button>
+            )}
+            <button type="button" className="qa-icon-btn" onClick={onClose} aria-label="关闭">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+        <div className="qa-sheet-body hide-scrollbar qa-log-body">
+          {logs.length === 0 ? (
+            <p className="qa-sheet-note">
+              还没有工坊的 AI 调用记录。调用过模型后，这里会显示每次请求的 Prompt 与 AI 原始回复（含思维链），供排查用。
+            </p>
+          ) : (
+            <>
+              <p className="qa-sheet-note">
+                工坊每次调用大模型的记录，与聊天页「底层调用大模型日志」互相独立，互不混入。
+              </p>
+              <div className="qa-log-list">
+                {logs.map((log) => {
+                  const isOpen = expandedId === log.id;
+                  return (
+                    <div key={log.id} className="qa-log-item">
+                      <button
+                        type="button"
+                        className="qa-log-item-head"
+                        onClick={() => setExpandedId(isOpen ? null : log.id)}
+                      >
+                        <div className="qa-log-item-meta">
+                          <span className="qa-log-item-time">{formatTime(log.timestamp)}</span>
+                          <span className="qa-log-item-detail">
+                            {log.model ? `Model: ${log.model}` : ""}
+                            {log.model && log.messages.length ? " · " : ""}
+                            {log.messages.length} 条消息
+                            {log.usage ? ` · Tokens: ${log.usage.prompt_tokens ?? "—"} / ${log.usage.completion_tokens ?? "—"} / ${log.usage.total_tokens ?? "—"}` : ""}
+                          </span>
+                        </div>
+                        <ChevronRight size={15} className={isOpen ? "qa-log-chevron-open" : ""} />
+                      </button>
+                      {isOpen && (
+                        <div className="qa-log-item-body">
+                          <div className="qa-log-label">Prompt（{log.messages.length} 条消息）</div>
+                          {log.messages.map((m, i) => (
+                            <div key={i} className="qa-log-entry" data-role={m.role}>
+                              <div className="qa-log-entry-role">[{i}] {m.role}</div>
+                              <div className="qa-log-entry-content">{m.content}</div>
+                            </div>
+                          ))}
+                          {log.reasoning && (
+                            <>
+                              <div className="qa-log-label">思维链（Reasoning）</div>
+                              <pre className="qa-log-response">{log.reasoning}</pre>
+                            </>
+                          )}
+                          <div className="qa-log-label is-danger">AI 原始回复</div>
+                          <pre className="qa-log-response">{log.rawResponse}</pre>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

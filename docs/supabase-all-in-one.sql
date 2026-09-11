@@ -1,8 +1,11 @@
 -- ============================================================================
 -- AI 虚拟手机 · Supabase 一键初始化脚本（all-in-one）
--- 在 SQL Editor 整段执行一次即可建齐全部可选云端功能：账号/激活码/会话、
+-- 在 SQL Editor 整段执行一次即可建齐全部站点云端功能：账号/激活码/会话、
 -- 成年审核+审核图片桶（见 docs/verify-setup.md）、便签墙、游戏大厅、
--- 应用市场、黑市。全部语句幂等，重复执行不报错、不破坏已有数据。
+-- 应用市场、黑市、内容管理（举报/管理员）、多人联机、现实桥「邮件自动」所需的表。
+-- 全部语句幂等，重复执行不报错、不破坏已有数据。
+-- 不在本脚本内的：独家特调大厅（docs/mixology-supabase.sql，设计上用独立项目）；
+-- 个人云推送（应用内「云服务部署」一键建，不写站点库）。
 -- 执行前请确认最后一行是 "-- ===== 全部结束 ====="，缺了说明复制被截断。
 -- ============================================================================
 -- ==================== docs/account-supabase.sql ====================
@@ -994,6 +997,278 @@ begin
     alter publication supabase_realtime add table public.black_market_theaters;
   end if;
 end $$;
+
+-- ==================== docs/moderation-supabase.sql ====================
+-- ═══════════════════════════════════════════════════════════════════
+-- 内容管理机制（举报 / 管理员 / 下架 / 封号）· Supabase 一次性初始化
+-- 在 Supabase SQL 编辑器整段执行一次即可，重复执行安全（幂等）。
+--
+-- 执行完后，把你自己的账号提升为管理员（把 your_username 换成用户名）：
+--   update public.app_users set role = 'admin' where username = 'your_username';
+-- 管理员登录后，在 设置 → 管理中心 处理举报、审核与封号。
+-- 没有账号体系时也可用站长密钥（环境变量 APP_MARKET_ADMIN_KEY）兜底。
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ── 账号角色：user（默认）/ admin ──
+alter table public.app_users
+  add column if not exists role text not null default 'user';
+
+-- ── 举报表：应用市场 / 游戏 / 游戏评论 / 联机云文档 / 联机房间 共用 ──
+create table if not exists public.content_reports (
+  id text primary key,
+  content_type text not null check (content_type in ('market_app', 'game', 'game_comment', 'online_doc', 'online_room')),
+  content_id text not null,
+  content_preview text not null default '',   -- 提交时抓取的内容摘要，供管理员快速判断
+  content_owner_id text not null default '',  -- 内容作者（封禁作者用）
+  content_owner_name text not null default '',
+  reporter_id text not null,
+  reporter_name text not null default '',
+  reason text not null default '',
+  status text not null default 'pending' check (status in ('pending', 'resolved', 'dismissed')),
+  resolution text not null default '',        -- 处理结果说明（下架/封禁/驳回…）
+  handled_by text,
+  handled_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists content_reports_status_idx
+  on public.content_reports (status, created_at desc);
+create index if not exists content_reports_reporter_idx
+  on public.content_reports (reporter_id, status);
+-- 同一人对同一内容只保留一条待处理举报（防刷）
+create unique index if not exists content_reports_dedupe_idx
+  on public.content_reports (reporter_id, content_type, content_id)
+  where status = 'pending';
+
+alter table public.content_reports enable row level security;
+
+
+-- ==================== docs/online-play-supabase.sql ====================
+-- ═══════════════════════════════════════════════════════════════════
+-- 联机对战/共享数据（自定义 APP + 游戏大厅）· Supabase 一次性初始化
+-- 在 Supabase SQL 编辑器整段执行一次即可，重复执行安全（幂等）。
+--
+-- 另需两步（联机功能的前提）：
+--   1. 站点环境变量新增 SUPABASE_ANON_KEY（Project Settings → API →
+--      anon public key）。anon key 本来就是设计为可公开的，浏览器用它
+--      直连 Supabase Realtime 传输房间消息；数据表仍只走 service key。
+--   2. Supabase Dashboard → Realtime 确认已启用（默认开启）。
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ── 实时房间（元数据；消息走 Realtime broadcast，不落库） ──
+create table if not exists public.online_rooms (
+  id text primary key,
+  code text not null,                    -- 4 位房号（玩家输入用）
+  channel text not null,                 -- 不可猜测的 Realtime 频道名
+  namespace text not null,               -- custom_app:<appId> / game:<gameId>
+  host_user_id text not null,
+  host_name text not null default '',
+  title text not null default '',
+  max_players integer not null default 8 check (max_players between 2 and 32),
+  meta jsonb not null default '{}'::jsonb,
+  banned_user_ids jsonb not null default '[]'::jsonb,
+  status text not null default 'open' check (status in ('open', 'closed')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  closed_at timestamptz
+);
+
+-- 房号只需在"同命名空间的开放房间"里唯一，关房后可复用
+create unique index if not exists online_rooms_open_code_idx
+  on public.online_rooms (namespace, code) where status = 'open';
+create index if not exists online_rooms_host_idx
+  on public.online_rooms (host_user_id, status);
+create index if not exists online_rooms_stale_idx
+  on public.online_rooms (created_at) where status = 'open';
+
+-- ── 异步共享文档（漂流瓶/排行榜/串门等） ──
+create table if not exists public.online_cloud_docs (
+  id text primary key,
+  namespace text not null,               -- custom_app:<appId> / game:<gameId>
+  collection text not null,              -- APP 自定义集合名
+  owner_id text not null,
+  owner_name text not null default '',
+  data jsonb not null default '{}'::jsonb,
+  sort_key numeric,                      -- 排行榜等排序用（可空）
+  taken_by text,                         -- 漂流瓶：被谁捞走（独占取件）
+  taken_at timestamptz,
+  report_count integer not null default 0,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists online_cloud_docs_ns_idx
+  on public.online_cloud_docs (namespace, collection, created_at desc)
+  where deleted_at is null;
+create index if not exists online_cloud_docs_owner_idx
+  on public.online_cloud_docs (namespace, owner_id)
+  where deleted_at is null;
+create index if not exists online_cloud_docs_sort_idx
+  on public.online_cloud_docs (namespace, collection, sort_key desc)
+  where deleted_at is null;
+
+-- ── 权限：两张表只允许 service key 访问（RLS 开启且不加公开策略）──
+alter table public.online_rooms enable row level security;
+alter table public.online_cloud_docs enable row level security;
+
+
+-- ==================== docs/push-supabase.sql（现实桥「邮件自动」所需子集） ====================
+-- 只取邮件自动用到的部分：快捷指令记录、收件邮箱验证、云端代发频控函数、截图临时桶。
+-- 不含旧的站点共享推送（VAPID 密钥表、推送任务、pg_cron 定时扫描），那些新部署不需要——
+-- 推送走应用内一键创建的个人云。Next 环境另需 RESEND_API_KEY、REALITY_BRIDGE_EMAIL_FROM，
+-- 建议再设 SHORTCUT_EMAIL_VERIFICATION_SECRET；见 README「邮件自动运行」。
+create table if not exists public.push_shortcut_commands (
+  id text primary key,
+  user_id text not null references public.app_users(id) on delete cascade,
+  action_id text not null,
+  action_name text not null,
+  shortcut_name text not null,
+  delivery_mode text not null default 'push',
+  callback_token text not null,
+  action_args jsonb not null default '{}'::jsonb,
+  result_mode text not null default 'none',
+  status text not null default 'pending',
+  result jsonb,
+  error text,
+  expires_at timestamptz not null,
+  notified_at timestamptz,
+  claimed_at timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint push_shortcut_commands_result_mode_check check (result_mode in ('none', 'text', 'image')),
+  constraint push_shortcut_commands_delivery_mode_check check (delivery_mode in ('push', 'email')),
+  constraint push_shortcut_commands_status_check check (status in ('pending', 'claimed', 'succeeded', 'failed', 'expired', 'cancelled'))
+);
+
+-- 旧版总执行器命令不再保留：新增直达快捷指令字段并移除 action_key。
+alter table public.push_shortcut_commands add column if not exists shortcut_name text;
+alter table public.push_shortcut_commands add column if not exists callback_token text;
+alter table public.push_shortcut_commands add column if not exists delivery_mode text not null default 'push';
+alter table public.push_shortcut_commands drop column if exists action_key;
+delete from public.push_shortcut_commands
+ where shortcut_name is null or callback_token is null;
+alter table public.push_shortcut_commands alter column shortcut_name set not null;
+alter table public.push_shortcut_commands alter column callback_token set not null;
+alter table public.push_shortcut_commands drop constraint if exists push_shortcut_commands_delivery_mode_check;
+alter table public.push_shortcut_commands add constraint push_shortcut_commands_delivery_mode_check
+  check (delivery_mode in ('push', 'email'));
+
+create unique index if not exists push_shortcut_commands_callback_idx
+  on public.push_shortcut_commands (callback_token);
+
+create index if not exists push_shortcut_commands_user_idx
+  on public.push_shortcut_commands (user_id, created_at desc);
+
+create index if not exists push_shortcut_commands_pending_idx
+  on public.push_shortcut_commands (user_id, status, expires_at);
+
+-- 实验性邮件自动执行：收件地址必须先通过验证码确认。
+-- Next 环境还需配置 RESEND_API_KEY、REALITY_BRIDGE_EMAIL_FROM，
+-- 建议另设 SHORTCUT_EMAIL_VERIFICATION_SECRET。
+create table if not exists public.push_shortcut_email_config (
+  user_id text primary key references public.app_users(id) on delete cascade,
+  recipient text not null,
+  verified_at timestamptz,
+  verification_hash text,
+  verification_expires_at timestamptz,
+  verification_sent_at timestamptz,
+  verification_attempts integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.push_shortcut_email_config
+  add column if not exists verification_attempts integer not null default 0;
+
+-- 云端代发邮件的频控窗口（个人云离线生成触发邮件模式快捷动作时用固定窗口计数）
+alter table public.push_shortcut_email_config
+  add column if not exists cloud_delivery_count integer not null default 0;
+alter table public.push_shortcut_email_config
+  add column if not exists cloud_delivery_window_start timestamptz;
+
+-- 云端代发邮件的频控：行锁下读改写，两个并发请求不会都读到同一个旧计数而双双放行。
+-- 返回 true 表示本次获得配额。RPC 不存在时 API 路由会退回非原子的读改写实现，
+-- 老库不执行本段也不会坏，只是并发下同一窗口可能多放行一两封。
+--
+-- 窗口与上限写死在函数里，不接受调用方指定：这是 security definer 函数，会绕过
+-- RLS，参数越少攻击面越小。下面还会把 PUBLIC 的执行权限收掉，只留 service_role。
+-- 早期版本是三参数签名，先删掉，避免两个重载并存。
+drop function if exists public.push_shortcut_email_claim_slot(text, integer, integer);
+
+create or replace function public.push_shortcut_email_claim_slot(p_user_id text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_window_seconds constant integer := 60;
+  v_max constant integer := 6;
+  v_row public.push_shortcut_email_config;
+  v_within boolean;
+  v_count integer;
+begin
+  select * into v_row from public.push_shortcut_email_config
+    where user_id = p_user_id for update;
+  if not found then
+    return false;
+  end if;
+
+  v_within := v_row.cloud_delivery_window_start is not null
+    and now() - v_row.cloud_delivery_window_start < make_interval(secs => v_window_seconds);
+  v_count := case when v_within then coalesce(v_row.cloud_delivery_count, 0) else 0 end;
+
+  if v_within and v_count >= v_max then
+    return false;
+  end if;
+
+  update public.push_shortcut_email_config
+    set cloud_delivery_count = v_count + 1,
+        cloud_delivery_window_start = case when v_within then cloud_delivery_window_start else now() end,
+        updated_at = now()
+    where user_id = p_user_id;
+  return true;
+end;
+$$;
+
+-- security definer 函数默认对 PUBLIC 可执行，而 PostgREST 会把 public schema 下的
+-- 函数暴露成 /rpc/ 端点。不收权限的话，未认证调用方就能以函数所有者身份改别人的
+-- 频控行（顶满计数即可让那个账号的云端邮件一直被 429），自部署模式下 user_id 固定
+-- 是 local_user，连猜都不用猜。这里只留 service_role。
+revoke all on function public.push_shortcut_email_claim_slot(text) from public;
+do $$
+begin
+  execute 'revoke all on function public.push_shortcut_email_claim_slot(text) from anon, authenticated';
+exception when undefined_object then
+  null; -- 非 Supabase 环境没有这两个角色，忽略
+end $$;
+do $$
+begin
+  execute 'grant execute on function public.push_shortcut_email_claim_slot(text) to service_role';
+exception when undefined_object then
+  null;
+end $$;
+
+-- 快捷指令截图临时存储：私有桶，只能经 push-shortcut-result Edge Function
+-- 使用每条命令的 callback_token 上传/读取。
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'shortcut-command-media',
+  'shortcut-command-media',
+  false,
+  8388608,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+alter table public.push_shortcut_commands enable row level security;
+alter table public.push_shortcut_email_config enable row level security;
+
 
 notify pgrst, 'reload schema';
 -- ===== 全部结束 =====

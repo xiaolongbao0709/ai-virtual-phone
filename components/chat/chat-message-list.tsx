@@ -12,7 +12,15 @@ import { clearRequestsForCharacter, dispatchFriendRequestUpdated } from "@/lib/f
 import { UserProfilePanel } from "./user-profile-panel";
 import { PageShell } from "@/components/ui/page-shell";
 import { GroupCreateModal } from "./group-create-modal";
+import { Toggle } from "@/components/ui/form";
 import { formatChatUiTime } from "@/lib/chat-time";
+import { getChatOfflineTurnPreview, getLastChatOfflineTurn } from "@/lib/chat-offline-storage";
+import {
+    dismissMergeSignatures,
+    findPromptableDuplicateSessionGroups,
+    mergeDuplicateSessionGroup,
+    type DuplicateSessionGroup,
+} from "@/lib/chat-session-merge";
 import { kvSet } from "@/lib/kv-db";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 import {
@@ -29,6 +37,34 @@ import {
     updateMascotSettings,
 } from "@/lib/mascot-settings";
 
+function parseTime(value?: string | null): number {
+    if (!value) return 0;
+    const time = new Date(value).getTime();
+    return Number.isNaN(time) ? 0 : time;
+}
+
+/** 取两个时间里更晚的那个（空值视为最早） */
+function pickLaterTime(a?: string | null, b?: string | null): string {
+    if (!a) return b || "";
+    if (!b) return a;
+    return parseTime(a) >= parseTime(b) ? a : b;
+}
+
+/**
+ * 会话在列表里是否有内容：线上可见消息、线下模式记录都算。
+ * 只在线下聊过的会话（或线上记录被清空的会话）不该从列表里消失。
+ */
+function hasSessionListContent(sessionId: string): boolean {
+    return Boolean(getLastVisibleSessionMessage(sessionId)) || Boolean(getLastChatOfflineTurn(sessionId));
+}
+
+/** 列表排序用的活跃时间：线上最后一条与线下最后一条里更晚的那个 */
+function getSessionListTime(session: ChatSession): string {
+    const onlineTime = getLastVisibleSessionMessage(session.id)?.createdAt;
+    const offlineTime = getLastChatOfflineTurn(session.id)?.createdAt;
+    return pickLaterTime(onlineTime, offlineTime) || session.updatedAt;
+}
+
 /** Fallback: find last non-empty, non-system message preview when session preview is empty */
 function getLastNonEmptyPreview(sessionId: string): string {
     try {
@@ -37,6 +73,8 @@ function getLastNonEmptyPreview(sessionId: string): string {
             const preview = getChatMessagePreview(lastVisible) || lastVisible.content;
             if (preview.trim()) return preview;
         }
+        const offlinePreview = getChatOfflineTurnPreview(getLastChatOfflineTurn(sessionId));
+        if (offlinePreview.trim()) return offlinePreview;
     } catch { /* ignore */ }
     return "暂无消息...";
 }
@@ -75,6 +113,9 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
     const [showUserProfile, setShowUserProfile] = useState(false);
     const [showContactPicker, setShowContactPicker] = useState(false);
     const [showGroupCreate, setShowGroupCreate] = useState(false);
+    // 重复会话合并弹窗：进列表时检测一次，用户按组勾选
+    const [mergePrompt, setMergePrompt] = useState<DuplicateSessionGroup[] | null>(null);
+    const [mergeSelected, setMergeSelected] = useState<Set<string>>(new Set());
     const [identity, setIdentity] = useState<UserIdentity | null>(null);
     const mascotSettings = useSyncExternalStore(subscribeMascotSettings, getMascotSettingsSnapshot, getMascotSettingsSnapshot);
     const mascotChat = useSyncExternalStore(subscribeMascotChat, getMascotChatSnapshot, getMascotChatSnapshot);
@@ -111,6 +152,31 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
             window.removeEventListener("chat-messages-updated", refreshSessions);
         };
     }, []);
+
+    // 进列表时检测重复会话（同一角色的单聊 / 同一批成员的群聊），默认全选
+    useEffect(() => {
+        const groups = findPromptableDuplicateSessionGroups();
+        if (groups.length === 0) return;
+        setMergePrompt(groups);
+        setMergeSelected(new Set(groups.map(g => g.signature)));
+    }, []);
+
+    const handleMergeConfirm = () => {
+        if (!mergePrompt) return;
+        for (const group of mergePrompt) {
+            if (mergeSelected.has(group.signature)) mergeDuplicateSessionGroup(group);
+        }
+        // 没勾的按签名记账：这批会话不再提醒，新出现的重复照常提示
+        dismissMergeSignatures(mergePrompt.filter(g => !mergeSelected.has(g.signature)).map(g => g.signature));
+        setMergePrompt(null);
+        setSessions(loadChatSessions());
+    };
+
+    const handleMergeDismiss = () => {
+        if (!mergePrompt) return;
+        dismissMergeSignatures(mergePrompt.map(g => g.signature));
+        setMergePrompt(null);
+    };
 
     return (
         <div className="relative flex-1 h-full">
@@ -222,7 +288,7 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                             const regularItems = [...sessions]
                             .filter(s => {
                                 if (!(s.isGroup || contactIds.has(s.contactId))) return false;
-                                if (!getLastVisibleSessionMessage(s.id)) return false;
+                                if (!hasSessionListContent(s.id)) return false;
                                 if (listTab === "private" && s.isGroup) return false;
                                 if (listTab === "group" && !s.isGroup) return false;
                                 if (!keyword) return true;
@@ -233,9 +299,9 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                             .sort((a, b) => {
                                 if (a.isPinned && !b.isPinned) return -1;
                                 if (!a.isPinned && b.isPinned) return 1;
-                                const aTime = getLastVisibleSessionMessage(a.id)?.createdAt || a.updatedAt;
-                                const bTime = getLastVisibleSessionMessage(b.id)?.createdAt || b.updatedAt;
-                                return new Date(bTime).getTime() - new Date(aTime).getTime();
+                                const aTime = getSessionListTime(a);
+                                const bTime = getSessionListTime(b);
+                                return parseTime(bTime) - parseTime(aTime);
                             })
                             .map(s => (
                                 <div key={s.id}>
@@ -511,6 +577,56 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                 />
             )}
 
+            {/* Merge Duplicate Sessions Modal */}
+            {mergePrompt && (
+                <div className="modal-overlay" onClick={() => setMergePrompt(null)}>
+                    <div className="modal-dialog" onClick={e => e.stopPropagation()}>
+                        <span className="modal-header-title">检测到相同角色的重复会话</span>
+                        <p className="ts-13 text-[var(--c-text)] opacity-80 mb-3">
+                            勾选要合并的组：聊天记录（含线下）将并入最近活跃的会话，其余重复会话被删除；不勾选的组之后不再提醒。
+                        </p>
+                        <div className="flex flex-col gap-2 w-full max-h-[40vh] overflow-y-auto mb-3">
+                            {mergePrompt.map(group => (
+                                <div key={group.signature} className="flex items-center gap-3 p-2 rounded-lg bg-[var(--c-input)]">
+                                    <div className="flex-1 overflow-hidden">
+                                        <div className="ts-14 font-medium text-[var(--c-text-title)] truncate">
+                                            {group.isGroup ? "群聊 " : "单聊 "}{group.label}
+                                        </div>
+                                        <div className="ts-12 text-[var(--c-icon)] truncate">
+                                            {group.sessions.length} 个会话
+                                            {group.isGroup ? ` · 成员：${group.memberNames.join("、")}` : ""}
+                                        </div>
+                                    </div>
+                                    <Toggle
+                                        checked={mergeSelected.has(group.signature)}
+                                        onChange={(next) => {
+                                            setMergeSelected(prev => {
+                                                const nextSet = new Set(prev);
+                                                if (next) nextSet.add(group.signature);
+                                                else nextSet.delete(group.signature);
+                                                return nextSet;
+                                            });
+                                        }}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                        <div className="flex gap-2 w-full">
+                            <button className="ui-btn ui-btn-ghost flex-1" onClick={handleMergeDismiss}>
+                                暂不合并
+                            </button>
+                            <button
+                                className="ui-btn ui-btn-primary flex-1"
+                                disabled={mergeSelected.size === 0}
+                                onClick={handleMergeConfirm}
+                            >
+                                合并所选
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Group Create Modal */}
             {showGroupCreate && (
                 <GroupCreateModal
@@ -635,8 +751,13 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
     const chars = loadCharacters();
     const character = chars.find(c => c.id === session.contactId);
     const lastVisibleMessage = getLastVisibleSessionMessage(session.id);
-    const preview = lastVisibleMessage ? (getChatMessagePreview(lastVisibleMessage) || lastVisibleMessage.content) : "";
-    const displayTime = lastVisibleMessage?.createdAt || session.updatedAt;
+    const lastOfflineTurn = getLastChatOfflineTurn(session.id);
+    // 线下记录比线上消息新时（含只在线下聊过的会话），列表展示线下摘要
+    const offlineIsNewer = Boolean(lastOfflineTurn)
+        && parseTime(lastOfflineTurn?.createdAt) > parseTime(lastVisibleMessage?.createdAt);
+    const onlinePreview = lastVisibleMessage ? (getChatMessagePreview(lastVisibleMessage) || lastVisibleMessage.content) : "";
+    const preview = offlineIsNewer ? getChatOfflineTurnPreview(lastOfflineTurn) : onlinePreview;
+    const displayTime = pickLaterTime(lastVisibleMessage?.createdAt, lastOfflineTurn?.createdAt) || session.updatedAt;
 
     // Group chat: build grid of participant avatars (2×2)
     const isGroup = session.isGroup;

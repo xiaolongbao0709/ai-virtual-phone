@@ -124,7 +124,7 @@ export async function putObject(config: CloudBackupConfig, path: string, body: B
 
 /** Download an object's bytes. Returns null if the object doesn't exist.
  *  Supabase Storage 对不存在的对象返回 400 "Object not found" 而不是 404，
- *  与 removeObject 相同，两种都视为不存在。 */
+ *  与 claimObject/removeObject 相同，两种都视为不存在。 */
 export async function getObject(config: CloudBackupConfig, path: string, onBytes?: DownloadProgress): Promise<Blob | null> {
   const creds = resolveCreds(config);
   if (!creds) throw new Error("未配置 Supabase 地址或 key。");
@@ -145,6 +145,20 @@ export async function getObject(config: CloudBackupConfig, path: string, onBytes
   });
 }
 
+/** 删除并返回是否由本次调用真正删掉（200）。404 = 已被别处取走，视为未认领。
+ *  现实桥收件箱用它做「删除即认领」互斥：谁删掉谁处理，防止重复触发与双端抢单。 */
+export async function claimObject(config: CloudBackupConfig, path: string): Promise<boolean> {
+  const creds = resolveCreds(config);
+  if (!creds) throw new Error("未配置 Supabase 地址或 key。");
+  // 认领语义下不能自动重试：第一次可能已删成功但响应丢失，重试会误报「未认领」。
+  const res = await fetchWithTimeout(objectUrl(creds, path), { method: "DELETE", headers: authHeaders(creds.key) }, CONTROL_TIMEOUT_MS, "删除");
+  if (res.ok) return true;
+  if (res.status === 404) return false;
+  const error = await describeError(res);
+  if (res.status === 400 && /object not found|not found/i.test(error)) return false;
+  throw new Error(error);
+}
+
 export async function removeObject(config: CloudBackupConfig, path: string): Promise<void> {
   const creds = resolveCreds(config);
   if (!creds) throw new Error("未配置 Supabase 地址或 key。");
@@ -159,14 +173,21 @@ export async function removeObject(config: CloudBackupConfig, path: string): Pro
 
 export type StorageObject = { name: string; size: number; updatedAt?: string };
 
-/** List objects under a prefix (e.g. "manifests/"). */
-export async function listObjects(config: CloudBackupConfig, prefix = "", limit = 100): Promise<StorageObject[]> {
+/** List objects under a prefix (e.g. "manifests/"). sort 缺省按名字升序（老行为）；
+ *  对象可能超过 limit 的调用方要自己选对排序，否则最新的对象会被截断在窗口外。 */
+export async function listObjects(
+  config: CloudBackupConfig,
+  prefix = "",
+  limit = 100,
+  sort?: { column: "name" | "created_at" | "updated_at"; order: "asc" | "desc" },
+  offset = 0,
+): Promise<StorageObject[]> {
   const creds = resolveCreds(config);
   if (!creds) throw new Error("未配置 Supabase 地址或 key。");
   const res = await withRetries(() => fetchWithTimeout(`${creds.url}/storage/v1/object/list/${CLOUD_BACKUP_BUCKET}`, {
     method: "POST",
     headers: { ...authHeaders(creds.key), "Content-Type": "application/json" },
-    body: JSON.stringify({ prefix, limit, offset: 0, sortBy: { column: "name", order: "asc" } }),
+    body: JSON.stringify({ prefix, limit, offset, sortBy: sort ?? { column: "name", order: "asc" } }),
     cache: "no-store",
   }, CONTROL_TIMEOUT_MS, "列举"));
   if (!res.ok) throw new Error(await describeError(res));

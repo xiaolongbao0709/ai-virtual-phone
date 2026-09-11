@@ -16,6 +16,10 @@ interface SwipeGesture {
     base: number;
     locked: boolean;
     offset: number;
+    direction: "left" | "right" | null;
+    left: boolean;
+    right: boolean;
+    onSwipeRight: (() => void) | null;
 }
 
 export function useSwipeActions(width = DEFAULT_ACTIONS_WIDTH) {
@@ -32,11 +36,17 @@ export function useSwipeActions(width = DEFAULT_ACTIONS_WIDTH) {
     const getContent = (wrapper: HTMLElement) =>
         wrapper.querySelector(":scope > .ui-swipe-content") as HTMLElement | null;
 
-    const onPointerDown = (e: React.PointerEvent<HTMLDivElement>, id: string) => {
+    const onPointerDown = (e: React.PointerEvent<HTMLDivElement>, id: string, opts?: { left?: boolean; right?: boolean; onSwipeRight?: () => void }) => {
         suppressClickRef.current = false;
         if (openId && openId !== id) close();
         const base = openId === id ? -width : 0;
-        gestureRef.current = { id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, base, locked: false, offset: base };
+        gestureRef.current = {
+            id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, base,
+            locked: false, offset: base, direction: null,
+            left: opts?.left !== false,
+            right: opts?.right === true,
+            onSwipeRight: opts?.onSwipeRight ?? null,
+        };
     };
 
     const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -45,20 +55,27 @@ export function useSwipeActions(width = DEFAULT_ACTIONS_WIDTH) {
         const dx = e.clientX - g.startX;
         const dy = e.clientY - g.startY;
         if (!g.locked) {
-            // 竖向意图（滚动/长按排序）时放弃左滑；横向超过阈值才锁定
+            // 竖向意图（滚动/长按排序）时放弃手势；横向超过阈值才锁定
             if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) {
                 gestureRef.current = null;
                 return;
             }
             if (Math.abs(dx) < 8 || Math.abs(dx) <= Math.abs(dy)) return;
+            // 方向约束：左滑需该行允许左滑，右滑需该行允许右滑
+            if (dx < 0 && !g.left) return;
+            if (dx > 0 && !g.right) return;
             g.locked = true;
+            g.direction = dx < 0 ? "left" : "right";
             setSwipingId(g.id);
             try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         }
         if (e.cancelable) e.preventDefault();
         const content = getContent(e.currentTarget);
         if (!content) return;
-        g.offset = Math.min(0, Math.max(-width, g.base + dx));
+        // 左滑露右侧操作；右滑向右位移（多选选中手势）
+        g.offset = g.direction === "right"
+            ? Math.min(width, Math.max(0, g.base + dx))
+            : Math.min(0, Math.max(-width, g.base + dx));
         content.style.transition = "none";
         content.style.transform = `translateX(${g.offset}px)`;
     };
@@ -69,8 +86,21 @@ export function useSwipeActions(width = DEFAULT_ACTIONS_WIDTH) {
         gestureRef.current = null;
         if (!g.locked) return;
         suppressClickRef.current = true;
-        const open = g.offset < -width / 2;
         const content = getContent(e.currentTarget);
+        // 右滑超过阈值 → 触发右滑回调（多选选中），随后回弹
+        if (g.direction === "right" && g.offset > width / 2) {
+            const onRight = g.onSwipeRight;
+            if (content) {
+                content.style.transition = "transform 0.2s ease";
+                content.style.transform = "translateX(0px)";
+            }
+            const id = g.id;
+            setOpenId(null);
+            window.setTimeout(() => setSwipingId(cur => (cur === id ? null : cur)), 220);
+            onRight?.();
+            return;
+        }
+        const open = g.offset < -width / 2;
         if (content) {
             content.style.transition = "transform 0.2s ease";
             content.style.transform = `translateX(${open ? -width : 0}px)`;
@@ -108,12 +138,15 @@ export function useSwipeActions(width = DEFAULT_ACTIONS_WIDTH) {
 
 export type SwipeActionsController = ReturnType<typeof useSwipeActions>;
 
-export function SwipeActionRow({ controller, id, disabled, actions, onTouchStart, children }: {
+export function SwipeActionRow({ controller, id, disabled, actions, onTouchStart, onSwipeRight, rightSwipeEnabled = false, leftSwipeDisabled = false, children }: {
     controller: SwipeActionsController;
     id: string;
     disabled?: boolean;
     actions: ReactNode;
     onTouchStart?: (e: React.TouchEvent<HTMLDivElement>) => void;
+    onSwipeRight?: () => void;
+    rightSwipeEnabled?: boolean;
+    leftSwipeDisabled?: boolean;
     children: ReactNode;
 }) {
     return (
@@ -121,7 +154,7 @@ export function SwipeActionRow({ controller, id, disabled, actions, onTouchStart
             className="ui-swipe-wrap"
             data-swipe-id={id}
             onTouchStart={onTouchStart}
-            onPointerDown={disabled ? undefined : (e) => controller.onPointerDown(e, id)}
+            onPointerDown={disabled ? undefined : (e) => controller.onPointerDown(e, id, { left: !leftSwipeDisabled, right: rightSwipeEnabled, onSwipeRight })}
             onPointerMove={disabled ? undefined : controller.onPointerMove}
             onPointerUp={disabled ? undefined : controller.onPointerEnd}
             onPointerCancel={disabled ? undefined : controller.onPointerEnd}

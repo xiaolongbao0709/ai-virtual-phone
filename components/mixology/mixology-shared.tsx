@@ -3,7 +3,7 @@
 // 独家特调 · 共享 UI 小件：材料卡 / 种类图标 / 详情字段渲染。
 // 酒柜（本地）与酒单/大厅（官网）两边共用，保持一套视觉语言。
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
     BookOpen,
     CircleUserRound,
@@ -14,10 +14,12 @@ import {
     GlassWater,
     Music4,
     ReceiptText,
+    ScrollText,
     Sparkles,
-    UserRound,
-} from "lucide-react";
+    UserRound, ListChecks } from "lucide-react";
 import type { MixCharacterCard, MixMaterial, MixMaterialKind } from "@/lib/mixology/types";
+import { isMixCardFreeform } from "@/lib/mixology/card-freeform";
+import { findMixConnector } from "@/lib/mixology/storage";
 import { MIX_KIND_LABELS, MIX_PANEL_DEFAULT_LAYOUT, mixEncoreRenderHtml, mixKindHasCover, mixKindRunsActiveCode, mixPanelLayoutOf, mixPanelLayoutSummary, normalizeMixTags } from "@/lib/mixology/types";
 import { applyMixMacros, MIX_DEFAULT_USER_NAME } from "@/lib/mixology/assembler";
 import { MixPreviewInline } from "./mixology-preview";
@@ -26,6 +28,7 @@ import { MixRichText } from "./rich-text";
 const KIND_ICONS: Record<MixMaterialKind, typeof UserRound> = {
     character: UserRound,
     persona: CircleUserRound,
+    preface: ScrollText,
     base: BookOpen,
     flavor: Feather,
     glass: GlassWater,
@@ -33,6 +36,7 @@ const KIND_ICONS: Record<MixMaterialKind, typeof UserRound> = {
     ticket: ReceiptText,
     garnish: Sparkles,
     encore: Music4,
+    checklist: ListChecks,
     filter: Filter,
     mechanism: Cog,
 };
@@ -121,24 +125,37 @@ export function MatCard({
     stats?: string;
     onClick: () => void;
 }) {
+    // 封面加载不出来（云端遗留的旧值、桶里的对象没了）就当没有封面：
+    // 退回自动缩样或占位图标。不兜这一下的话，卡面会是一块什么都没有的空白。
+    const [coverBroken, setCoverBroken] = useState(false);
+    useEffect(() => { setCoverBroken(false); }, [cover]);
+    const shownCover = cover && !coverBroken ? cover : "";
     // 卡型只看种类，不看有没有配图——否则同一类里配了图的高、没配图的矮，
     // 双列瀑布会参差。视觉类（角色卡/小票/装饰/尾调）一律海报式（缺图时用
     // 同尺寸的占位面），纯文本类（基底/文风/杯型/苦精）一律单列横条。
+    // 小票/尾调的静态封面就是渲染缩样（收起状态原样拍的那张）：卡片高度随图走、
+    // 不裁不放大，和酒柜实时缩样长一个样。角色卡等配图封面仍走固定比例海报裁满。
+    const flowCover = Boolean(shownCover) && (kind === "ticket" || kind === "encore");
+    const liveCover = !shownCover && Boolean(preview);
+    // 缩样卡（实时缩样 / 渲染缩略图）的封面本身就是要看的内容，作者标签不压在上面，
+    // 挪到下面文字区的名字上方；配图海报仍压在图的左上角
+    const authorInline = author && (flowCover || liveCover);
     if (mixKindHasCover(kind)) {
         return (
-            <div className="mix-mat-card" data-kind={kind} data-poster="true" data-live={!cover && preview ? "true" : undefined} onClick={onClick}>
-                {cover ? (
+            <div className="mix-mat-card" data-kind={kind} data-poster="true" data-live={liveCover ? "true" : undefined} data-flow={flowCover ? "true" : undefined} onClick={onClick}>
+                {shownCover ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img className="mix-mat-cover" src={cover} alt={name} />
+                    <img className="mix-mat-cover" src={shownCover} alt={name} onError={() => setCoverBroken(true)} />
                 ) : preview ? (
                     // 自动封面走文档流：卡片高度=缩样实际高度，不垫占位纹（透明缩样底下不透图标）
                     <div className="mix-poster-flow" aria-hidden="true">{preview}</div>
                 ) : (
                     <div className="mix-poster-blank"><KindGlyph kind={kind} size={42} /></div>
                 )}
-                {author ? <div className="mix-poster-author">@{author}</div> : null}
+                {author && !authorInline ? <div className="mix-poster-author">@{author}</div> : null}
                 {badge ? <div className="mix-poster-badge">{badge}</div> : null}
                 <div className="mix-poster-veil">
+                    {authorInline ? <div className="mix-poster-author" data-inline="true">@{author}</div> : null}
                     <div className="mix-poster-name">{name}</div>
                     {hook ? <div className="mix-poster-hook">{hook}</div> : null}
                     <TagLine tags={tags} className="mix-poster-tags" />
@@ -235,15 +252,25 @@ export function MaterialDetail({ material }: { material: MixMaterial }) {
         return (
             <>
                 <DetailField label="一句话介绍" value={card.hook} />
-                <DetailField label="基础信息" value={card.baseInfo} />
-                <DetailField label="性格" value={card.personality} />
-                <DetailField label="外貌" value={card.appearance} />
-                <DetailField label="背景" value={card.background} />
-                <DetailField label="世界观" value={card.worldview} />
-                <DetailField label="初始认知" value={card.cognition} />
-                <DetailField label="关系与身份" value={card.relations} />
-                <DetailField label="当前剧情" value={card.plot} />
-                <DetailField label="附加设定" value={card.extra} />
+                {isMixCardFreeform(card) ? (
+                    // 一框式：两段正文各一块，作者自己排的 ## 小节原样展示
+                    <>
+                        <DetailField label="角色资料" value={card.profileText} />
+                        <DetailField label="世界与剧情" value={card.worldText} />
+                    </>
+                ) : (
+                    <>
+                        <DetailField label="基础信息" value={card.baseInfo} />
+                        <DetailField label="性格" value={card.personality} />
+                        <DetailField label="外貌" value={card.appearance} />
+                        <DetailField label="背景" value={card.background} />
+                        <DetailField label="世界观" value={card.worldview} />
+                        <DetailField label="初始认知" value={card.cognition} />
+                        <DetailField label="关系与身份" value={card.relations} />
+                        <DetailField label="当前剧情" value={card.plot} />
+                        <DetailField label="附加设定" value={card.extra} />
+                    </>
+                )}
                 <DetailField label="开场白" value={card.openings.map((o, i) => `${card.openings.length > 1 ? `〔${i + 1}〕` : ""}${o}`).join("\n\n")} />
             </>
         );
@@ -338,9 +365,24 @@ export function MaterialDetail({ material }: { material: MixMaterial }) {
                         html: material.panelHtml ?? "",
                         layout: layout ?? MIX_PANEL_DEFAULT_LAYOUT,
                         script: material.script ?? "",
+                        connectors: material.connectors,
+                        dialogueButton: material.dialogueButton,
+                        trusted: material.trusted,
                     }}
                     disabled={!material.panelHtml?.trim() && !material.script?.trim()}
                 />
+                {material.trusted ? (
+                    <DetailField label="运行方式" value="信任模式：代码直接在对局页面里运行（不进沙盒），能画进正文、能联网、也能碰到本机数据。只在信任作者时装。" />
+                ) : null}
+                {material.dialogueButton?.icon ? (
+                    <DetailField label="对白按钮" value={`${material.dialogueButton.icon}${material.dialogueButton.title ? `　${material.dialogueButton.title}` : ""}（每句对白后面一颗，点击递进界面）`} />
+                ) : null}
+                {material.connectors?.length ? (
+                    <DetailField
+                        label="需要的连接器"
+                        value={material.connectors.map((name) => `${name}${findMixConnector(name) ? "（本机已配）" : "（本机未配，到酒柜的「连接器」里创建）"}`).join("\n")}
+                    />
+                ) : null}
                 <DetailField label="钩子逻辑" value={material.script} code />
                 {layout ? <DetailField label="界面摆放" value={mixPanelLayoutSummary(layout)} /> : null}
                 <DetailField label="界面代码" value={material.panelHtml} code />

@@ -60,6 +60,7 @@ import { getWeekStartIso } from "./calendar-utils";
 import { buildCharacterTimeContext } from "./character-time";
 import { isNeteaseConfigured } from "./music-service";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+import { getWeixinCloudDeployedAt } from "./cloud-deploy-status";
 import {
   isCloudBackupConfigured,
   loadCloudBackupConfig,
@@ -71,6 +72,7 @@ import { ensureBucket, getObject, listObjects, putObject, removeObject } from ".
 import type { WeixinBotConfig } from "./weixin-storage";
 import { loadWeixinBots } from "./weixin-storage";
 import { parseAIResponse } from "./rich-message-parser";
+import { getStatusRegionConfig, isCustomStatusRegionActive } from "./chat-status-region";
 
 const WEIXIN_CLOUD_CONFIG_KEY = "weixin_cloud_sync_config_v1";
 const WEIXIN_CLOUD_PREFIX = "weixin-cloud";
@@ -261,6 +263,16 @@ export type WeixinCloudStoredMessage = {
   raw?: unknown;
   needsReply?: boolean;
   repliedAt?: string;
+  /** 离线兜底改送微信时，本轮回复所对应的本地触发消息。 */
+  replyAfterLocalMessageId?: string;
+  replyAfterCreatedAt?: string;
+  /** 同一次主动发送被拆成多段时的稳定顺序（从 0 开始）。 */
+  replySequence?: number;
+  /** 这条回复实际触发过的快捷动作标记（原文+在剥离后正文中的位置）：由助手写入，
+   *  导入时在对应位置插入一对 tool_call/tool_notice 消息 */
+  shortcutMarker?: { text: string; insertAt: number; name: string };
+  /** 旧字段（v1 只存名称+参数，无原文位置）：仅为兼容存量云消息保留读取 */
+  shortcutInvocation?: { name: string; args?: Record<string, unknown> };
 };
 
 export type WeixinCloudMessagePullResult = {
@@ -269,6 +281,33 @@ export type WeixinCloudMessagePullResult = {
   errors: string[];
   sessionIds: string[];
 };
+
+// ── 同步过程可见化 ──
+// lib 层没有 UI，把同步事件广播出去，desktop-shell 挂了一个全局小 toast 承载。
+// 只报失败：进度/成功提示（「同步中…」「已同步 N 条」）按用户反馈全部撤掉——
+// 同步本来就该无感，成功是常态不值得打扰；失败才需要被看见，且自带节流防刷屏。
+export const WEIXIN_SYNC_TOAST_EVENT = "weixin-cloud-sync-toast";
+const syncToastLastAt = new Map<string, number>();
+
+export function emitWeixinSyncToast(
+  text: string | null,
+  options: { id: string; sticky?: boolean; throttleMs?: number; duration?: number },
+): void {
+  if (typeof window === "undefined") return;
+  const throttleMs = options.throttleMs ?? 0;
+  if (text !== null && throttleMs > 0) {
+    const last = syncToastLastAt.get(text) ?? 0;
+    if (Date.now() - last < throttleMs) {
+      // 结果被节流也得把挂着的「…中」撤下来，否则常驻提示永远不消失
+      window.dispatchEvent(new CustomEvent(WEIXIN_SYNC_TOAST_EVENT, { detail: { id: options.id, text: null } }));
+      return;
+    }
+    syncToastLastAt.set(text, Date.now());
+  }
+  window.dispatchEvent(new CustomEvent(WEIXIN_SYNC_TOAST_EVENT, {
+    detail: { id: options.id, text, sticky: options.sticky === true, duration: options.duration ?? 2200 },
+  }));
+}
 
 export type WeixinLocalAssistantConfig = {
   format: "ai-phone-weixin-local-assistant-config";
@@ -283,15 +322,20 @@ export function loadWeixinCloudSyncConfig(): WeixinCloudSyncConfig {
   if (typeof window === "undefined") return getDefaultWeixinCloudSyncConfig();
   try {
     const raw = kvGet(WEIXIN_CLOUD_CONFIG_KEY);
-    if (!raw) return getDefaultWeixinCloudSyncConfig();
+    // “微信本地助手”入口被精简后，旧的消息同步开关不再有 UI；但它的
+    // 默认 false 仍会让已部署云助手的设备完全跳过云消息拉取。部署标记
+    // 或已同步运行包都代表这条同步链路应当启用，并兼容此前留下的 false。
+    if (!raw) return { enabled: Boolean(getWeixinCloudDeployedAt()) };
     const parsed = JSON.parse(raw) as Partial<WeixinCloudSyncConfig>;
+    const hasSyncedRuntime = typeof parsed.lastRuntimePackagePath === "string"
+      && parsed.lastRuntimePackagePath.length > 0;
     return {
-      enabled: parsed.enabled === true,
+      enabled: parsed.enabled === true || hasSyncedRuntime || Boolean(getWeixinCloudDeployedAt()),
       lastSyncedAt: typeof parsed.lastSyncedAt === "string" ? parsed.lastSyncedAt : undefined,
       lastRuntimePackagePath: typeof parsed.lastRuntimePackagePath === "string" ? parsed.lastRuntimePackagePath : undefined,
     };
   } catch {
-    return getDefaultWeixinCloudSyncConfig();
+    return { enabled: Boolean(getWeixinCloudDeployedAt()) };
   }
 }
 
@@ -344,6 +388,17 @@ export function buildWeixinCloudAssistantFunctionUrl(config: CloudBackupConfig =
 }
 
 /**
+ * 换设备重连用的部署探测：微信云函数没有健康检查接口，但部署流程一定会把
+ * cron 密钥写进备份桶（见 ensureWeixinCloudCronSecret）——桶里有这个对象，
+ * 就说明该项目部署过微信接入。
+ */
+export async function probeWeixinCloudDeployed(): Promise<boolean> {
+  const config = requireCloudBackupConfig();
+  const existing = await getObject(config, WEIXIN_CLOUD_CRON_SECRET_PATH);
+  return Boolean(existing);
+}
+
+/**
  * 定时任务调用云函数用的共享密钥。云函数没有独立配置入口，密钥直接存在用户
  * 自己的备份桶里（云函数用 service_role 读同一对象做比对），小手机负责首次生成。
  */
@@ -384,7 +439,7 @@ export function buildWeixinCloudAssistantCronSql(token: string, config: CloudBac
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
-select cron.schedule('${WEIXIN_CLOUD_CRON_JOB_NAME}', '1 minute', $CRON$
+select cron.schedule('${WEIXIN_CLOUD_CRON_JOB_NAME}', '* * * * *', $CRON$
   select net.http_post(
     url     := '${functionUrl}',
     headers := jsonb_build_object('Content-Type', 'application/json'),
@@ -992,6 +1047,7 @@ export async function syncWeixinBotRuntimeToCloud(
   const localConfig = loadWeixinCloudSyncConfig();
   saveWeixinCloudSyncConfig({
     ...localConfig,
+    enabled: true,
     lastSyncedAt: snapshot.createdAt,
     lastRuntimePackagePath: path,
   });
@@ -1039,10 +1095,9 @@ async function buildWeixinCloudPromptContext(params: {
 
   const now = new Date();
   const promptTimeContext = buildCharacterTimeContext(params.character.timeZone, now);
-  // 微信链路没有工具执行引擎（原生 tool_calls 不解析、文本指令会被清理），
-  // 不下发工具清单/动作横幅，改为明确声明不可用；历史中的工具调用回合
-  // 保留在上下文里（承载剧情连续性），靠声明约束模型不去模仿。
-  const toolsPrompt = "<tool_availability>当前对话正通过微信进行：工具/动作系统不可用。不要输出「获取指令」「执行动作」或任何工具调用格式的内容，也不要模仿历史消息中的工具调用记录，直接以普通对话完成回应。</tool_availability>";
+  // 微信链路不执行原生 tool_calls；个人云助手会在运行时另行读取并注入
+  // iPhone 快捷动作目录，所以这里仅禁用原生工具，不与快捷动作能力冲突。
+  const toolsPrompt = "<tool_availability>当前对话正通过微信进行：原生工具调用不可用。不要输出「获取指令」「执行动作」或其他原生工具调用格式，也不要模仿历史消息中的原生工具调用记录；如运行时另有明确的 iPhone 快捷动作能力说明，可按该说明使用。</tool_availability>";
 
   const promptContext: WeixinCloudPromptContext = {
     appId,
@@ -1209,7 +1264,17 @@ export async function syncWeixinCloudFunctionCore(cloudConfig?: CloudBackupConfi
 }
 
 export async function pullWeixinCloudMessagesFromCloud(
-  options?: { cloudConfig?: CloudBackupConfig; botId?: string; limitPerBot?: number },
+  options?: {
+    cloudConfig?: CloudBackupConfig;
+    botId?: string;
+    limitPerBot?: number;
+    /**
+     * latest = 只看最新一页，整页全是新消息时自动继续翻页直到翻到见过的
+     *（常规 8 秒轮询用，积压再多也一次拉完）；full（默认）= 把所有页走遍，
+     * 兜住历史上「中间漏一段没导入」的坑。limitPerBot 只是每页大小，不是总上限。
+     */
+    scan?: "latest" | "full";
+  },
 ): Promise<WeixinCloudMessagePullResult> {
   await Promise.all([hydrateChatStorage(), ensureSettingsStorageHydrated()]);
   const cloudConfig = options?.cloudConfig ?? loadCloudBackupConfig();
@@ -1228,17 +1293,47 @@ export async function pullWeixinCloudMessagesFromCloud(
 
   for (const target of targets) {
     const prefix = `${WEIXIN_CLOUD_PREFIX}/messages/${sanitizePathPart(target.botId)}/`;
-    let objects;
+
+    // 已导入过的对象不再逐个下载：对象名就是 sanitize 过的 externalId，
+    // 和本地消息 cloudSync 里存的能对上。之前每 8 秒把全部对象串行下载一遍，
+    // 消息一多单轮就要几十秒，新消息自然「等好久才拉回来」。
+    const seenSession = createOrGetSession(target.characterId);
+    const seenExternalIds = new Set<string>();
+    for (const message of loadChatMessages(seenSession.id)) {
+      const sync = message.cloudSync;
+      if (sync?.source === "weixin-cloud" && sync.botId === target.botId && sync.externalId) {
+        seenExternalIds.add(sanitizePathPart(sync.externalId));
+      }
+    }
+    const isKnownName = (name: string) => {
+      const nameNoExt = name.replace(/\.json$/i, "");
+      return nameNoExt.startsWith("local_") || seenExternalIds.has(nameNoExt);
+    };
+
+    // 按创建时间倒序 + 翻页列举。老逻辑按名字升序且只取第一页：桶里对象一旦
+    // 超过一页，最新的消息可能根本不在窗口里——表现就是「微信都回了，小手机
+    // 半天拉不到」。limit 现在只是每页大小：latest 模式整页全新就继续往下翻
+    //（离线积压再多也一次拉完），full 模式走遍所有页。
+    const objects: Awaited<ReturnType<typeof listObjects>> = [];
     try {
-      objects = await listObjects(cloudConfig, prefix, limit);
+      const scanFull = options?.scan !== "latest";
+      for (let offset = 0; offset < 10_000; offset += limit) {
+        const page = await listObjects(cloudConfig, prefix, limit, { column: "created_at", order: "desc" }, offset);
+        objects.push(...page);
+        if (page.length < limit) break;
+        // latest 模式：这一页里出现了已经见过的对象，说明更老的也都拉过了，就此打住
+        if (!scanFull && page.some(object => object.name && !object.name.endsWith("/") && isKnownName(object.name))) break;
+      }
     } catch (err) {
       result.errors.push(`${target.characterName}: ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
 
+    const freshObjects = objects.filter(object => object.name && !object.name.endsWith("/") && !isKnownName(object.name));
+    result.skipped += objects.length - freshObjects.length;
+
     const storedMessages: WeixinCloudStoredMessage[] = [];
-    for (const object of objects) {
-      if (!object.name || object.name.endsWith("/")) continue;
+    for (const object of freshObjects) {
       const path = `${prefix}${object.name}`;
       try {
         const blob = await getObject(cloudConfig, path);
@@ -1288,7 +1383,7 @@ export function startWeixinCloudRealtimeSync(): () => void {
   if (typeof window === "undefined") return () => {};
 
   let stopped = false;
-  let pullInFlight = false;
+  let pullInFlight: Promise<void> | null = null;
   let uploadInFlight = false;
   let lastPullAt = 0;
   let uploadFlushTimer: number | null = null;
@@ -1310,23 +1405,38 @@ export function startWeixinCloudRealtimeSync(): () => void {
     }
   };
 
-  const pullNow = async (force = false) => {
+  // 全量翻页扫描的节流：常规轮询只看最新页（整页全新会自动续翻），
+  // 启动、回前台、以及每 10 分钟做一次全量，兜历史坑
+  const FULL_SCAN_INTERVAL_MS = 10 * 60 * 1000;
+  let lastFullScanAt = 0;
+
+  const pullNow = async (force = false, deep = false) => {
     if (stopped || pullInFlight || !shouldRun()) return;
     if (!force && document.visibilityState !== "visible") return;
     const now = Date.now();
     if (!force && now - lastPullAt < REALTIME_PULL_INTERVAL_MS - 500) return;
-    pullInFlight = true;
     lastPullAt = now;
-    try {
-      const result = await pullWeixinCloudMessagesFromCloud({ limitPerBot: 200 });
-      if (result.added > 0) dispatchPulledSessions(result.sessionIds);
-      if (result.errors.length > 0) {
-        console.warn("[WeixinCloudSync] pull errors:", result.errors);
+    const scan = deep || now - lastFullScanAt >= FULL_SCAN_INTERVAL_MS ? "full" as const : "latest" as const;
+    // 保存 promise 而不只是布尔：运行包同步要能等这一轮拉取落库（见 syncRuntimesNow）。
+    const running = (async () => {
+      try {
+        const result = await pullWeixinCloudMessagesFromCloud({ limitPerBot: 200, scan });
+        if (scan === "full") lastFullScanAt = Date.now();
+        if (result.added > 0) dispatchPulledSessions(result.sessionIds);
+        if (result.errors.length > 0) {
+          console.warn("[WeixinCloudSync] pull errors:", result.errors);
+          emitWeixinSyncToast(`微信消息拉取失败：${result.errors[0]}`, { id: "weixin-pull", throttleMs: 30_000, duration: 4000 });
+        }
+      } catch (err) {
+        console.warn("[WeixinCloudSync] auto pull failed:", err);
+        emitWeixinSyncToast(`微信消息拉取失败：${err instanceof Error ? err.message : String(err)}`, { id: "weixin-pull", throttleMs: 30_000, duration: 4000 });
       }
-    } catch (err) {
-      console.warn("[WeixinCloudSync] auto pull failed:", err);
+    })();
+    pullInFlight = running;
+    try {
+      await running;
     } finally {
-      pullInFlight = false;
+      if (pullInFlight === running) pullInFlight = null;
     }
   };
 
@@ -1346,6 +1456,7 @@ export function startWeixinCloudRealtimeSync(): () => void {
       }
     } catch (err) {
       console.warn("[WeixinCloudSync] local upload failed:", err);
+      emitWeixinSyncToast(`微信消息上传云端失败：${err instanceof Error ? err.message : String(err)}`, { id: "weixin-upload", throttleMs: 30_000, duration: 4000 });
     } finally {
       uploadInFlight = false;
       if (uploadQueue.size > 0) scheduleUploadFlush();
@@ -1376,9 +1487,11 @@ export function startWeixinCloudRealtimeSync(): () => void {
 
     // 编辑后的分段沿用原 cloudSync，拉取侧的去重照旧命中；这里把编辑结果回写云端，
     // 否则助手下一轮从云消息目录读到的仍是编辑前的原文。
-    void syncEditedWeixinCloudMessageToCloud(detail.messages, detail.rawResponseText).catch((err) => {
-      console.warn("[WeixinCloudSync] edited reply write-back failed:", err);
-    });
+    void syncEditedWeixinCloudMessageToCloud(detail.messages, detail.rawResponseText)
+      .catch((err) => {
+        console.warn("[WeixinCloudSync] edited reply write-back failed:", err);
+        emitWeixinSyncToast(`编辑回写微信云端失败：${err instanceof Error ? err.message : String(err)}`, { id: "weixin-edit", duration: 4000 });
+      });
 
     // 只回写云消息还不够：这条回复若已经烘焙进当前运行包，助手会因为它的时间戳
     // 早于运行包生成时刻而在历史过滤阶段把云对象排除，只看到模板里的旧版本。
@@ -1397,6 +1510,17 @@ export function startWeixinCloudRealtimeSync(): () => void {
     void deleteWeixinCloudMessagesFromCloud(messages).catch((err) => {
       console.warn("[WeixinCloudSync] cloud delete failed:", err);
     });
+
+    // 只删云消息对象不够，理由和上面编辑回复那条完全一样：删掉的若是运行包生成
+    // 之前的消息，它早就被烘焙进 bakedHistoryMessages 了，而助手按
+    // 「时间戳 > 运行包生成时刻」过滤云对象（assistant-core 的 generateReply），
+    // 那条云对象本来就不进提示词——删了等于没删，云端照样记得。
+    // 重新烘焙一次运行包才能真正让删除生效。防抖会把连删的一批合成一次。
+    //
+    // 但只有删到微信那个角色的消息才需要重烘：运行包里只有绑定 bot 的角色，
+    // 删别的角色的消息重烘出来一模一样，白传一遍不说，用户在别处聊天时
+    // 还会莫名其妙看见「微信运行包同步中…」。
+    if (messages.some(touchesWeixinRuntime)) scheduleRuntimeSync();
   };
 
   // ── 运行包自动同步 ──
@@ -1412,10 +1536,16 @@ export function startWeixinCloudRealtimeSync(): () => void {
     if (!force && Date.now() - lastRuntimeSyncAt < RUNTIME_AUTO_SYNC_THROTTLE_MS) return;
     runtimeSyncInFlight = true;
     try {
+      // 必须等这一轮拉取落库再烘焙。运行包会把本地聊天烤进 bakedHistory，
+      // 与「拉取微信云端聊天 → 写回本地」并发时，可能烤出一份缺最新几轮的历史，
+      // 云端助手照着它回答就是丢上下文——用户看到的就是角色突然不记得刚说过的话。
+      await pullInFlight;
+      if (stopped) return;
       await syncAllWeixinBotRuntimesToCloud();
       lastRuntimeSyncAt = Date.now();
     } catch (err) {
       console.warn("[WeixinCloudSync] runtime auto sync failed:", err);
+      emitWeixinSyncToast(`微信运行包同步失败：${err instanceof Error ? err.message : String(err)}`, { id: "weixin-runtime", throttleMs: 30_000, duration: 4000 });
     } finally {
       runtimeSyncInFlight = false;
     }
@@ -1431,8 +1561,9 @@ export function startWeixinCloudRealtimeSync(): () => void {
 
   const onVisibility = () => {
     if (document.visibilityState === "visible") {
-      void pullNow(true);
-      void syncRuntimesNow(false);
+      // 先拉聊天再同步运行包，别并发：见 syncRuntimesNow 里的说明。
+      // 回前台做全量扫：离开的这段时间积压最可能发生
+      void pullNow(true, true).then(() => syncRuntimesNow(false));
     }
   };
 
@@ -1456,8 +1587,7 @@ export function startWeixinCloudRealtimeSync(): () => void {
   const interval = window.setInterval(() => {
     void pullNow(false);
   }, REALTIME_PULL_INTERVAL_MS);
-  void pullNow(true);
-  void syncRuntimesNow(false);
+  void pullNow(true).then(() => syncRuntimesNow(false));
 
   return () => {
     stopped = true;
@@ -1519,6 +1649,12 @@ export async function syncLocalWeixinCloudMessageToCloud(message: ChatMessage): 
  * 云端就同时存在原文与编辑版，助手组提示词时两份都读得到。这里只改 content，
  * 保留 externalId / raw / needsReply 等字段，云端对象数量不变。
  */
+/** 这条消息是否属于微信运行包覆盖的范围（绑定 bot 的那个角色，或从微信云端导入的消息）。 */
+function touchesWeixinRuntime(message: ChatMessage): boolean {
+  if (message.cloudSync?.source === "weixin-cloud") return true;
+  return resolveWeixinCloudMessageTarget(message) !== null;
+}
+
 export function findWeixinCloudOutboundAnchor(messages: ChatMessage[]): ChatMessage | undefined {
   return messages.find(message =>
     message.cloudSync?.source === "weixin-cloud"
@@ -1582,10 +1718,22 @@ export async function deleteWeixinCloudMessagesFromCloud(messages: ChatMessage[]
     paths.add(weixinCloudMessagePath(target.bot.id, `local_${message.id}`));
   }
 
+  // 逐条容错：一条删失败不连坐后面的——先把能删的都删掉，最后统一抛错。
+  // 失败对用户可见（聊天室的删除流程会 toast 这条报错并保留本地消息），
+  // 重试时只剩漏网的那几条要删，不会推倒重来。
   let deleted = 0;
+  let failed = 0;
   for (const path of paths) {
-    await removeObject(cloudConfig, path);
-    deleted += 1;
+    try {
+      await removeObject(cloudConfig, path);
+      deleted += 1;
+    } catch (err) {
+      failed += 1;
+      console.warn("[WeixinCloudSync] remove cloud message failed:", path, err);
+    }
+  }
+  if (failed > 0) {
+    throw new Error(`有 ${failed} 条云端消息没删掉（已删 ${deleted} 条），请重试。`);
   }
   return deleted;
 }
@@ -1657,7 +1805,7 @@ async function importCloudStoredMessage(
   if (stored.localMessageId && loadChatMessages(session.id).some(message => message.id === stored.localMessageId)) {
     return { inserted: false, sessionId: session.id };
   }
-  const createdAt = stored.receivedAt || stored.createdAt || new Date().toISOString();
+  const createdAt = resolveCloudImportedMessageCreatedAt(stored, session);
   if (stored.role === "assistant" && stored.direction === "outbound") {
     return importCloudAssistantMessage(stored, session, createdAt);
   }
@@ -1686,6 +1834,37 @@ async function importCloudStoredMessage(
     },
   };
   return { inserted: upsertImportedChatMessage(msg).inserted, sessionId: session.id };
+}
+
+/**
+ * 云端主动回复与触发它的本地输入分别使用服务器、手机时钟。若两边相差几百
+ * 毫秒，纯 createdAt 排序会把回复放到输入前面。带因果锚点的新消息只在必要
+ * 时向后校正；旧消息/普通微信消息保持原时间，避免改变既有会话排序。
+ */
+export function resolveCloudImportedMessageCreatedAt(
+  stored: WeixinCloudStoredMessage,
+  session: Pick<ChatSession, "id">,
+): string {
+  const sourceTime = stored.receivedAt || stored.createdAt || new Date().toISOString();
+  if (stored.role !== "assistant" || stored.direction !== "outbound") return sourceTime;
+
+  const anchorId = typeof stored.replyAfterLocalMessageId === "string"
+    ? stored.replyAfterLocalMessageId.trim()
+    : "";
+  const localAnchor = anchorId
+    ? loadChatMessages(session.id).find(message => message.id === anchorId)
+    : undefined;
+  const anchorTime = localAnchor?.createdAt || stored.replyAfterCreatedAt || "";
+  const sourceMs = Date.parse(sourceTime);
+  const anchorMs = Date.parse(anchorTime);
+  if (!Number.isFinite(sourceMs) || !Number.isFinite(anchorMs)) return sourceTime;
+
+  const rawSequence = Number(stored.replySequence);
+  const sequence = Number.isInteger(rawSequence) && rawSequence >= 0
+    ? Math.min(rawSequence, 1000)
+    : 0;
+  const minimumReplyMs = anchorMs + sequence + 1;
+  return sourceMs >= minimumReplyMs ? sourceTime : new Date(minimumReplyMs).toISOString();
 }
 
 async function loadCloudStoredMessageImage(
@@ -1726,6 +1905,37 @@ function normalizeCloudAssistantContentForImport(
   }
 }
 
+/** 云消息上的快捷动作调用记录统一成标记形态；v1 旧字段只有名称+参数，合成等价标记放末尾。 */
+function normalizeStoredShortcutMarker(
+  stored: WeixinCloudStoredMessage,
+): { text: string; insertAt: number; name: string } | null {
+  const marker = stored.shortcutMarker;
+  if (
+    marker && typeof marker === "object"
+    && typeof marker.text === "string" && marker.text
+    && typeof marker.name === "string" && marker.name
+  ) {
+    return {
+      text: marker.text,
+      insertAt: typeof marker.insertAt === "number" && Number.isFinite(marker.insertAt)
+        ? marker.insertAt
+        : Number.MAX_SAFE_INTEGER,
+      name: marker.name,
+    };
+  }
+  const legacy = stored.shortcutInvocation;
+  if (legacy && typeof legacy === "object" && typeof legacy.name === "string" && legacy.name) {
+    let argsJson = "{}";
+    try { argsJson = JSON.stringify(legacy.args ?? {}); } catch { /* 保底空对象 */ }
+    return {
+      text: `【快捷动作：${legacy.name}${argsJson === "{}" ? "" : `(${argsJson})`}】`,
+      insertAt: Number.MAX_SAFE_INTEGER,
+      name: legacy.name,
+    };
+  }
+  return null;
+}
+
 function importCloudAssistantMessage(
   stored: WeixinCloudStoredMessage,
   session: ChatSession,
@@ -1750,6 +1960,10 @@ function importCloudAssistantMessage(
     characterName,
   );
   const parsed = parseAIResponse(normalizedContent, getLatestCharacterStateValues(stored.characterId));
+  // 自定义状态栏渲染戳：不盖的话 custom 模式下 [状态栏] 原文按 markdown 渲染，看着像掉格式
+  const statusRegionMode = parsed.statusPanel && isCustomStatusRegionActive(getStatusRegionConfig(session.id))
+    ? ("custom" as const)
+    : undefined;
   const visibleParts = parsed.parts.filter(part =>
     part.mediaType !== "voice_call"
     && part.mediaType !== "video_call"
@@ -1780,6 +1994,7 @@ function importCloudAssistantMessage(
       mediaType: part.mediaType,
       mediaData: part.mediaData,
       statusPanel: index === 0 && parsed.statusPanel ? parsed.statusPanel : undefined,
+      statusRegionMode: index === 0 && parsed.statusPanel ? statusRegionMode : undefined,
       innerMonologue: index === 0 && parsed.innerMonologue ? parsed.innerMonologue : undefined,
       stateValues: index === 0 && parsed.stateValues.length > 0 ? parsed.stateValues : undefined,
       freshStateValues: index === 0 ? parsed.freshStateValues : undefined,
@@ -1791,6 +2006,7 @@ function importCloudAssistantMessage(
       role: "assistant",
       content: "",
       statusPanel: parsed.statusPanel || undefined,
+      statusRegionMode,
       innerMonologue: parsed.innerMonologue || undefined,
       stateValues: parsed.stateValues.length > 0 ? parsed.stateValues : undefined,
       freshStateValues: parsed.freshStateValues,
@@ -1801,6 +2017,45 @@ function importCloudAssistantMessage(
       role: "assistant",
       content: normalizedContent,
     }, strippedContent));
+  }
+
+  // 云端执行过的快捷动作：在标记原来所在的分条位置插入一对 tool_call（标记原文，
+  // 组装器不跳过——重新烘焙运行包时原样进上下文，气泡隐藏）+ tool_notice（可见
+  // 灰条），与小手机内直接调用快捷动作的显示一致。位置用游标扫描近似映射
+  //（导入前经过时间戳剥离/正则整形，偏移只能对齐到分条边界），找不到就兜底放末尾。
+  const marker = normalizeStoredShortcutMarker(stored);
+  if (marker) {
+    let insertIdx = messages.length;
+    let cursor = 0;
+    for (let i = 0; i < visibleParts.length && i < messages.length; i++) {
+      const probe = (visibleParts[i].content || "").trim();
+      const at = probe ? normalizedContent.indexOf(probe, cursor) : -1;
+      if (at >= 0) {
+        if (at >= marker.insertAt) { insertIdx = i; break; }
+        cursor = at + probe.length;
+      }
+    }
+    messages.splice(
+      insertIdx,
+      0,
+      makeCloudImportedMessage(stored, session.id, createdAt, 900, {
+        role: "assistant",
+        content: marker.text,
+        mediaType: "tool_call",
+      }, strippedContent),
+      makeCloudImportedMessage(stored, session.id, createdAt, 901, {
+        role: "system",
+        content: `发出快捷动作「${marker.name}」`,
+        mediaType: "tool_notice",
+      }, strippedContent),
+    );
+    // 时间戳按最终顺序重排：原本 index 即位置（基准+index 毫秒），配对插进中间后
+    // 得重新按位置递增，否则烘焙历史时配对会被时间序甩到末尾
+    const baseTime = new Date(createdAt).getTime();
+    const safeTime = Number.isFinite(baseTime) ? baseTime : Date.now();
+    messages.forEach((message, position) => {
+      message.createdAt = new Date(safeTime + position).toISOString();
+    });
   }
 
   let inserted = false;
@@ -1836,6 +2091,9 @@ function makeCloudImportedMessage(
       externalId: stored.externalId,
       direction: stored.direction,
       syncedAt: new Date().toISOString(),
+      ...(stored.replyAfterLocalMessageId
+        ? { replyAfterLocalMessageId: stored.replyAfterLocalMessageId }
+        : {}),
     },
   };
 }

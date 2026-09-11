@@ -1,9 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ProxyAgent, type Dispatcher } from "undici";
+import JSZip from "jszip";
+import {
+  NOVELAI_DEFAULT_MODEL,
+  getNovelAiResolution,
+  isNovelAiNoiseSchedule,
+  isNovelAiResolution,
+  isNovelAiSampler,
+  isValidNovelAiModel,
+  normalizeNovelAiNoiseSchedule,
+  normalizeNovelAiSampler,
+  normalizeNovelAiScale,
+  normalizeNovelAiSteps,
+} from "@/lib/novelai-image-config";
 
 export const maxDuration = 120;
 
 type ImageGenerationRequest = {
+  provider?: "openai" | "novelai";
   apiKey?: string;
   baseUrl?: string;
   model?: string;
@@ -11,6 +25,15 @@ type ImageGenerationRequest = {
   size?: string;
   quality?: string;
   referenceImageDataUrl?: string;
+  // NovelAI 专属参数
+  negativePrompt?: string;
+  steps?: number;
+  scale?: number;
+  sampler?: string;
+  noiseSchedule?: string;
+  qualityToggle?: boolean;
+  smea?: boolean;
+  smeaDyn?: boolean;
 };
 
 type ExtractedImage =
@@ -117,7 +140,162 @@ async function fetchImageUrl(url: string): Promise<{ b64: string; mimeType: stri
   return { b64: buffer.toString("base64"), mimeType };
 }
 
+async function runNovelAiGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  try {
+    if (input.apiKey !== undefined && typeof input.apiKey !== "string") {
+      return { status: 400, body: { error: "NovelAI API Token 格式无效" } };
+    }
+    if (input.model !== undefined && typeof input.model !== "string") {
+      return { status: 400, body: { error: "NovelAI 模型名格式无效" } };
+    }
+    if (input.prompt !== undefined && typeof input.prompt !== "string") {
+      return { status: 400, body: { error: "NovelAI 提示词格式无效" } };
+    }
+    if (input.size !== undefined && typeof input.size !== "string") {
+      return { status: 400, body: { error: "NovelAI 分辨率格式无效" } };
+    }
+    if (input.negativePrompt !== undefined && typeof input.negativePrompt !== "string") {
+      return { status: 400, body: { error: "NovelAI 负面提示词格式无效" } };
+    }
+    if (input.steps !== undefined && typeof input.steps !== "number") {
+      return { status: 400, body: { error: "NovelAI Steps 格式无效" } };
+    }
+    if (input.scale !== undefined && typeof input.scale !== "number") {
+      return { status: 400, body: { error: "NovelAI CFG Scale 格式无效" } };
+    }
+    if (input.sampler !== undefined && typeof input.sampler !== "string") {
+      return { status: 400, body: { error: "NovelAI 采样器格式无效" } };
+    }
+    if (input.noiseSchedule !== undefined && typeof input.noiseSchedule !== "string") {
+      return { status: 400, body: { error: "NovelAI 调度器格式无效" } };
+    }
+    for (const [label, value] of [
+      ["Quality Toggle", input.qualityToggle],
+      ["SMEA", input.smea],
+      ["SMEA DYN", input.smeaDyn],
+    ] as const) {
+      if (value !== undefined && typeof value !== "boolean") {
+        return { status: 400, body: { error: `NovelAI ${label} 格式无效` } };
+      }
+    }
+
+    const apiKey = input.apiKey?.trim();
+    const model = input.model?.trim() || NOVELAI_DEFAULT_MODEL;
+    const prompt = input.prompt?.trim();
+
+    if (!apiKey) return { status: 400, body: { error: "缺少 NovelAI API Token" } };
+    if (!prompt) return { status: 400, body: { error: "缺少提示词" } };
+    if (prompt.length > 60_000) return { status: 400, body: { error: "NovelAI 提示词过长" } };
+    if (!isValidNovelAiModel(model)) return { status: 400, body: { error: "NovelAI 模型名格式无效" } };
+    if (input.negativePrompt && input.negativePrompt.length > 60_000) {
+      return { status: 400, body: { error: "NovelAI 负面提示词过长" } };
+    }
+    if (input.size && !isNovelAiResolution(input.size)) {
+      return { status: 400, body: { error: "不支持的 NovelAI 分辨率" } };
+    }
+    if (input.steps !== undefined && (!Number.isFinite(input.steps) || input.steps < 1 || input.steps > 50)) {
+      return { status: 400, body: { error: "NovelAI Steps 必须在 1 到 50 之间" } };
+    }
+    if (input.scale !== undefined && (!Number.isFinite(input.scale) || input.scale < 1 || input.scale > 30)) {
+      return { status: 400, body: { error: "NovelAI CFG Scale 必须在 1 到 30 之间" } };
+    }
+    if (input.sampler && !isNovelAiSampler(input.sampler)) {
+      return { status: 400, body: { error: "不支持的 NovelAI 采样器" } };
+    }
+    if (input.noiseSchedule && !isNovelAiNoiseSchedule(input.noiseSchedule)) {
+      return { status: 400, body: { error: "不支持的 NovelAI 调度器" } };
+    }
+
+    const { width, height } = getNovelAiResolution(input.size);
+
+    const url = "https://image.novelai.net/ai/generate-image";
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Origin: "https://novelai.net",
+      Referer: "https://novelai.net/",
+    };
+
+    const parameters: Record<string, unknown> = {
+      width,
+      height,
+      scale: normalizeNovelAiScale(input.scale),
+      sampler: normalizeNovelAiSampler(input.sampler),
+      steps: normalizeNovelAiSteps(input.steps),
+      n_samples: 1,
+      ucPreset: 0,
+      qualityToggle: input.qualityToggle !== false,
+      sm: input.smea === true,
+      sm_dyn: input.smeaDyn === true,
+      dynamic_thresholding: false,
+      controlnet_strength: 1,
+      legacy: false,
+      add_original_image: false,
+      uncond_scale: 1,
+      cfg_rescale: 0,
+      noise_schedule: normalizeNovelAiNoiseSchedule(input.noiseSchedule),
+      negative_prompt: input.negativePrompt || "",
+    };
+
+    const body = JSON.stringify({
+      input: prompt,
+      model,
+      action: "generate",
+      parameters,
+    });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120_000);
+    let res: Response;
+    try {
+      res = await externalFetch(url, { method: "POST", headers, body, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      return { status: 502, body: { error: `NovelAI 生图失败 ${res.status}: ${errText.slice(0, 600)}` } };
+    }
+
+    const contentType = (res.headers.get("content-type") || "").toLowerCase();
+    const buffer = Buffer.from(await res.arrayBuffer());
+
+    // NovelAI 原生返回的是 zip 压缩包（内含 png）
+    if (contentType.includes("zip") || buffer.slice(0, 4).toString("hex") === "504b0304") {
+      const zip = await JSZip.loadAsync(buffer);
+      const files = Object.keys(zip.files);
+      const pngFilename = files.find(f => f.endsWith(".png")) || files[0];
+      if (!pngFilename) {
+        return { status: 502, body: { error: "NovelAI 返回的 ZIP 压缩包内未找到图片文件" } };
+      }
+      const imageBuffer = await zip.files[pngFilename].async("nodebuffer");
+      return {
+        status: 200,
+        body: {
+          b64: imageBuffer.toString("base64"),
+          mimeType: "image/png",
+        },
+      };
+    }
+
+    if (contentType.startsWith("image/")) {
+      return { status: 200, body: { b64: buffer.toString("base64"), mimeType: contentType } };
+    }
+
+    return { status: 502, body: { error: `NovelAI 返回了未知格式的响应 (${contentType || "unknown"})` } };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const status = message.toLowerCase().includes("abort") ? 504 : 502;
+    return { status, body: { error: message } };
+  }
+}
+
 async function runImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (input.provider === "novelai") {
+    return runNovelAiGeneration(input);
+  }
+
   try {
     const apiKey = input.apiKey?.trim();
     const baseUrl = input.baseUrl?.trim();

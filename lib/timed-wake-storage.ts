@@ -12,6 +12,8 @@ export type TimedWakeSchedule = {
     createdAt: number;
     delayMinutes: number;
     intent: string;
+    /** 创建来源：tool=角色自己约的（"你当时想着"视角）/ user=用户预约（"TA拜托你"视角）。缺省按 tool。 */
+    source?: "tool" | "user";
 };
 
 export function makeTimedWakeId(sessionId: string): string {

@@ -5,6 +5,7 @@
 
 import { loadMixProfile } from "./storage";
 import type { MixCondition, MixMaterial, MixMaterialKind } from "./types";
+import { captureMixMatThumb } from "./mat-thumb";
 
 function stripLocalOnly(material: MixMaterial): MixMaterial {
     const { publishedId: _publishedId, publishedAt: _publishedAt, ...rest } = material;
@@ -14,9 +15,15 @@ function stripLocalOnly(material: MixMaterial): MixMaterial {
     return rest as MixMaterial;
 }
 
-/** 上架条目的封面字段：非角色卡一律空串，压掉云端可能存着的旧封面 */
-function hallCover(material: MixMaterial): string {
-    return material.kind === "character" ? material.cover ?? "" : "";
+/**
+ * 上架条目的封面字段。
+ * 角色卡用作者自己配的图；小票/尾调没有配图这回事，改为把渲染结果现拍一张
+ * 很小的 WebP 缩略图——大厅列表不下发 payload，渲染不出样子，只能靠这张图。
+ * 拍不成就退回空串：条目照常上架，列表退回图标占位。
+ */
+async function hallCover(material: MixMaterial): Promise<string> {
+    if (material.kind === "character") return material.cover ?? "";
+    return await captureMixMatThumb(material);
 }
 
 function authorFields(): { authorName: string; authorAvatar: string } {
@@ -93,7 +100,7 @@ export async function fetchHallRecipe(id: string): Promise<MixHallRecipe> {
 export async function shareHallMaterial(material: MixMaterial): Promise<MixHallMaterial> {
     const data = await fetchJson<HallEntryResponse>("/api/mixology/hall", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "material", kind: material.kind, name: material.name, hook: material.hook ?? "", cover: hallCover(material), tags: material.tags ?? [], payload: stripLocalOnly(material), ...authorFields() }),
+        body: JSON.stringify({ type: "material", kind: material.kind, name: material.name, hook: material.hook ?? "", cover: await hallCover(material), tags: material.tags ?? [], payload: stripLocalOnly(material), ...authorFields() }),
     });
     if (!data.entry) throw new Error("分享失败");
     return data.entry as MixHallMaterial;
@@ -134,11 +141,28 @@ async function putHall(body: Record<string, unknown>): Promise<unknown> {
 }
 
 export async function updateHallMaterial(publishedId: string, material: MixMaterial): Promise<MixHallMaterial> {
-    return await putHall({ type: "material", id: publishedId, kind: material.kind, name: material.name, hook: material.hook ?? "", cover: hallCover(material), tags: material.tags ?? [], payload: stripLocalOnly(material), ...authorFields() }) as MixHallMaterial;
+    return await putHall({ type: "material", id: publishedId, kind: material.kind, name: material.name, hook: material.hook ?? "", cover: await hallCover(material), tags: material.tags ?? [], payload: stripLocalOnly(material), ...authorFields() }) as MixHallMaterial;
 }
 export async function updateHallRecipe(publishedId: string, input: MixHallRecipeShareInput): Promise<MixHallRecipe> {
     return await putHall({ type: "recipe", id: publishedId, ...input, ...authorFields() }) as MixHallRecipe;
 }
+/**
+ * 给已上架的条目补一张缩略图（存量条目上架时还没有拍图这回事）。
+ * 只写封面、不动更新时间，所以补封面不会把老条目顶到大厅最前面。
+ * 拍不出来就不发请求，返回空串。
+ */
+export async function backfillHallThumb(publishedId: string, material: MixMaterial): Promise<string> {
+    const cover = await captureMixMatThumb(material);
+    if (!cover) return "";
+    const res = await fetchJson<{ ok: boolean; cover?: string; error?: string }>("/api/mixology/hall", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "material", id: publishedId, action: "thumb", cover }),
+    });
+    if (!res.ok) throw new Error(res.error || "补封面失败");
+    return res.cover ?? "";
+}
+
 export async function removeHallEntry(type: MixHallType, id: string): Promise<void> {
     await fetchJson<{ ok: boolean }>("/api/mixology/hall", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, id }) });
 }

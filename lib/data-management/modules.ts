@@ -14,8 +14,14 @@ const RESERVED_LOCAL_STORAGE_KEYS = [
 // backup. The run state is device-local bookkeeping and would also make every
 // backup change itself. Everything else in AiPhoneKvDB is caught by the
 // fallback source below, even when a feature forgot to register its key here.
+//
+// 本地导出的备份文件是另一回事：它就在用户自己手里，恢复时最需要的恰恰是这份
+// 连接信息（项目地址 + 密钥 + 专用项目标记）——没有它，导入备份后云服务显示
+// "未部署"，再粘 Access Token 又会走新建项目而连不回原来的桶。所以本地文件
+// 单独带上它（见 backup.ts 的 includeCloudCredentials），云端备份照旧不带。
+export const CLOUD_CREDENTIAL_KV_KEYS = ["ai_phone_cloud_backup_config_v1"];
 const KV_BACKUP_EXCLUDED_KEYS = [
-  "ai_phone_cloud_backup_config_v1",
+  ...CLOUD_CREDENTIAL_KV_KEYS,
   "ai_phone_cloud_backup_state_v1",
 ];
 

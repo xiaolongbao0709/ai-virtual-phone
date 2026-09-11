@@ -1,7 +1,7 @@
 "use client";
 
 // 表情包搜索联想：输入时按名称模糊匹配本地表情包，横向列表浮在输入框正上方，
-// 点击直接发送（复用 onSendSticker 的 sticker 消息通道）。
+// 点击直接发送（复用 onSendSticker 的 sticker 消息通道），发送后由父组件清空输入。
 // 数据源 = 内置表情包（sticker-data，emoji 兜底）+ 当前会话角色绑定的自定义贴纸包（IndexedDB 解析出 url）。
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -115,7 +115,7 @@ export function StickerSearchSuggest({ query, characterIds, onSend, onClose }: S
       onMouseDown={(event) => event.preventDefault()}
     >
       <div
-        className="flex items-stretch gap-1.5 overflow-x-auto px-2.5 py-2 rounded-2xl hide-scrollbar"
+        className="flex items-stretch gap-2 overflow-x-auto px-3 py-2.5 rounded-2xl hide-scrollbar"
         style={{
           background: "color-mix(in srgb, var(--c-card) 96%, transparent)",
           border: "1px solid var(--c-card-border)",
@@ -133,20 +133,20 @@ export function StickerSearchSuggest({ query, characterIds, onSend, onClose }: S
               onSend(item.name, item.url);
               onClose();
             }}
-            className="shrink-0 flex flex-col items-center gap-1 px-2 py-1.5 rounded-xl bg-transparent border-none cursor-pointer transition-transform active:scale-95"
-            style={{ minWidth: 52 }}
+            className="shrink-0 flex flex-col items-center gap-1 px-2.5 py-2 rounded-xl bg-transparent border-none cursor-pointer transition-transform active:scale-95"
+            style={{ minWidth: 64 }}
             title={item.name}
           >
-            <span className="w-10 h-10 flex items-center justify-center overflow-hidden">
+            <span className="w-14 h-14 flex items-center justify-center overflow-hidden">
               {item.url ? (
-                <img src={item.url} alt={item.name} className="w-10 h-10 object-contain" draggable={false} />
+                <img src={item.url} alt={item.name} className="w-14 h-14 object-contain" draggable={false} />
               ) : item.emoji ? (
-                <span className="text-[26px] leading-none">{item.emoji}</span>
+                <span className="text-[32px] leading-none">{item.emoji}</span>
               ) : (
-                <span className="ts-10 text-[var(--c-text)] w-full text-center truncate">{item.name}</span>
+                <span className="ts-11 text-[var(--c-text)] w-full text-center truncate">{item.name}</span>
               )}
             </span>
-            <span className="ts-10 text-[var(--c-text)] opacity-75 max-w-[56px] truncate leading-tight">{item.name}</span>
+            <span className="ts-11 text-[var(--c-text)] opacity-75 max-w-[64px] truncate leading-tight">{item.name}</span>
           </button>
         ))}
       </div>

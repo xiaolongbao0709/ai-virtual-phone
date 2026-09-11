@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+// CommonMark 的 flanking 规则会让 **「加粗」** 这类紧贴全角标点的写法解析失败
+// （** 后跟标点时要求前面是空格/标点，中文里前面通常是汉字），中文消息大量中招。
+import remarkCjkFriendly from "remark-cjk-friendly";
 import {
   Archive,
   Check,
@@ -169,7 +172,7 @@ function CoCreateMarkdown({ content, className }: { content: string; className?:
   if (!cleaned) return null;
   return (
     <div className={`cocreate-markdown ${className ?? ""}`.trim()}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={COCREATE_MARKDOWN_COMPONENTS}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]} components={COCREATE_MARKDOWN_COMPONENTS}>
         {cleaned}
       </ReactMarkdown>
     </div>

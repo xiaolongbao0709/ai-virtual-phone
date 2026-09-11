@@ -7,6 +7,7 @@ const CLOUD_CRON_SECRET_PATH = "weixin-cloud/cron-secret.json";
 const CLOUD_ASSISTANT_STATE_PATH = "weixin-cloud/state/cloud-assistant.json";
 const CLOUD_CRON_JOB_NAME = "ai-phone-weixin-assistant";
 const CLOUD_CORE_CODE_PATH = "weixin-cloud/function-core.mjs";
+const REQUIRED_BUCKET_CORE_PROTOCOL_VERSION = 3;
 
 // ── 自更新加载器 ──
 // 小手机同步运行包时会把最新的 assistant-core.mjs 上传到桶里；这里每次运行
@@ -37,14 +38,17 @@ async function loadBucketCore(env) {
     }
     if (!res.ok) return null;
     const code = await res.text();
-    if (!code.includes("export async function pollOnce")) return null;
+    if (!code.includes("export async function pollOnce")
+      || !code.includes(`WEIXIN_CORE_PROTOCOL_VERSION = ${REQUIRED_BUCKET_CORE_PROTOCOL_VERSION}`)) return null;
     const bytes = new TextEncoder().encode(code);
     let bin = "";
     for (let i = 0; i < bytes.length; i += 0x8000) {
       bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     }
     const mod = await import(`data:application/javascript;base64,${btoa(bin)}`);
-    if (typeof mod.pollOnce !== "function" || typeof mod.setMediaReplyEnabled !== "function") return null;
+    if (typeof mod.pollOnce !== "function"
+      || typeof mod.setMediaReplyEnabled !== "function"
+      || mod.WEIXIN_CORE_PROTOCOL_VERSION !== REQUIRED_BUCKET_CORE_PROTOCOL_VERSION) return null;
     cachedBucketCore = mod;
     cachedBucketCoreAt = now;
     cachedBucketCoreEtag = res.headers.get("etag") || "";
@@ -142,7 +146,7 @@ async function runCloudScheduleAction(env, action) {
       // 每分钟触发一次、函数内部按 ~12 秒子轮询（mode=loop）：回复延迟与旧的
       // 10 秒 cron 基本一致，但 Edge Function 调用次数降到 1/6（约 4.3 万次/月，
       // 免费档 50 万次的 9%）。timeout 只是 pg_net 等待响应的上限，函数照常跑完。
-      await sql.unsafe(`select cron.schedule('${CLOUD_CRON_JOB_NAME}', '1 minute', $CRON$
+      await sql.unsafe(`select cron.schedule('${CLOUD_CRON_JOB_NAME}', '* * * * *', $CRON$
   select net.http_post(
     url     := '${functionUrl}',
     headers := jsonb_build_object('Content-Type', 'application/json'),
@@ -211,6 +215,30 @@ Deno.serve(async (req) => {
   // 优先使用桶里的最新核心逻辑，失败回退到内置版本。
   const bucketCore = await loadBucketCore(env);
   const core = bucketCore || { pollOnce, setMediaReplyEnabled };
+
+  // 离线主动发送：push-generate / push-bridge 凭部署密钥调用，把角色离线
+  // 生成的消息改送微信（借该 bot 最近一条入站消息的回复上下文）。
+  if (action === "send-text") {
+    const botId = typeof body?.bot === "string" ? body.bot.trim() : "";
+    const text = typeof body?.text === "string" ? body.text.trim().slice(0, 4000) : "";
+    if (!botId || !text) return cloudJsonResponse(400, { ok: false, error: "missing_bot_or_text" });
+    const replyAnchor = {
+      localMessageId: typeof body?.replyAfterLocalMessageId === "string" ? body.replyAfterLocalMessageId : "",
+      createdAt: typeof body?.replyAfterCreatedAt === "string" ? body.replyAfterCreatedAt : "",
+    };
+    const bucketSendFn = bucketCore && typeof bucketCore.sendProactiveText === "function"
+      ? bucketCore.sendProactiveText
+      : null;
+    const sendFn = bucketSendFn && (!replyAnchor.localMessageId || bucketSendFn.length >= 4)
+      ? bucketSendFn
+      : sendProactiveText;
+    try {
+      const result = await sendFn(env, botId, text, replyAnchor);
+      return cloudJsonResponse(200, { ok: true, ...result });
+    } catch (err) {
+      return cloudJsonResponse(500, { ok: false, error: errorMessage(err) });
+    }
+  }
 
   // 媒体回复开关以运行包 promptContext.mediaReply 为准（随小手机同步下发）；
   // 请求体传 {"media": true} 可在旧运行包上强制开启。

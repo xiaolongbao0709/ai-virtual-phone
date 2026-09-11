@@ -10,14 +10,21 @@ import type { ChatOfflineTurn } from "./chat-offline-storage";
 export function formatOfflineTurnXml(turn: ChatOfflineTurn): string {
     if (turn.rawText?.trim()) return turn.rawText.trim();
     const summaryTag = turn.summaryTag?.trim() || "summary";
+    // rawText 缺失（旧数据）时重建完整 XML：思维链（thinkingText）存在则按原标签拼回，
+    // 保证历史上下文里保留这一轮的思考内容
+    const thinkingTag = turn.thinkingTag?.trim() || "thinking";
+    const thinkingBlock = turn.thinkingText?.trim()
+        ? `<${thinkingTag}>\n${turn.thinkingText.trim()}\n</${thinkingTag}>`
+        : "";
     return [
+        thinkingBlock,
         "<content>",
         turn.assistantContent,
         "</content>",
         `<${summaryTag}>`,
         turn.summary,
         `</${summaryTag}>`,
-    ].join("\n");
+    ].filter(Boolean).join("\n");
 }
 
 export function buildOfflinePromptHistory(

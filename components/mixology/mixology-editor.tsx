@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { BookOpen, FileText, Plus, Trash2 } from "lucide-react";
 import type {
+    MixCardProfileMode,
     MixCharacterCard,
     MixFilterRule,
     MixMaterial,
@@ -14,21 +15,35 @@ import type {
     MixTextMaterial,
     MixTicketVar,
 } from "@/lib/mixology/types";
-import { createMixId, formatMixTags, MIX_KIND_LABELS, MIX_PANEL_DEFAULT_LAYOUT, MIX_TAG_MAX, mixPanelLayoutOf, parseMixTags } from "@/lib/mixology/types";
+import { createMixId, formatMixTags, MIX_KIND_LABELS, MIX_PANEL_DEFAULT_LAYOUT, MIX_SECTION_TITLE_DEFAULTS, MIX_TAG_MAX, mixPanelLayoutOf, normalizeMixConnectorNames, parseMixTags, type MixSectionTitleKey } from "@/lib/mixology/types";
 import { applyMixFilterRules } from "@/lib/mixology/prose";
+import { createBuiltinChecklist } from "@/lib/mixology/builtin";
+import {
+    buildMixCardFreeformText,
+    MIX_CARD_PROFILE_FALLBACK,
+    MIX_CARD_PROFILE_FIELDS,
+    MIX_CARD_WORLD_FALLBACK,
+    MIX_CARD_WORLD_FIELDS,
+    parseMixCardFreeformText,
+} from "@/lib/mixology/card-freeform";
 import { MixCraftSheet, MixPreviewInline, MixStructureSheet } from "./mixology-preview";
+import { MixConfirm } from "./mixology-shared";
 
 const OPENING_SEPARATOR = "\n---\n";
 
 /** 每类材料点进来先说清楚：这是干什么的、写完落在提示词哪一段 */
 const KIND_GUIDE: Record<MixMaterialKind, { what: string; where: string }> = {
     character: {
-        what: "这里写角色资料：身份、外貌、性格、所处世界、与玩家的初始关系，以及开场白与示例对话。",
+        what: "这里写角色资料：身份、外貌、性格、所处世界、与玩家的初始关系，以及开场白与示例对话。资料可以分框填，也可以切成一框式自己排 ## 小节。",
         where: "进入「角色资料」「世界与剧情」「示例对话」三段。",
     },
     persona: {
         what: "这里写用户人设：{{user}} 是谁——身份、性格、外貌，以及与{{char}}之间那段关系里你这一侧的设定。",
         where: "进入「用户资料」段；填了名字就替换全部 {{user}}。",
+    },
+    preface: {
+        what: "这里写序言：整份提示词的第一段话，声明这是角色扮演、模型该以什么姿态读后面的内容。开场直接影响全局文风；建议保留一句「越靠后的要求优先级越高」之类的优先级声明。",
+        where: "进入提示词最顶端（扮演总纲之前）；一局只用一件，不配则提示词没有这一段。",
     },
     base: {
         what: "这里写扮演总纲：如何入戏、能否代替玩家发言、是否允许冲突与负面情绪。约束态度，不涉及文笔。",
@@ -58,6 +73,10 @@ const KIND_GUIDE: Record<MixMaterialKind, { what: string; where: string }> = {
         what: "这里写小剧场：正文之外的加演，例如朋友圈动态、一段监控录像。契约决定 AI 何时写什么，渲染代码决定它长什么样；契约留空则为纯静态小品。",
         where: "契约进提示词；渲染代码只在界面执行。",
     },
+    checklist: {
+        what: "这里写输出格式检查：系统提示词最后一节的收尾核对清单，模型动笔前逐项核对本轮必须带上什么、禁止什么。一行一条，写得越具体越难被忽略。",
+        where: "进入系统提示词末尾「输出格式检查」段，紧挨对话历史；与序言同规则，槽里没装就没有这一段（官方出厂件在槽位候选里可选）。",
+    },
     mechanism: {
         what: "一段在沙盒里跑的逻辑，加一块常驻在对局画面上的界面。两半共用同一份存储，可以只写一半。",
         where: "不进提示词，跑在断网的沙盒里。",
@@ -74,10 +93,14 @@ const KIND_GUIDE: Record<MixMaterialKind, { what: string; where: string }> = {
  * 不进提示词的几种材料（外观/机括/滤网）不显示这行。
  */
 const HEADING_NOTE = "要在框里加小标题，用 ### 开头（# 和 ## 已被应用占用）。";
-const HEADING_NOTE_KINDS: MixMaterialKind[] = ["character", "persona", "base", "flavor", "glass", "strength", "ticket", "encore"];
+const HEADING_NOTE_KINDS: MixMaterialKind[] = ["character", "persona", "base", "flavor", "glass", "strength", "ticket", "encore", "checklist"];
 
-/** 文本类材料（基底/风味/杯型/苦精）的字段名与示例 */
-const TEXT_FIELD_COPY: Record<"base" | "flavor" | "glass" | "strength", { label: string; placeholder: string }> = {
+/** 文本类材料（序言/基底/风味/杯型/苦精）的字段名与示例 */
+const TEXT_FIELD_COPY: Record<"preface" | "base" | "flavor" | "glass" | "strength" | "checklist", { label: string; placeholder: string }> = {
+    preface: {
+        label: "序言",
+        placeholder: "例：\n这是一场沉浸式角色扮演，你要扮演的角色是{{char}}。下方依次给出扮演规则、角色资料与输出要求，请全部遵守；越靠后的要求优先级越高。\n（建议保留一句优先级声明，应用的段落排序依赖它。）",
+    },
     base: {
         label: "扮演总纲",
         placeholder: "例：\n你将完全成为{{char}}，以第一视角活在故事里。\n- 绝不跳出角色，绝不以 AI 自称。\n- 绝不代替{{user}}说话或做决定。\n- 允许出现冲突、拒绝与负面情绪，贴合人设比讨好{{user}}更重要。",
@@ -93,6 +116,10 @@ const TEXT_FIELD_COPY: Record<"base" | "flavor" | "glass" | "strength", { label:
     strength: {
         label: "最高优先级要求",
         placeholder: "一到两条即可，例：\n始终保持{{char}}的克制感，不要替{{user}}总结感受。",
+    },
+    checklist: {
+        label: "输出格式检查",
+        placeholder: "系统提示词的最后一节，模型收尾前逐项核对的清单。槽里没装就没有这一段。例：\n每轮回复发出前逐项核对：\n- 正文符合「正文输出要求」。\n- 回复最开头已按「状态栏」的格式输出 [状态栏]...[/状态栏] 块——任何一轮都不能缺。\n- 回复末尾已写 [拍立得]...[/拍立得] 块——任何一轮都不能缺。\n- 已写〔记〕行；该归纳时写〔纳〕，该压核心时写〔核〕。",
     },
 };
 
@@ -157,14 +184,28 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
     const [relations, setRelations] = useState(initialCard?.relations ?? "");
     const [plot, setPlot] = useState(initialCard?.plot ?? "");
     const [extra, setExtra] = useState(initialCard?.extra ?? "");
+    // 资料编辑模式（按卡存）：分框表单 / 一框式。一框式时两段正文各在一个大框里，
+    // 九个分框的 state 在保存时不落库；切换时在两边之间换算（见 card-freeform）。
+    const [profileMode, setProfileMode] = useState<MixCardProfileMode>(initialCard?.profileMode === "freeform" ? "freeform" : "form");
+    const [profileText, setProfileText] = useState(initialCard?.profileText ?? "");
+    const [worldText, setWorldText] = useState(initialCard?.worldText ?? "");
+    // 一框式切回分框是有损的（认不出的小节并进兜底框）：先弹一句确认
+    const [modeConfirm, setModeConfirm] = useState<{ unmatched: number } | null>(null);
     const [openingsText, setOpeningsText] = useState(initialCard?.openings.join(OPENING_SEPARATOR) ?? "");
     const [canvas, setCanvas] = useState(initialCard?.canvas ?? "");
     const [examples, setExamples] = useState<{ role: "user" | "char"; text: string }[]>(
         initialCard?.examples ? initialCard.examples.map((e) => ({ ...e })) : [],
     );
     // 文本类 / 小票 / 装饰 / 尾调
+    // 新建「核对」时预填官方出厂件的清单（状态栏 + 小剧场各一块的通用版），作者在此基础上增删
     const [content, setContent] = useState(
-        initial && "content" in initial ? (initial as MixTextMaterial).content : "",
+        initial && "content" in initial
+            ? (initial as MixTextMaterial).content
+            : kind === "checklist" ? createBuiltinChecklist().content : "",
+    );
+    // 仅序言：各分段标题的覆写（留空的键用默认标题）
+    const [sectionTitles, setSectionTitles] = useState<Partial<Record<MixSectionTitleKey, string>>>(
+        initial?.kind === "preface" ? { ...(initial as MixTextMaterial).sectionTitles } : {},
     );
     const [personaUserName, setPersonaUserName] = useState(initial?.kind === "persona" ? initial.userName ?? "" : "");
     const [contract, setContract] = useState(initial?.kind === "ticket" ? initial.contract : "");
@@ -181,6 +222,14 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
     const keptLayout = initial?.kind === "mechanism" ? initial.layout : undefined;
     const keptDock = initial?.kind === "mechanism" ? initial.dock : undefined;
     const [panelHtml, setPanelHtml] = useState(initial?.kind === "mechanism" ? initial.panelHtml ?? "" : "");
+    // 信任模式：代码直接在对局页面里跑（不进沙盒），拿裸 DOM 随便画；装入时会向玩家明示
+    const [trusted, setTrusted] = useState(initial?.kind === "mechanism" ? initial.trusted === true : false);
+    // 界面要用的连接器名字（逗号隔开）；只有声明过的名字 mix.call 才放行
+    const [connectorsText, setConnectorsText] = useState(initial?.kind === "mechanism" ? (initial.connectors ?? []).join(", ") : "");
+    const connectorNames = useMemo(() => normalizeMixConnectorNames(connectorsText), [connectorsText]);
+    // 对白按钮由代码自己登记（window.mix.dialogueButton / mix.dialogueButton），编辑器不设框；
+    // 老材料上填过的原样保留，仍然生效
+    const dialogueButton = initial?.kind === "mechanism" ? initial.dialogueButton : undefined;
 
     /**
      * 从契约正文里认出「字段名：说明」这样的行，做成一排可点的候选。
@@ -226,7 +275,10 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
     // 与大厅同一个做法：portal 到应用根层去铺满整个画面。
     const [overlayHost, setOverlayHost] = useState<HTMLElement | null>(null);
     useEffect(() => { setOverlayHost(document.querySelector<HTMLElement>(".mixology-app")); }, []);
-    const inOverlay = (node: ReactNode) => (overlayHost ? createPortal(node, overlayHost) : null);
+    // 对局画面（.mix-game）是 z-index:45 的全屏层，速查弹层的 mask 自身只有 40：
+    // 从对局内的编辑器打开会整个被压在画面底下，按钮看着像没反应。套一层
+    // z-index:50 的定位容器抬到对局之上、toast(60)/确认弹窗(70)之下。
+    const inOverlay = (node: ReactNode) => (overlayHost ? createPortal(<div className="mix-overlay-raise">{node}</div>, overlayHost) : null);
     const fileRef = useRef<HTMLInputElement | null>(null);
 
     // 标签：输入的时候就按最终口径拆好给作者看，免得存下来才发现被掐了
@@ -243,6 +295,48 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
         } catch {
             setError("封面图读取失败，请换一张试试。");
         }
+    };
+
+    const formValues = { baseInfo, personality, appearance, background, worldview, cognition, relations, plot, extra };
+
+    /** 分框 → 一框式：无损，每个非空框变成一个 ## 小节 */
+    const switchToFreeform = () => {
+        setProfileText(buildMixCardFreeformText(MIX_CARD_PROFILE_FIELDS, formValues));
+        setWorldText(buildMixCardFreeformText(MIX_CARD_WORLD_FIELDS, formValues));
+        setProfileMode("freeform");
+    };
+
+    const parsedFreeform = () => ({
+        profile: parseMixCardFreeformText(profileText, MIX_CARD_PROFILE_FIELDS, MIX_CARD_PROFILE_FALLBACK),
+        world: parseMixCardFreeformText(worldText, MIX_CARD_WORLD_FIELDS, MIX_CARD_WORLD_FALLBACK),
+    });
+
+    /** 一框式 → 分框：按标题认领回各框；认不出的先问一句再动手 */
+    const requestSwitchToForm = () => {
+        const { profile, world } = parsedFreeform();
+        const unmatched = profile.unmatched + world.unmatched;
+        if (unmatched > 0) {
+            setModeConfirm({ unmatched });
+            return;
+        }
+        applySwitchToForm();
+    };
+
+    const applySwitchToForm = () => {
+        const { profile, world } = parsedFreeform();
+        setBaseInfo(profile.values.baseInfo ?? "");
+        setPersonality(profile.values.personality ?? "");
+        setAppearance(profile.values.appearance ?? "");
+        setBackground(profile.values.background ?? "");
+        setWorldview(world.values.worldview ?? "");
+        setCognition(world.values.cognition ?? "");
+        setRelations(world.values.relations ?? "");
+        setPlot(world.values.plot ?? "");
+        setExtra(world.values.extra ?? "");
+        setProfileText("");
+        setWorldText("");
+        setProfileMode("form");
+        setModeConfirm(null);
     };
 
     const handleSave = () => {
@@ -284,6 +378,16 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                 relations: relations.trim() || undefined,
                 plot: plot.trim() || undefined,
                 extra: extra.trim() || undefined,
+                ...(profileMode === "freeform"
+                    ? {
+                        // 一框式只存两段正文，九个分框一律清空——正文只有一份，谁读都一样
+                        profileMode: "freeform" as const,
+                        profileText: profileText.trim() || undefined,
+                        worldText: worldText.trim() || undefined,
+                        baseInfo: undefined, personality: undefined, appearance: undefined, background: undefined,
+                        worldview: undefined, cognition: undefined, relations: undefined, plot: undefined, extra: undefined,
+                    }
+                    : {}),
                 openings,
                 examples: examples.filter((e) => e.text.trim()).map((e) => ({ role: e.role, text: e.text.trim() })),
                 canvas: canvas.trim() || undefined,
@@ -310,7 +414,10 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                 script: script.trim() || undefined,
                 layout: keptLayout,
                 dock: keptDock,
-                panelHtml: panelHtml.trim() || undefined,
+                panelHtml: trusted ? undefined : panelHtml.trim() || undefined,
+                connectors: connectorNames.length ? connectorNames : undefined,
+                dialogueButton,
+                trusted: trusted || undefined,
             });
             return;
         }
@@ -365,7 +472,20 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             setError(`${MIX_KIND_LABELS[kind]}的内容不能为空。`);
             return;
         }
-        onSave({ ...meta, kind, content: content.trim() } as MixTextMaterial);
+        // 序言的标题覆写：只存写了内容的键，一项都没写就不带这个字段
+        let cleanedTitles: Partial<Record<MixSectionTitleKey, string>> | undefined;
+        if (kind === "preface") {
+            const entries = (Object.keys(MIX_SECTION_TITLE_DEFAULTS) as MixSectionTitleKey[])
+                .map((key) => [key, (sectionTitles[key] ?? "").replace(/\s+/g, " ").trim()] as const)
+                .filter(([, value]) => value);
+            cleanedTitles = entries.length ? Object.fromEntries(entries) : undefined;
+        }
+        onSave({
+            ...meta,
+            kind,
+            content: content.trim(),
+            ...(kind === "preface" ? { sectionTitles: cleanedTitles } : {}),
+        } as MixTextMaterial);
     };
 
     const guide = KIND_GUIDE[kind];
@@ -441,15 +561,69 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             ) : null}
             {isCharacter ? (
                 <>
-                    <Field label="基础信息"><textarea className="mix-textarea" value={baseInfo} onChange={(e) => setBaseInfo(e.target.value)} placeholder="例：27 岁 / 183cm / 便利店夜班店员" /></Field>
-                    <Field label="性格"><textarea className="mix-textarea" value={personality} onChange={(e) => setPersonality(e.target.value)} placeholder="例：嘴上嫌弃手上诚实，怕麻烦但从不真的拒绝人" /></Field>
-                    <Field label="外貌"><textarea className="mix-textarea" value={appearance} onChange={(e) => setAppearance(e.target.value)} placeholder="例：高瘦，总把制服外套袖子卷到手肘，左耳有个旧耳洞" /></Field>
-                    <Field label="背景"><textarea className="mix-textarea" value={background} onChange={(e) => setBackground(e.target.value)} placeholder="例：三年前从老家搬来，白天在读夜校，夜班是为了付学费" /></Field>
-                    <Field label="世界观"><textarea className="mix-textarea" value={worldview} onChange={(e) => setWorldview(e.target.value)} placeholder="故事发生在什么世界。例：普通现代都市，没有超自然设定" /></Field>
-                    <Field label={"对{{user}}的初始认知"}><textarea className="mix-textarea" value={cognition} onChange={(e) => setCognition(e.target.value)} placeholder="开局时角色对你了解到什么程度。例：只知道你是每周来三次的常客，不知道名字" /></Field>
-                    <Field label="关系与身份"><textarea className="mix-textarea" value={relations} onChange={(e) => setRelations(e.target.value)} placeholder="玩家可以代入哪些身份、各自什么关系。例：熟客（微妙的默契）/ 新同事（他带你）" /></Field>
-                    <Field label="当前剧情"><textarea className="mix-textarea" value={plot} onChange={(e) => setPlot(e.target.value)} placeholder="故事从哪一刻开始。例：雨夜，打烊前十分钟，店里只剩你们两个" /></Field>
-                    <Field label="附加设定"><textarea className="mix-textarea" value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="配角、私设名词、地点等。例：店长老周只在白班出现；「三号柜」是他们之间的暗号" /></Field>
+                    {/* 资料编辑模式：分框表单 = 每框一个 ##；一框式 = 两段正文自己排 ## 小节。
+                        切换会把已填的内容换算到另一边（分框→一框式无损，反向认不出的并进兜底框） */}
+                    <Field label="资料写法">
+                        <div className="mix-subtabs" style={{ margin: 0 }} role="tablist" aria-label="资料编辑模式">
+                            <button
+                                type="button"
+                                role="tab"
+                                data-active={profileMode === "form" ? "true" : undefined}
+                                aria-selected={profileMode === "form"}
+                                onClick={() => { if (profileMode !== "form") requestSwitchToForm(); }}
+                            >
+                                分框填写
+                            </button>
+                            <button
+                                type="button"
+                                role="tab"
+                                data-active={profileMode === "freeform" ? "true" : undefined}
+                                aria-selected={profileMode === "freeform"}
+                                onClick={() => { if (profileMode !== "freeform") switchToFreeform(); }}
+                            >
+                                一框式
+                            </button>
+                        </div>
+                        <div className="mix-form-note">
+                            {profileMode === "freeform"
+                                ? "两个大框各对应提示词的一段，## 开头的行就是小节标题，可增删改。角色名由上面的名字框提供，不用写在框里。"
+                                : "每个框的标题就是提示词里的 ## 标题。嫌框多可切到一框式，已填的内容会自动拼进去。"}
+                        </div>
+                    </Field>
+                    {profileMode === "freeform" ? (
+                        <>
+                            <Field label="角色资料" hint="进入「角色资料」段">
+                                <textarea
+                                    className="mix-textarea"
+                                    style={{ minHeight: 220 }}
+                                    value={profileText}
+                                    onChange={(e) => setProfileText(e.target.value)}
+                                    placeholder={"例：\n## 基础信息\n27 岁 / 183cm / 便利店夜班店员\n\n## 性格\n嘴上嫌弃手上诚实，怕麻烦但从不真的拒绝人\n\n## 外貌\n高瘦，总把制服外套袖子卷到手肘\n\n## 背景\n三年前从老家搬来，白天在读夜校"}
+                                />
+                            </Field>
+                            <Field label="世界与剧情" hint="进入「世界与剧情」段">
+                                <textarea
+                                    className="mix-textarea"
+                                    style={{ minHeight: 220 }}
+                                    value={worldText}
+                                    onChange={(e) => setWorldText(e.target.value)}
+                                    placeholder={"例：\n## 世界观\n普通现代都市，没有超自然设定\n\n## 对{{user}}的初始认知\n只知道你是每周来三次的常客，不知道名字\n\n## 关系与身份\n熟客（微妙的默契）/ 新同事（他带你）\n\n## 当前剧情\n雨夜，打烊前十分钟，店里只剩你们两个\n\n## 附加设定\n店长老周只在白班出现"}
+                                />
+                            </Field>
+                        </>
+                    ) : (
+                        <>
+                        <Field label="基础信息"><textarea className="mix-textarea" value={baseInfo} onChange={(e) => setBaseInfo(e.target.value)} placeholder="例：27 岁 / 183cm / 便利店夜班店员" /></Field>
+                        <Field label="性格"><textarea className="mix-textarea" value={personality} onChange={(e) => setPersonality(e.target.value)} placeholder="例：嘴上嫌弃手上诚实，怕麻烦但从不真的拒绝人" /></Field>
+                        <Field label="外貌"><textarea className="mix-textarea" value={appearance} onChange={(e) => setAppearance(e.target.value)} placeholder="例：高瘦，总把制服外套袖子卷到手肘，左耳有个旧耳洞" /></Field>
+                        <Field label="背景"><textarea className="mix-textarea" value={background} onChange={(e) => setBackground(e.target.value)} placeholder="例：三年前从老家搬来，白天在读夜校，夜班是为了付学费" /></Field>
+                        <Field label="世界观"><textarea className="mix-textarea" value={worldview} onChange={(e) => setWorldview(e.target.value)} placeholder="故事发生在什么世界。例：普通现代都市，没有超自然设定" /></Field>
+                        <Field label={"对{{user}}的初始认知"}><textarea className="mix-textarea" value={cognition} onChange={(e) => setCognition(e.target.value)} placeholder="开局时角色对你了解到什么程度。例：只知道你是每周来三次的常客，不知道名字" /></Field>
+                        <Field label="关系与身份"><textarea className="mix-textarea" value={relations} onChange={(e) => setRelations(e.target.value)} placeholder="玩家可以代入哪些身份、各自什么关系。例：熟客（微妙的默契）/ 新同事（他带你）" /></Field>
+                        <Field label="当前剧情"><textarea className="mix-textarea" value={plot} onChange={(e) => setPlot(e.target.value)} placeholder="故事从哪一刻开始。例：雨夜，打烊前十分钟，店里只剩你们两个" /></Field>
+                        <Field label="附加设定"><textarea className="mix-textarea" value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="配角、私设名词、地点等。例：店长老周只在白班出现；「三号柜」是他们之间的暗号" /></Field>
+                        </>
+                    )}
                     <Field label="开场白" hint="必填，写多个玩家开局可以挑，用单独一行 --- 分隔">
                         <textarea
                             className="mix-textarea"
@@ -537,7 +711,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                     </Field>
                 </>
             ) : null}
-            {kind === "base" || kind === "flavor" || kind === "glass" || kind === "strength" ? (
+            {kind === "preface" || kind === "base" || kind === "flavor" || kind === "glass" || kind === "strength" || kind === "checklist" ? (
                 <Field label={TEXT_FIELD_COPY[kind].label} hint="必填，可用 {{char}} / {{user}}">
                     <textarea
                         className="mix-textarea"
@@ -546,6 +720,21 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                         onChange={(e) => setContent(e.target.value)}
                         placeholder={TEXT_FIELD_COPY[kind].placeholder}
                     />
+                </Field>
+            ) : null}
+            {kind === "preface" ? (
+                <Field label="自定义分段标题" hint="选填，让各段标题的措辞贴合序言的基调；留空的用默认。提示词里的交叉引用会跟着换">
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        {(Object.keys(MIX_SECTION_TITLE_DEFAULTS) as MixSectionTitleKey[]).map((key) => (
+                            <input
+                                key={key}
+                                className="mix-input"
+                                value={sectionTitles[key] ?? ""}
+                                placeholder={MIX_SECTION_TITLE_DEFAULTS[key]}
+                                onChange={(e) => setSectionTitles((prev) => ({ ...prev, [key]: e.target.value }))}
+                            />
+                        ))}
+                    </div>
                 </Field>
             ) : null}
             {kind === "ticket" ? (
@@ -650,16 +839,28 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             ) : null}
             {kind === "mechanism" ? (
                 <>
-                    <Field label="钩子逻辑" hint="可留空。存储与下面的界面共用一份">
+                    <Field label="运行方式">
+                        <label className="flex items-center gap-3 rounded-[14px] bg-black/[0.03] px-3 py-2.5">
+                            <input type="checkbox" checked={trusted} onChange={(e) => setTrusted(e.target.checked)} />
+                            <span className="menu-label flex-1">信任模式：代码直接在对局页面里运行</span>
+                        </label>
+                        <div className="mix-form-note">
+                            {trusted
+                                ? "不进沙盒。代码能拿到每轮正文的裸 DOM 随便画、能自己联网，也能碰到整台小手机的数据。玩家装入时会看到风险提示，只在你清楚自己在写什么时开。此模式下不用「界面代码」，界面由代码里的 mix.slot 画。"
+                                : "默认在断网的沙盒里跑：钩子是纯函数，界面在 iframe 里，碰不到页面。要像插件那样自由渲染进正文就开信任模式。"}
+                        </div>
+                    </Field>
+                    <Field label={trusted ? "代码" : "钩子逻辑"} hint={trusted ? "进对局时执行一次，用 mix 登记坑位与钩子" : "可留空。存储与下面的界面共用一份"}>
                         <textarea
                             className="mix-textarea"
                             data-code="true"
                             style={{ minHeight: 200 }}
                             value={script}
                             onChange={(e) => setScript(e.target.value)}
-                            placeholder={"每个函数收一份 ctx，返回一个对象（不返回就是什么都不改）。\nctx: { turnCount, state, store, charName, userName, text, ticketRaw, encoreRaw }\n可返回: { text, note, state, store }\n\n例：玩家打「/掷骰」时换成一段带结果的指令\nfunction onBeforeSend(ctx) {\n  if (ctx.text !== \"/掷骰\") return;\n  var n = 1 + Math.floor(Math.random() * 20);\n  return { text: \"（我掷出了 \" + n + \" 点）\" };\n}\n\n例：连着三轮好感度上涨就提醒一次\nfunction onAfterReply(ctx) {\n  var up = Number(ctx.store.连涨 || 0);\n  return { store: { 连涨: String(up + 1) } };\n}"}
+                            placeholder={trusted ? "信任模式：整段代码进对局时在页面里执行一次，用 mix 登记坑位和钩子。\n\nmix.slot(名字, (el, ctx) => { … return 清理函数 })   坑位：turn 每轮正文下方一块 / prose 每轮正文容器本身 / float 铺满对局画面的悬浮层 / bottom 最新一轮之下\n  ctx: { turnId, text, index, state, store, charName, userName }\nmix.on(时机, fn)   sessionStart / beforeSend / rawReply / afterReply / sessionEnd（与沙盒同一套 ctx 与返回；rawReply 在剥状态栏前收 ctx.raw、可返回 raw）；dialogue 收 { id, text, turnId }\nmix.state / mix.store / mix.setState(obj) / mix.setStore(obj) / mix.say(text) / mix.toast(text)\nmix.call(连接器名, 参数) → Promise<{status, data}> / mix.play(id, 音频, type) / mix.stop() / mix.mark(id, 状态) / mix.dialogueButton({icon, title}) / mix.refresh()\n\n例：每轮正文下面画一行按钮，点了以玩家身份发言\nmix.slot('turn', function (el, ctx) {\n  el.innerHTML = '<button>继续</button>';\n  el.querySelector('button').onclick = function () { mix.say('（继续）'); };\n});\nmix.on('afterReply', function (ctx) { return { store: { 轮数: String(ctx.turnCount) } }; });" : "每个函数收一份 ctx，返回一个对象（不返回就是什么都不改）。\nctx: { turnCount, state, store, charName, userName, text, ticketRaw, encoreRaw, lastReply（发送前：最近一条 AI 消息将发给模型的全文） }\n可返回: { text, note, sections, lastReply（整条换掉最近一条 AI 消息，只改请求不落库）, state, store }\n\n例：玩家打「/掷骰」时换成一段带结果的指令\nfunction onBeforeSend(ctx) {\n  if (ctx.text !== \"/掷骰\") return;\n  var n = 1 + Math.floor(Math.random() * 20);\n  return { text: \"（我掷出了 \" + n + \" 点）\" };\n}\n\n例：连着三轮好感度上涨就提醒一次\nfunction onAfterReply(ctx) {\n  var up = Number(ctx.store.连涨 || 0);\n  return { store: { 连涨: String(up + 1) } };\n}"}
                         />
                     </Field>
+                    {trusted ? null : (
                     <Field label="界面代码" hint="HTML + CSS + JS，在沙盒里跑；画在哪、多大、要不要应用画外壳，都在这里用 window.mix 写">
                         <textarea
                             className="mix-textarea"
@@ -667,8 +868,22 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                             style={{ minHeight: 160 }}
                             value={panelHtml}
                             onChange={(e) => setPanelHtml(e.target.value)}
-                            placeholder={"<div style=\"padding:10px\">这里是常驻面板</div>\n\nwindow.mix\n  move(x, y) / size(w, h)         挪自己、改大小（占对局画面的百分比）\n  design(px)                      按多宽排版，画完整体缩放到面板大小；0 = 跟着面板走\n  fit(px)                         报内容多高\n  chrome(on) / plate(on)          要不要应用画的标题条 / 底板，默认都不画\n  drag(on) / resize(on)           玩家能不能拖、能不能缩放\n  z(n)                            叠放次序 0–9\n  grab()                          在自己画的标题条上 pointerdown 时调，接着由应用接管拖动\n  setStore(obj) / setState(obj)   写存储 / 写记住的值\n  say(text)                       以玩家身份说一句\nwindow.MIX_STATE / window.MIX_STORE  当前的值\nwindow.onMixSync(state, store)       值变了会回调"}
+                            placeholder={"<div style=\"padding:10px\">这里是常驻面板</div>\n\nwindow.mix\n  move(x, y) / size(w, h)         挪自己、改大小（占对局画面的百分比）\n  design(px)                      按多宽排版，画完整体缩放到面板大小；0 = 跟着面板走\n  fit(px)                         报内容多高\n  chrome(on) / plate(on)          要不要应用画的标题条 / 底板，默认都不画\n  drag(on) / resize(on)           玩家能不能拖、能不能缩放\n  z(n)                            叠放次序 0–9\n  grab()                          在自己画的标题条上 pointerdown 时调，接着由应用接管拖动\n  setStore(obj) / setState(obj)   写存储 / 写记住的值\n  say(text)                       以玩家身份说一句\n  dialogueButton({icon, title})   在每句「对白」后画一颗按钮，点了收到 window.onMixDialogue({ id, text, turnId })\n  call(name, params)              请宿主代调玩家配的连接器，返回 Promise<{status, data}>\n  mark(id, state)                 对白按钮状态回报：busy / playing / 空串\n  play(id, audio, type) / stop()  让宿主放一段音频（data: URL / ArrayBuffer / Uint8Array / Blob）\n  toast(text)                     给玩家弹一句短提示\nwindow.MIX_STATE / window.MIX_STORE  当前的值\nwindow.onMixDialogue({id, text, turnId})  玩家点了某句对白后的按钮（材料声明了对白按钮才有）\nwindow.onMixSync(state, store)       值变了会回调"}
                         />
+                    </Field>
+                    )}
+                    <Field label="需要的连接器" hint="选填，逗号隔开">
+                        <input
+                            className="mix-input"
+                            value={connectorsText}
+                            onChange={(e) => setConnectorsText(e.target.value)}
+                            placeholder={'例：tts。界面里 mix.call("tts", { text }) 会请宿主代调玩家配好的同名连接器'}
+                            spellCheck={false}
+                        />
+                        <div className="mix-form-note">
+                            连接器是玩家自己在酒柜里配的外部接口（地址和密钥只留在玩家本机），材料只声明名字。
+                            名字用小写字母、数字、-、_。{connectorNames.length ? `将声明：${connectorNames.join("、")}` : ""}
+                        </div>
                     </Field>
                     <MixPreviewInline
                         label="试摆一下"
@@ -678,11 +893,16 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                             html: panelHtml,
                             layout: mixPanelLayoutOf({ layout: keptLayout, dock: keptDock, panelHtml }) ?? MIX_PANEL_DEFAULT_LAYOUT,
                             script,
+                            connectors: connectorNames,
+                            dialogueButton,
+                            trusted,
                         }}
                         disabled={!panelHtml.trim() && !script.trim()}
                     />
                     <div className="mix-struct-note" style={{ marginTop: 10 }}>
-                        沙盒里没有网络，跑太久会被掐断。存储一个对局一份，退出再进来还在。
+                        {trusted
+                            ? "信任模式的代码直接跑在页面里，出错会弹提示但不会拖垮对局。存储一个对局一份，退出再进来还在。"
+                            : "沙盒里没有网络，跑太久会被掐断。存储一个对局一份，退出再进来还在。要调外部接口只能走连接器（mix.call）。"}
                     </div>
                 </>
             ) : null}
@@ -810,6 +1030,15 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             ) : null}
             {structureOpen ? inOverlay(<MixStructureSheet highlight={kind} onClose={() => setStructureOpen(false)} />) : null}
             {craftOpen ? inOverlay(<MixCraftSheet kind={kind} onClose={() => setCraftOpen(false)} />) : null}
+            {modeConfirm ? inOverlay(
+                <MixConfirm
+                    title="切回分框填写？"
+                    body={`有 ${modeConfirm.unmatched} 段内容对不上任何一个框（自己加的小节或没有标题的散文）。它们不会丢，会降成 ### 小标题并进「背景」或「附加设定」框的末尾。`}
+                    confirmText="切回分框"
+                    onConfirm={applySwitchToForm}
+                    onCancel={() => setModeConfirm(null)}
+                />,
+            ) : null}
             {error ? <div style={{ color: "#e2a3a3", fontSize: 12, marginTop: 12 }}>{error}</div> : null}
             <div className="mix-form-footer">
                 <button type="button" className="mix-ghost-btn" onClick={onCancel}>取消</button>

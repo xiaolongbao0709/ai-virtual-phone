@@ -272,6 +272,8 @@ function normalizePermission(value: unknown): CustomAppPermission | null {
     "ui.call",
     "wallet.read",
     "wallet.pay",
+    "bridge.send",
+    "bridge.read",
     "online.play",
   ]);
   return allowed.has(text as CustomAppPermission) ? text as CustomAppPermission : null;

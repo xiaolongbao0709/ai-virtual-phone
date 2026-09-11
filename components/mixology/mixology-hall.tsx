@@ -12,6 +12,7 @@ import {
     deleteHallComment,
     fetchHallComments,
     fetchHallMaterial,
+    backfillHallThumb,
     fetchHallMaterials,
     fetchHallRecipe,
     fetchHallRecipes,
@@ -53,6 +54,29 @@ type HallMode = "menu" | "hall";
 
 function statsLine(entry: { likeCount: number; saveCount: number; commentCount: number }): string {
     return `♥ ${entry.likeCount} · 入柜 ${entry.saveCount} · 评论 ${entry.commentCount}`;
+}
+
+/**
+ * 拍图管线版本：拍法变了（比如折叠区从摊开改为保持收起）就 +1。
+ * 版本变化后，「我的发布」会把自己名下已有封面的存量条目也重拍一轮，
+ * 否则旧管线拍的封面永远和酒柜的实时缩样对不上。哪些条目已按当前版本
+ * 拍过记在 localStorage 里，避免每次进「我的发布」都重复拍。
+ */
+const THUMB_PIPELINE_VERSION = 4;
+const THUMB_REDO_KEY = "mix-thumb-redone";
+
+function loadThumbRedone(): Set<string> {
+    try {
+        const parsed = JSON.parse(window.localStorage.getItem(THUMB_REDO_KEY) ?? "") as { v?: number; ids?: unknown };
+        if (parsed?.v === THUMB_PIPELINE_VERSION && Array.isArray(parsed.ids)) return new Set(parsed.ids.map(String));
+    } catch { /* 没存过或格式不对：当作全部没按当前版本拍过 */ }
+    return new Set();
+}
+
+function saveThumbRedone(ids: Set<string>): void {
+    try {
+        window.localStorage.setItem(THUMB_REDO_KEY, JSON.stringify({ v: THUMB_PIPELINE_VERSION, ids: [...ids].slice(-500) }));
+    } catch { /* 私隐模式等存不进就算了：重拍是幂等的，大不了下次再拍一遍 */ }
 }
 
 
@@ -246,6 +270,9 @@ export function MixologyHall({
     // 点头部刷新（reloadToken 变化）或下架后整体作废
     const listCacheRef = useRef(new Map<string, { materials: MixHallMaterial[]; recipes: MixHallRecipe[]; notReady: string | null }>());
     const lastReloadRef = useRef(reloadToken);
+    // 最新一次 load 的缓存键：快速切 TAG 时几个请求同时在飞，晚到的过期响应
+    // 不许上屏（否则小票页会被后到的文风列表盖掉），只写进会话缓存留着切回去用
+    const activeKeyRef = useRef("");
 
     useEffect(() => {
         mountedRef.current = true;
@@ -255,12 +282,56 @@ export function MixologyHall({
         return () => { mountedRef.current = false; };
     }, []);
 
+    /**
+     * 给自己发布的存量条目补封面。
+     * 缩略图是后来才有的东西，之前上架的条目云端 cover 是空的，坐在大厅里
+     * 永远等不到——而作者本地就有整份材料，进「我的发布」时顺手拍一张补上去。
+     * 拍图管线升过版本后（THUMB_PIPELINE_VERSION），已有封面的条目也重拍一轮：
+     * 旧管线拍的图（比如摊开折叠区那版）不重拍就永远和酒柜的实时缩样对不上。
+     * 只补自己的、只补拍得出图的（小票/尾调且留了示例数据）；一个个来不并发，
+     * 单个失败跳过，全程不打扰玩家。补完就地更新列表与会话缓存，不重新回源。
+     */
+    const backfillThumbs = useCallback(async (entries: MixHallMaterial[], cacheKey: string) => {
+        const redone = loadThumbRedone();
+        const pending = entries.filter((e) => (e.kind === "ticket" || e.kind === "encore") && (!e.cover || !redone.has(e.id)));
+        if (!pending.length) return;
+        const done = new Map<string, string>();
+        let redoneChanged = false;
+        for (const entry of pending) {
+            const local = findMixMaterialByPublishedId(entry.id);
+            if (!local) continue;
+            try {
+                const cover = await backfillHallThumb(entry.id, local);
+                if (cover) {
+                    done.set(entry.id, cover);
+                    redone.add(entry.id);
+                    redoneChanged = true;
+                }
+            } catch {
+                // 补不上就算了：条目照旧显示图标，下次进来再试
+            }
+            if (!mountedRef.current) return;
+        }
+        if (redoneChanged) saveThumbRedone(redone);
+        if (!done.size || !mountedRef.current) return;
+        const patch = (list: MixHallMaterial[]) =>
+            list.map((e) => (done.has(e.id) ? { ...e, cover: done.get(e.id) as string } : e));
+        setMaterials(patch);
+        const cached = listCacheRef.current.get(cacheKey);
+        if (cached) listCacheRef.current.set(cacheKey, { ...cached, materials: patch(cached.materials) });
+    }, []);
+
     const load = useCallback(async () => {
         if (lastReloadRef.current !== reloadToken) {
             listCacheRef.current.clear();
             lastReloadRef.current = reloadToken;
         }
         const cacheKey = `${mode}:${kind}:${scope}`;
+        // 键里带上刷新令牌：点过头部刷新后，刷新前发出的同名请求也算过期
+        const loadKey = `${reloadToken}:${cacheKey}`;
+        activeKeyRef.current = loadKey;
+        // 这次请求回来时还是不是当前画面：卸载了不算，用户已切走/刷新过也不算
+        const fresh = () => mountedRef.current && activeKeyRef.current === loadKey;
         const cached = listCacheRef.current.get(cacheKey);
         if (cached) {
             setMaterials(cached.materials);
@@ -274,30 +345,38 @@ export function MixologyHall({
         try {
             if (mode === "menu") {
                 const { entries, setupRequired } = await fetchHallMaterials(kind, scope === "mine");
-                if (!mountedRef.current) return;
                 const notReadyText = setupRequired ? "酒材页的后厨还没开张（共享表未创建）。" : null;
+                // 过期响应也进会话缓存（切回那个 TAG 能秒开）；头部刷新清过缓存的话不回填旧数据
+                if (lastReloadRef.current === reloadToken) {
+                    listCacheRef.current.set(cacheKey, { materials: entries, recipes: [], notReady: notReadyText });
+                    if (scope === "mine") void backfillThumbs(entries, cacheKey);
+                }
+                if (!fresh()) return;
                 setMaterials(entries);
                 if (notReadyText) setNotReady(notReadyText);
-                listCacheRef.current.set(cacheKey, { materials: entries, recipes: [], notReady: notReadyText });
             } else {
                 const { entries, setupRequired } = await fetchHallRecipes(scope === "mine");
-                if (!mountedRef.current) return;
                 const notReadyText = setupRequired ? "配方页还没开张（共享表未创建）。" : null;
+                if (lastReloadRef.current === reloadToken) {
+                    listCacheRef.current.set(cacheKey, { materials: [], recipes: entries, notReady: notReadyText });
+                }
+                if (!fresh()) return;
                 setRecipes(entries);
                 if (notReadyText) setNotReady(notReadyText);
-                listCacheRef.current.set(cacheKey, { materials: [], recipes: entries, notReady: notReadyText });
             }
         } catch (error) {
-            if (!mountedRef.current) return;
             const message = error instanceof Error ? error.message : "暂时连不上后厨。";
             const permanent = /missing_supabase_env/.test(message);
             const text = permanent ? "酒材页和配方页只在官网营业——本地部署没有联网后端。" : message;
-            setNotReady(text);
             // 未配后端是会话内永久状态：缓存住，自部署环境切 TAG 不反复空打；
             // 瞬时网络错误不缓存，下次切换自动重试
-            if (permanent) listCacheRef.current.set(cacheKey, { materials: [], recipes: [], notReady: text });
+            if (permanent && lastReloadRef.current === reloadToken) {
+                listCacheRef.current.set(cacheKey, { materials: [], recipes: [], notReady: text });
+            }
+            if (!fresh()) return;
+            setNotReady(text);
         } finally {
-            if (mountedRef.current) setLoading(false);
+            if (fresh()) setLoading(false);
         }
     // reloadToken 只作触发器，值本身不参与请求
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -559,7 +638,7 @@ export function MixologyHall({
                 name={m.name}
                 hook={m.hook}
                 tags={m.tags}
-                cover={m.kind === "character" ? m.cover : undefined}
+                cover={mixKindHasCover(m.kind) ? m.cover : undefined}
                 badge="官方"
                 onClick={() => setOfficialDetail(m)}
                 key={m.id}
@@ -601,7 +680,7 @@ export function MixologyHall({
                             hook={entry.hook}
                             tags={entry.tags}
                             // 云端老条目可能还存着换制前上传的封面，非角色卡一律不认
-                            cover={entry.kind === "character" ? entry.cover : undefined}
+                            cover={mixKindHasCover(entry.kind) ? entry.cover : undefined}
                             author={entry.authorName}
                             stats={statsLine(entry)}
                             onClick={() => void openMaterial(entry)}
@@ -739,9 +818,14 @@ export function MixologyHall({
                                                 return;
                                             }
                                             // 机括会在你的对局里按轮执行——入柜前得让人知道自己在装什么
+                                            const trusted = detailMaterial.kind === "mechanism" && (detailMaterial.payload as { trusted?: boolean }).trusted === true;
                                             setConfirm({
-                                                title: "这件机括会执行代码",
-                                                body: <>「{detailMaterial.name}」带的是<b>会在你的对局里按轮执行的代码</b>：它能改写你发出去的话、改写你看到的正文、以你的身份发言。<br />代码跑在没有网络、碰不到应用本体的沙盒里，但对话内容它看得到。<br />只在你信任作者时入柜。</>,
+                                                title: trusted ? "这件机括是信任模式，会直接在页面里运行" : "这件机括会执行代码",
+                                                body: trusted ? (
+                                                    <>「{detailMaterial.name}」的代码<b>不进沙盒，直接在你的对局页面里运行</b>：它能画进正文、能自己联网，也能读写这台小手机上的数据。<br />这和安装聊天插件是同一级别的信任。只在你信任作者时入柜。</>
+                                                ) : (
+                                                    <>「{detailMaterial.name}」带的是<b>会在你的对局里按轮执行的代码</b>：它能改写你发出去的话、改写你看到的正文、以你的身份发言。<br />代码跑在没有网络、碰不到应用本体的沙盒里，但对话内容它看得到。<br />只在你信任作者时入柜。</>
+                                                ),
                                                 confirmText: "我知道，入柜",
                                                 run: () => void importMaterial(detailMaterial),
                                             });
@@ -812,6 +896,10 @@ export function MixologyHall({
                                 const importable = parts.length - goneCount;
                                 // 配方里夹了几件机括：入柜确认要单独说清楚
                                 const mechanismCount = parts.filter((p) => !p.gone && mixKindRunsActiveCode(p.kind)).length;
+                                // 其中信任模式的机括不进沙盒，得单独点名
+                                const trustedNames = parts
+                                    .filter((p) => !p.gone && p.kind === "mechanism" && (p.material as { trusted?: boolean } | null | undefined)?.trusted === true)
+                                    .map((p) => p.name);
                                 return (
                                     <>
                                         <div className="mix-detail-label" style={{ marginTop: 12 }}>这杯里有</div>
@@ -824,13 +912,17 @@ export function MixologyHall({
                                             type="button"
                                             className="mix-brew-btn"
                                             onClick={() => setConfirm({
-                                                title: "连料入柜？",
+                                                title: trustedNames.length > 0 ? "这杯里有信任模式的机括" : "连料入柜？",
                                                 body: <>
                                                     会把「{detailRecipe.name}」以及里面的 <b>{importable} 味材料</b>一并放进你的酒柜（官方件直接用本地出厂版），之后在吧台就能开局。
                                                     {goneCount > 0 ? <><br />{goneCount} 味材料已从酒材页下架，这杯会缺味。</> : null}
-                                                    {mechanismCount > 0 ? (
-                                                        <><br /><br />其中 <b>{mechanismCount} 件是机括</b>：会在你的对局里按轮执行代码，能改写你发出去的话、你看到的正文，也能以你的身份发言。只在你信任作者时入柜。</>
+                                                    {trustedNames.length > 0 ? (
+                                                        <><br /><br />{trustedNames.map((n) => `「${n}」`).join("、")}是<b>信任模式的机括，不进沙盒，直接在你的对局页面里运行</b>：它能画进正文、能自己联网，也能读写这台小手机上的数据。这和安装聊天插件是同一级别的信任。</>
                                                     ) : null}
+                                                    {mechanismCount > trustedNames.length ? (
+                                                        <><br /><br />{trustedNames.length > 0 ? "另有" : "其中"} <b>{mechanismCount - trustedNames.length} 件是机括</b>：会在你的对局里按轮执行代码，能改写你发出去的话、你看到的正文，也能以你的身份发言。代码跑在没有网络、碰不到应用本体的沙盒里。</>
+                                                    ) : null}
+                                                    {mechanismCount > 0 ? <><br />只在你信任作者时入柜。</> : null}
                                                 </>,
                                                 confirmText: mechanismCount > 0 ? "我知道，入柜" : "入柜",
                                                 run: () => void importRecipe(detailRecipe),

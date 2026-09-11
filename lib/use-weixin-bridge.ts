@@ -36,8 +36,11 @@ let _suspendedForCall = false; // 标记：因语音/视频通话临时暂停了
 function ensureAudioCreated() {
     if (_keepAliveAudio) return;
     _keepAliveAudio = new Audio();
-    // 生成 1 秒静音 WAV
-    const sampleRate = 8000;
+    // 生成 1 秒静音 WAV。采样率必须是 48kHz：iOS 的系统音频会话采样率跟着正在
+    // 播放的媒体走，之前用 8kHz 会把整个会话拖到 8kHz，随后播放的 TTS 语音被压到
+    // 4kHz 以下，听感发闷。48kHz 是手机硬件的原生采样率。单声道即可，双声道下
+    // 交错写入的 ±1 会退化成左右声道各自的直流，反而失去"有能量"的意义。
+    const sampleRate = 48000;
     const samples = sampleRate;
     const buf = new ArrayBuffer(44 + samples * 2);
     const view = new DataView(buf);

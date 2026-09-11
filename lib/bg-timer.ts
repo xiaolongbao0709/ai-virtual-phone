@@ -65,6 +65,26 @@ export function bgSetTimeout(callback: () => void, ms: number): () => void {
     return () => clearTimeout(nativeId);
 }
 
+/** Promise delay backed by the worker timer, with optional abort support. */
+export function bgDelay(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+        }
+        let cancel: () => void = () => {};
+        const onAbort = () => {
+            cancel();
+            reject(new DOMException("Aborted", "AbortError"));
+        };
+        cancel = bgSetTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener("abort", onAbort, { once: true });
+    });
+}
+
 /** Clean up the worker (call on app teardown). */
 export function bgTimerCleanup(): void {
     if (worker) {

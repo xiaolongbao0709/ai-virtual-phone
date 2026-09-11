@@ -19,8 +19,11 @@ import MusicFloat from "@/components/music/music-float";
 import MiniAppWindow from "@/components/music/mini-app-window";
 import { PhoneCalendarApp } from "@/components/calendar-app";
 import { PhoneQaApp } from "@/components/phone-qa-app";
+import { ChatPluginPageBoundary } from "@/components/chat/chat-plugin-page-boundary";
 import { ResourceHubApp } from "@/components/resource-hub/resource-hub-app";
 import "@/lib/qa-error-log";
+import { RealityBridgeApp } from "@/components/reality-bridge-app";
+import { REALITY_BRIDGE_APP_EVENT_NAME, REALITY_BRIDGE_DATA_EVENT } from "@/lib/reality-bridge/types";
 import { DiaryApp } from "@/components/diary/diary-app";
 import { XiaohongshuApp } from "@/components/xiaohongshu/xiaohongshu-app";
 import { StoryApp } from "@/components/story/story-app";
@@ -136,6 +139,7 @@ import { setMascotContext } from "@/lib/mascot-context";
 import { DESKTOP_WIDGETS_CHANGED_EVENT } from "@/lib/mascot-events";
 import { useWeixinBridge } from "@/lib/use-weixin-bridge";
 import { startWeixinCloudRealtimeSync } from "@/lib/weixin-cloud-sync";
+import { WeixinSyncToast } from "@/components/weixin-sync-toast";
 import { sendBrowserNotification } from "@/lib/browser-notification";
 import type { ChatSharePayload } from "@/lib/chat-share";
 import { completePendingMcpOAuthCallback } from "@/lib/tool-executor";
@@ -1691,6 +1695,60 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     return () => window.removeEventListener(CHAT_MESSAGE_PUSHED_EVENT, handleCustomAppBackgroundChatEvent);
   }, [activeApp, customApps]);
 
+  // 现实桥数据事件：广播给声明订阅了 bridge.data 的自定义 APP（含后台拉起）
+  useEffect(() => {
+    const handleBridgeDataEvent = (event: Event) => {
+      try {
+        const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+        if (!detail || typeof detail !== "object") return;
+        const payload = {
+          type: String(detail.type ?? ""),
+          payload: String(detail.payload ?? ""),
+          processed: String(detail.processed ?? ""),
+          receivedAt: String(detail.receivedAt ?? new Date().toISOString()),
+        };
+        const nextRuns = customApps
+          .map(app => ({
+            app,
+            subscription: customAppEventSubscriptions(app).find(item => (
+              item.background === true
+              && (item.event === REALITY_BRIDGE_APP_EVENT_NAME || item.event === "*")
+            )),
+          }))
+          .filter((item): item is { app: InstalledCustomApp; subscription: CustomAppEventRecord } => Boolean(item.subscription))
+          .filter(({ app }) => activeApp !== toCustomAppIconId(app.id))
+          .map(({ app, subscription }) => {
+            const id = `bg_${Date.now()}_${++backgroundRunSeqRef.current}_${app.id}`;
+            const entry = typeof subscription.entry === "string" ? subscription.entry : undefined;
+            const timeoutMs = customAppBackgroundTimeoutMs(subscription.timeoutMs);
+            return {
+              id,
+              app,
+              eventName: REALITY_BRIDGE_APP_EVENT_NAME,
+              payload,
+              timeoutMs,
+              launchContext: {
+                source: "background_event",
+                background: true,
+                eventName: REALITY_BRIDGE_APP_EVENT_NAME,
+                entry,
+                runId: id,
+                origin: "custom_app_background",
+                ...payload,
+              },
+            } satisfies CustomAppBackgroundEventRun;
+          });
+        if (nextRuns.length > 0) {
+          setCustomAppBackgroundRuns(prev => [...prev, ...nextRuns].slice(-12));
+        }
+      } catch (err) {
+        console.warn("[RealityBridge] failed to queue bridge.data event", err);
+      }
+    };
+    window.addEventListener(REALITY_BRIDGE_DATA_EVENT, handleBridgeDataEvent);
+    return () => window.removeEventListener(REALITY_BRIDGE_DATA_EVENT, handleBridgeDataEvent);
+  }, [activeApp, customApps]);
+
   useEffect(() => {
     let canceled = false;
     const runTasks = () => {
@@ -1765,6 +1823,12 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       const stopWeixinCloudRealtimeSync = startWeixinCloudRealtimeSync();
       servicesStarted = true;
       cleanupWeixinCloudRealtimeSync = stopWeixinCloudRealtimeSync;
+      // 离线推送回端合并：拉取服务端兜底生成的消息并落进聊天记录
+      void import("@/lib/push-outbox-client").then(m => m.installServerOutboxConsumer()).catch(() => undefined);
+      // 现实桥离线联动：规则/快照同步器（规则变更、切后台时刷新服务端快照）
+      void import("@/lib/push-bridge-sync").then(m => m.installBridgeServerSync()).catch(() => undefined);
+      // 定时唤醒/经期关怀兜底：切后台时刷新快照预约
+      void import("@/lib/push-bailout-client").then(m => m.installScheduledBailoutRefresher()).catch(() => undefined);
     })();
 
     return () => {
@@ -1865,6 +1929,68 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       window.removeEventListener("incoming-call-dismiss", onDismiss);
     };
   }, []);
+
+  // ── 离线来电（AI 在离线消息里输出【拨打电话】）──
+  // 三个入口汇到同一处：SW 转发的来电推送、通知点击冷启动的 ?ring= 参数、
+  // 安卓壳全屏来电接听后的 #incoming-call=（answered=1 直接进通话）。
+  // 超过有效期视为未接：不振铃，正文已照常合并进聊天。
+  useEffect(() => {
+    if (!desktopReady) return;
+    const CALL_VALID_MS = 120_000;
+    const trigger = (sessionId: string, callTs: number, answered: boolean) => {
+      if (!sessionId) return;
+      if (callTs > 0 && Date.now() - callTs > CALL_VALID_MS) return;
+      if (answered) {
+        // 壳上已经按过接听：跳过横幅，直接开聊天进通话屏（同横幅接听键的路径）
+        setActiveApp("chat" as IconId);
+        setChatInitSessionId(sessionId);
+        window.setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("ai-call-trigger", {
+            detail: { sessionId, type: "voice", __fromBar: true },
+          }));
+        }, 600);
+        return;
+      }
+      window.dispatchEvent(new CustomEvent("ai-call-trigger", { detail: { sessionId, type: "voice" } }));
+    };
+    const onSwMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; sessionId?: string; callTs?: number } | null;
+      if (!data || data.type !== "incoming_call_push") return;
+      trigger(String(data.sessionId || ""), Number(data.callTs) || 0, false);
+    };
+    try { navigator.serviceWorker?.addEventListener("message", onSwMessage); } catch { /* 无 SW 环境 */ }
+    const consumeCallHash = () => {
+      const hashMatch = window.location.hash.match(/incoming-call=([^&]+)(?:&rt=(\d+))?(?:&answered=(1))?/);
+      if (!hashMatch) return;
+      const url = new URL(window.location.href);
+      window.history.replaceState(null, "", url.pathname + url.search);
+      trigger(decodeURIComponent(hashMatch[1]), Number(hashMatch[2]) || 0, hashMatch[3] === "1");
+    };
+    // 冷启动参数：等聊天数据水合后再触发（找不到会话时 onTrigger 自会静默放弃）
+    const bootTimer = window.setTimeout(() => {
+      try {
+        const url = new URL(window.location.href);
+        const ring = url.searchParams.get("ring");
+        const rt = Number(url.searchParams.get("rt")) || 0;
+        if (ring) {
+          url.searchParams.delete("ring");
+          url.searchParams.delete("rt");
+          window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+          trigger(decodeURIComponent(ring), rt, false);
+        } else {
+          consumeCallHash();
+        }
+      } catch { /* 参数解析失败按无来电处理 */ }
+    }, 1200);
+    // 热启动：壳 App 已在运行时接听 → loadUrl 只改 hash，走 hashchange
+    const onHashChange = () => { try { consumeCallHash(); } catch { /* ignore */ } };
+    window.addEventListener("hashchange", onHashChange);
+    return () => {
+      try { navigator.serviceWorker?.removeEventListener("message", onSwMessage); } catch { /* ignore */ }
+      window.clearTimeout(bootTimer);
+      window.removeEventListener("hashchange", onHashChange);
+    };
+  }, [desktopReady]);
 
   useEffect(() => {
     const ids = collectThemeAssetIds(draftTheme);
@@ -3930,8 +4056,15 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     if (activeApp === "calendar") {
       return <PhoneCalendarApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
     }
+    if (activeApp === "realitybridge") {
+      return <RealityBridgeApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
+    }
     if (activeApp === "qa") {
-      return <PhoneQaApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
+      return (
+        <ChatPluginPageBoundary page="工坊" onClose={() => setActiveApp(null)}>
+          <PhoneQaApp onClose={() => setActiveApp(null)} onNotice={setNotice} />
+        </ChatPluginPageBoundary>
+      );
     }
     if (activeApp === "resource_hub") {
       return <ResourceHubApp onClose={() => setActiveApp(null)} onNotice={setNotice} />;
@@ -4924,6 +5057,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
           </div>
         </div>
       </section>
+      {/* 微信云同步过程可视化：拉取/上传/运行包同步与失败都在这里冒 toast */}
+      <WeixinSyncToast />
     </>
   );
 }

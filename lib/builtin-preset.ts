@@ -6,7 +6,7 @@ import type { PresetConfig } from "./settings-types";
 import { getCheckPhonePromptTags } from "./checkphone-config";
 
 export const BUILTIN_PRESET_ID = "builtin_default_v1";
-export const BUILTIN_PRESET_VERSION = 260; // 升版本会用出厂内容重写用户的内置预设副本（自定义会丢），非必要不升
+export const BUILTIN_PRESET_VERSION = 264; // 升版本会用出厂内容重写用户的内置预设副本（自定义会丢），非必要不升
 
 export function createBuiltinPreset(): PresetConfig {
     const now = Date.now();
@@ -56,6 +56,8 @@ export function createBuiltinPreset(): PresetConfig {
             { identifier: "chat_optional_actions", enabled: true },
             { identifier: "chat_followup", enabled: true },
             { identifier: "chat_timed_wake", enabled: true },
+            { identifier: "chat_user_timed_wake", enabled: true },
+            { identifier: "chat_idle_reconnect", enabled: true },
             { identifier: "chat_period_care", enabled: true },
             { identifier: "chat_voice_format", enabled: true },
             { identifier: "chat_video_format", enabled: true },
@@ -500,6 +502,42 @@ export function createBuiltinPreset(): PresetConfig {
                 tags: ["chat", "timed_wake"],
             },
             {
+                identifier: "chat_user_timed_wake",
+                name: "▸ 固定时间主动消息",
+                role: "user",
+                content: [
+                    "<proactive_wake_instruction>",
+                    "{{timeContext}}",
+                    "{{user}} 上一条消息已经是约 {{timedWakeElapsedMinutes}} 分钟前。现在请根据你的性格、你们的关系、最近聊天上下文和当前时间，决定要不要主动发消息。",
+                    "如果主动发消息，内容要像你自然想起TA后主动开口。可以关心、撒娇、分享近况、轻轻试探、邀请继续聊天，或任何符合你性格的主动开场。",
+                    "内容必须自然，符合你的角色状态和你们当前关系，并遵循chat_output_format的格式。",
+                    "{{statusRegionExampleLine}}",
+                    "</proactive_wake_instruction>",
+                ].join("\n"),
+                injection_position: 0,
+                injection_depth: 0,
+                enabled: true,
+                tags: ["chat", "user_timed_wake"],
+            },
+            {
+                identifier: "chat_idle_reconnect",
+                name: "▸ 冷场重连",
+                role: "user",
+                content: [
+                    "<idle_reconnect_instruction>",
+                    "{{timeContext}}",
+                    "{{user}} 上一条消息已经是约 {{timedWakeElapsedMinutes}} 分钟前。现在请根据你的性格、你们的关系、最近聊天上下文和当前时间，决定要不要主动发消息。",
+                    "如果主动发消息，内容要像你自然想起TA后主动开口。可以关心、撒娇、分享近况、轻轻试探、邀请继续聊天，或任何符合你性格的主动开场。",
+                    "内容必须自然，符合你的角色状态和你们当前关系，并遵循chat_output_format的格式。",
+                    "{{statusRegionExampleLine}}",
+                    "</idle_reconnect_instruction>",
+                ].join("\n"),
+                injection_position: 0,
+                injection_depth: 0,
+                enabled: true,
+                tags: ["chat", "idle_wake"],
+            },
+            {
                 identifier: "chat_period_care",
                 name: "▸ 经期关心",
                 role: "user",
@@ -629,6 +667,7 @@ export function createBuiltinPreset(): PresetConfig {
                     "#发朋友圈指令：",
                     "【要求】",
                     "- **禁止重复自己在<shortTermMemory>里最近已经发过的朋友圈！**",
+                    "- **照片中只要出现{{char}}本人，必须输出[照片:使用参考图:照片描述]；只有画面完全不出现{{char}}、仅为景物、食物或物件时，才输出[照片:不使用参考图:照片描述]。**",
                     "",
                     "【格式】",
                     "[朋友圈]",
@@ -852,7 +891,9 @@ export function createBuiltinPreset(): PresetConfig {
                     "朋友圈文字内容",
                     "[照片:使用参考图:照片描述] 或 [照片:不使用参考图:照片描述]（可选）",
                     "[/朋友圈]",
-                    "【要求】不要重复最近已经发过的朋友圈；emoji 直接用真实字符，不要用方括号表情。",
+                    "【要求】",
+                    "- 不要重复最近已经发过的朋友圈；emoji 直接用真实字符，不要用方括号表情。",
+                    "- 照片中只要出现{{char}}本人，必须使用参考图；只有画面完全不出现{{char}}、仅为景物、食物或物件时，才不使用参考图。",
                     "",
                     "### 评论朋友圈指令：",
                     "【格式】",
@@ -1204,7 +1245,9 @@ export function createBuiltinPreset(): PresetConfig {
                     "朋友圈文字内容",
                     "[照片:使用参考图:照片描述] 或 [照片:不使用参考图:照片描述]（可选）",
                     "[/朋友圈]",
-                    "【要求】角色名必须是当前群聊成员；内容符合该角色性格和心情；emoji 直接用真实字符，不要用方括号表情。",
+                    "【要求】",
+                    "- 角色名必须是当前群聊成员；内容符合该角色性格和心情；emoji 直接用真实字符，不要用方括号表情。",
+                    "- 照片中只要出现发帖角色本人，必须使用参考图；只有画面完全不出现该角色、仅为景物、食物或物件时，才不使用参考图。",
                     "",
                     "### 某角色评论朋友圈：",
                     "【格式】",

@@ -253,8 +253,74 @@ async function gh<T>(token: string, method: string, path: string, body?: unknown
     return data as T;
 }
 
-function encodeContentPath(dir: string, file: string): string {
-    return `${dir.split("/").map(encodeURIComponent).join("/")}/${encodeURIComponent(file)}`;
+/** 仓库里某个路径是否存在（目录或文件都算）。查不到、查出错都当不存在。 */
+async function pathExists(token: string, repoPath: string, path: string, ref: string): Promise<boolean> {
+    try {
+        await gh(token, "GET", `/repos/${repoPath}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`);
+        return true;
+    } catch { return false; }
+}
+
+/**
+ * 一次提交写多个文件（Git Data API：blobs → tree → commit → 更新 ref）。
+ *
+ * 原先是每个文件单独打一次 contents API，一个资源九个文件就是九次提交，两个后果：
+ *  1. 撞 GitHub 的乐观锁——share 仓库的 build-index Action 监听 main，你写完第一个
+ *     文件它就重建 _index.json 推一格，第二个文件带着旧头过去就是
+ *     「main is at X but expected Y」；
+ *  2. 没有原子性——第 N 次失败时前 N-1 个文件已经落库，仓库里留下一份没有 .owner
+ *     的空壳资源，作者既看不到（本机没记上凭证）也删不掉（凭证比对不上）。
+ * 合成一次提交后两个问题一起消失，Action 也只会被触发一次。
+ */
+async function commitFiles(
+    token: string,
+    repoPath: string,
+    branch: string,
+    message: string,
+    writes: { path: string; contentBase64: string }[],
+    deletes: string[] = [],
+): Promise<void> {
+    if (writes.length === 0 && deletes.length === 0) return;
+
+    // blob 不动分支，先一次性传完；下面重试时这些 sha 可以直接复用。
+    const entries: Record<string, unknown>[] = [];
+    for (const item of writes) {
+        const blob = await gh<{ sha: string }>(token, "POST", `/repos/${repoPath}/git/blobs`, {
+            content: item.contentBase64,
+            encoding: "base64",
+        });
+        entries.push({ path: item.path, mode: "100644", type: "blob", sha: blob.sha });
+    }
+    // 树里 sha 置空表示删除。调用方只塞确实存在的路径，否则 GitHub 会整棵树报错。
+    for (const path of deletes) {
+        entries.push({ path, mode: "100644", type: "blob", sha: null });
+    }
+
+    // 分支头仍可能在这期间被推进（build-index 机器人、另一台设备同时投稿、
+    // 管理员正好合了 PR）。更新 ref 会以非快进被拒；重读分支头拿新父提交重来即可。
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            const ref = await gh<{ object: { sha: string } }>(token, "GET", `/repos/${repoPath}/git/ref/heads/${branch}`);
+            const headSha = ref.object.sha;
+            const head = await gh<{ tree: { sha: string } }>(token, "GET", `/repos/${repoPath}/git/commits/${headSha}`);
+            const tree = await gh<{ sha: string }>(token, "POST", `/repos/${repoPath}/git/trees`, {
+                base_tree: head.tree.sha,
+                tree: entries,
+            });
+            const commit = await gh<{ sha: string }>(token, "POST", `/repos/${repoPath}/git/commits`, {
+                message,
+                tree: tree.sha,
+                parents: [headSha],
+            });
+            await gh(token, "PATCH", `/repos/${repoPath}/git/refs/heads/${branch}`, { sha: commit.sha });
+            return;
+        } catch (error) {
+            lastError = error;
+            if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 800 * (attempt + 1)));
+        }
+    }
+    throw lastError instanceof Error ? lastError : new Error("提交失败，请稍后重试");
 }
 
 /** 标题 → 安全的文件夹名（与上传服务的规则保持一致） */
@@ -269,6 +335,14 @@ export async function uploadViaToken(token: string, source: ResourceHubSource, p
     const { owner, repo, branch } = source;
     const dirName = safeSegment(payload.name);
     const dir = `${RESOURCE_ROOT}/${payload.folder}/${dirName}`;
+
+    // 同分类同名 = 同一个文件夹，写进去就是覆盖别人的资源。投稿一律不许覆盖，
+    // 在传任何东西之前就拦下来（判定看上游仓库，fork 里的副本不算数）。
+    // 作者要更新自己的资源走「编辑」入口，那条路凭 .owner 认人。
+    if (await pathExists(token, `${owner}/${repo}`, dir, branch)) {
+        throw new Error(`「${payload.folder}」里已经有叫「${dirName}」的资源了，换个名字再发`);
+    }
+
     const ownerKey = await generateOwnerKey();
     const toWrite: UploadPayloadFile[] = [...payload.files];
     if (payload.description.trim()) {
@@ -290,17 +364,12 @@ export async function uploadViaToken(token: string, source: ResourceHubSource, p
     if (payload.avatarBase64) {
         toWrite.push({ name: ".avatar.png", contentBase64: payload.avatarBase64 });
     }
+    const writes = toWrite.map(file => ({ path: `${dir}/${file.name}`, contentBase64: file.contentBase64 }));
 
     // 有写权限（仓库主/协作者）→ 直接提交默认分支，立即上架
     const repoInfo = await gh<{ permissions?: { push?: boolean } }>(token, "GET", `/repos/${owner}/${repo}`);
     if (repoInfo.permissions?.push) {
-        for (const file of toWrite) {
-            await gh(token, "PUT", `/repos/${owner}/${repo}/contents/${encodeContentPath(dir, file.name)}`, {
-                message: `上架：${dir}/${file.name}`,
-                content: file.contentBase64,
-                branch,
-            });
-        }
+        await commitFiles(token, `${owner}/${repo}`, branch, `上架：${dir}`, writes);
         recordMyUpload({ path: dir, name: payload.name, ownerKey, uploadedAt: new Date().toISOString() });
         return { merged: true };
     }
@@ -329,13 +398,7 @@ export async function uploadViaToken(token: string, source: ResourceHubSource, p
         ref: `refs/heads/${submitBranch}`,
         sha: baseRef.object.sha,
     });
-    for (const file of toWrite) {
-        await gh(token, "PUT", `/repos/${forkOwner}/${forkRepo}/contents/${encodeContentPath(dir, file.name)}`, {
-            message: `投稿：${dir}/${file.name}`,
-            content: file.contentBase64,
-            branch: submitBranch,
-        });
-    }
+    await commitFiles(token, `${forkOwner}/${forkRepo}`, submitBranch, `投稿：${dir}`, writes);
     const pr = await gh<{ html_url: string }>(token, "POST", `/repos/${owner}/${repo}/pulls`, {
         title: `投稿：${dir}`,
         head: `${me.login}:${submitBranch}`,
@@ -349,35 +412,27 @@ export async function uploadViaToken(token: string, source: ResourceHubSource, p
 /** 作者编辑（Token 直传路径）：直接改仓库里的文件。 */
 export async function editViaToken(token: string, source: ResourceHubSource, record: MyUploadRecord, payload: EditPayload): Promise<void> {
     const { owner, repo, branch } = source;
+    const repoPath = `${owner}/${repo}`;
     const dirName = record.path.split("/")[2] || "";
 
-    const shaOf = async (path: string): Promise<string> => {
-        try {
-            const info = await gh<{ sha?: string }>(token, "GET", `/repos/${owner}/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}`);
-            return info.sha || "";
-        } catch { return ""; }
+    // 编辑是覆盖自己的资源，路径不变，所以不做查重；但删除项要先确认存在，
+    // 否则树里那条 sha:null 会让整次提交被 GitHub 拒掉。
+    const writes: { path: string; contentBase64: string }[] = [];
+    const deletes: string[] = [];
+    const queueWrite = (name: string, contentBase64: string) => {
+        writes.push({ path: `${record.path}/${name}`, contentBase64 });
     };
-    const put = async (name: string, contentBase64: string) => {
-        const target = `${record.path}/${name}`;
-        const sha = await shaOf(target);
-        await gh(token, "PUT", `/repos/${owner}/${repo}/contents/${encodeContentPath(record.path, name)}`, {
-            message: `编辑：${target}`, content: contentBase64, branch, ...(sha ? { sha } : {}),
-        });
-    };
-    const remove = async (name: string) => {
-        const target = `${record.path}/${name}`;
-        const sha = await shaOf(target);
-        if (!sha) return;
-        await gh(token, "DELETE", `/repos/${owner}/${repo}/contents/${encodeContentPath(record.path, name)}`, {
-            message: `编辑：删除 ${target}`, sha, branch,
-        });
+    const queueDelete = async (name: string) => {
+        if (await pathExists(token, repoPath, `${record.path}/${name}`, branch)) {
+            deletes.push(`${record.path}/${name}`);
+        }
     };
 
     for (const raw of payload.removeFiles) {
         const name = raw.split("/").pop() || "";
-        if (name && !name.startsWith(".")) await remove(name);
+        if (name && !name.startsWith(".")) await queueDelete(name);
     }
-    for (const file of payload.addFiles) await put(file.name, file.contentBase64);
+    for (const file of payload.addFiles) queueWrite(file.name, file.contentBase64);
 
     const title = payload.title.trim();
     const fields: Array<{ name: string; value: string }> = [
@@ -386,10 +441,15 @@ export async function editViaToken(token: string, source: ResourceHubSource, rec
         { name: ".author", value: payload.author.trim() },
     ];
     for (const field of fields) {
-        if (field.value) await put(field.name, btoa(unescape(encodeURIComponent(field.value))));
-        else await remove(field.name);
+        if (field.value) queueWrite(field.name, btoa(unescape(encodeURIComponent(field.value))));
+        else await queueDelete(field.name);
     }
-    if (payload.avatarBase64) await put(".avatar.png", payload.avatarBase64);
+    if (payload.avatarBase64) queueWrite(".avatar.png", payload.avatarBase64);
+
+    // 同名文件既删又写时（删掉旧图又传了同名新图）只保留写入：一棵树里同路径
+    // 出现两次的行为没有保证，与其赌不如在这里定死。
+    const writePaths = new Set(writes.map(item => item.path));
+    await commitFiles(token, repoPath, branch, `编辑：${record.path}`, writes, deletes.filter(path => !writePaths.has(path)));
 
     saveMyUploads(loadMyUploads().map(r => (r.path === record.path ? { ...r, name: title || r.name } : r)));
 }
@@ -406,8 +466,21 @@ export async function uploadResource(source: ResourceHubSource, payload: UploadP
 /** 统一编辑入口：同上，token 优先。 */
 export async function editResource(source: ResourceHubSource, record: MyUploadRecord, payload: EditPayload): Promise<void> {
     const config = loadUploadConfig();
-    if (config.githubToken.trim()) {
-        return editViaToken(config.githubToken.trim(), source, record, payload);
+    const token = config.githubToken.trim();
+    // 与上传一致：只有对仓库有写权限（仓库主/协作者）才直连 GitHub 提交；
+    // 普通用户填了自己的 Token 也没有写权限，直连会被 403，退回上传服务凭钥匙改。
+    // 权限查不到（网络/Token 失效）也按没有写权限处理，别让编辑卡死在 Token 上。
+    if (token && await hasPushPermission(token, source)) {
+        return editViaToken(token, source, record, payload);
     }
     return editViaService(config.endpoint, record, payload);
+}
+
+async function hasPushPermission(token: string, source: ResourceHubSource): Promise<boolean> {
+    try {
+        const info = await gh<{ permissions?: { push?: boolean } }>(token, "GET", `/repos/${source.owner}/${source.repo}`);
+        return info.permissions?.push === true;
+    } catch {
+        return false;
+    }
 }

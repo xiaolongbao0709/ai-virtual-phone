@@ -79,6 +79,18 @@ export const MIX_CRAFT_PROMPTS: Record<MixMaterialKind, string> = {
 
 【我的想法】：（写你想扮演什么样的人）`,
 
+    preface: `请帮我写一段 AI 角色扮演提示词的"序言"：它是整份提示词的第一段话，声明这是一场角色扮演、模型该以什么姿态阅读后面的设定与要求。序言直接影响全局文风与服从度；建议保留一句类似「越靠后的要求优先级越高」的优先级声明（应用的段落排序依赖它），并点明扮演对象可用 {{char}} 指代。
+
+请分段输出：
+【材料名】给这段序言起个名
+【一句话介绍】一行说清它的取向
+【标签】2~6 个短词，用顿号隔开
+【序言】可直接使用的序言正文，两三句为宜，不要另加解释
+
+（若我在想法里注明「要 JSON」，请改为只输出（从 { 开始、到 } 结束，不要用 \`\`\` 代码块包裹、前后不加任何文字；字符串值内不允许出现真实换行或制表符（会直接导致导入失败），所有换行一律写成 \\n，长代码字段尤其要逐行检查；请用分行缩进的格式输出整个 JSON（不要压成一行，压成一行极易漏括号）；代码或正则里的一个反斜杠在 JSON 里写成两个，不要再多转一层）：{"kind":"preface","name":"材料名","hook":"…","tags":["…"],"content":"正文"}，纯 JSON、字符串内换行写成 \\n。）
+
+【我的想法】：（想要的开场姿态，例如更强的沉浸压制、弱化规则感、文学化的引子）`,
+
     base: `请帮我写一份 AI 角色扮演的"扮演总纲"：只约束 AI 的扮演态度，不涉及文笔。典型条目：完全成为{{char}}以第一视角活在故事里；绝不跳出角色、不以 AI 自称；绝不代替{{user}}说话或做决定；允许冲突、拒绝与负面情绪，贴合人设比讨好{{user}}更重要。
 
 请分段输出：
@@ -175,7 +187,7 @@ export const MIX_CRAFT_PROMPTS: Record<MixMaterialKind, string> = {
 
 它是什么：正文之外的"加演"，渲染成一小块画面跟在回复后面，给故事开一扇侧窗。典型用法（供参考）：角色的朋友圈/微博动态（带点赞与评论）、监控或直播画面、路人视角的短评、日记或信纸的一页、新闻推送、深夜电台、系统公告……分两种：AI 供稿型（写契约，AI 每轮按契约供稿）与纯静态小品（不写契约，画面固定）。它由两半组成：
 
-① 输出契约（可选）：写给扮演 AI 的指令——壳内按什么格式写。小剧场默认每轮都演：像状态栏一样，每轮回复后面都跟一块，契约把每轮的内容格式定死（明确的行结构，方便渲染代码解析）；只有当设计本身是节点型的（如事件快讯、整点报时）才在契约里写触发条件，不满足时整段不输出。每轮都要演足——小剧场是玩家等生成时读的加餐，好的小剧场有梗、有结构，常常比正文还耐看，要按一篇微型作品的量来要求：社交帖是完整一楼——配图以文字描述画面（渲染代码可做成「点击查看」式图卡）、正文文案、点赞数、再盖一串评论楼，评论各有人名与口吻、有来有回可以歪楼拌嘴；情景短剧是完整一幕——几拍分镜有铺垫有反转、笑点或刀点收尾，可配一张道具卡（转账单、车票、化验单）；监控、电台、新闻同理，都要成篇成件。把这个量写进契约当每轮的硬要求（如「评论至少 5 条、各不同人、其中一条盖楼回复」），每轮通常十来行、两三百字起步——三五行的加演等于没演。纯静态小品同理：画面做足一件完整物件（一整页日记、一张写满的票据），不要一行字撑一块画面。壳标记（[小剧场]…[/小剧场]）与"不满足条件就不输出"由应用统一向模型说明，契约只写时机与内容格式；不要发明占位协议（比如"没有内容时输出空 JSON / noop"），不满足条件时什么都不输出就是正确行为。若做纯静态小品，契约留空。
+① 输出契约（可选）：写给扮演 AI 的指令——壳内按什么格式写。小剧场默认每轮都演：像状态栏一样，每轮回复后面都跟一块，契约把每轮的内容格式定死（明确的行结构，方便渲染代码解析）；只有当设计本身是节点型的（如事件快讯、整点报时）才在契约里写触发条件，不满足时整段不输出。每轮都要演足——小剧场是玩家等生成时读的加餐，好的小剧场有梗、有结构，常常比正文还耐看，要按一篇微型作品的量来要求：社交帖是完整一楼——配图以文字描述画面（渲染代码可做成「点击查看」式图卡）、正文文案、点赞数、再盖一串评论楼，评论各有人名与口吻、有来有回可以歪楼拌嘴；情景短剧是完整一幕——几拍分镜有铺垫有反转、笑点或刀点收尾，可配一张道具卡（转账单、车票、化验单）；监控、电台、新闻同理，都要成篇成件。把这个量写进契约当每轮的硬要求（如「评论至少 5 条、各不同人、其中一条盖楼回复」），每轮通常十来行、两三百字起步——三五行的加演等于没演。纯静态小品同理：画面做足一件完整物件（一整页日记、一张写满的票据），不要一行字撑一块画面。壳标记（[小剧场]…[/小剧场]）由应用统一向模型说明，并且应用默认每轮都要演——契约只写内容格式；节点型设计要自己在契约里把触发条件写明，写了条件后不满足时什么都不输出就是正确行为，不要发明占位协议（比如"没有内容时输出空 JSON / noop"）。若做纯静态小品，契约留空。
 
 ② 渲染代码：完整 HTML（可含 CSS/JS）。
 - 注入方式（只有这两个名字，不要发明别的宏）：{{RAW}} 是纯文本替换，只能放在 HTML 标签内容里当排版占位，绝不能写进 JS 代码（替换后会破坏语法）；JS 里一律用 window.ENCORE_RAW 取原文字符串，兜底写法 var raw = window.ENCORE_RAW || '示例\\n数据'；window.MIX_STATE 是被记住的值。注意：注入的就是壳内原文本身、不含 [小剧场] 标记；JS 里如需内置示例文本，字符串必须用 \\n 转义换行，绝不能写成多行字面量。解析要容错，内容缺项不崩。
@@ -194,10 +206,22 @@ export const MIX_CRAFT_PROMPTS: Record<MixMaterialKind, string> = {
 
 【我的想法】：（想加演什么、长什么样、什么时候出现）`,
 
+    checklist: `请帮我写一份 AI 角色扮演提示词的"输出格式检查"：它是整份系统提示词的最后一节，紧挨着对话历史，模型每轮收尾前会逐项核对这份清单。清单里写的项目模型最不容易漏，没写进清单的附加输出（比如机括要求的标记块）经常被忘掉，所以把每一样"每轮必须出现的东西"都列成一条：状态栏块、小剧场块、机括要求的输出块、字数、内心独白次数等。只列核对项，不写解释。可用 {{char}} / {{user}}。
+
+请分段输出：
+【材料名】给这份清单起个名
+【一句话介绍】一行说清它管什么
+【标签】2~4 个短词，用顿号隔开
+【输出格式检查】第一行写「每轮回复发出前逐项核对：」，下面每条一行、以 - 开头，不要另加解释
+
+（若我在想法里注明「要 JSON」，请改为只输出（从 { 开始、到 } 结束，不要用 \`\`\` 代码块包裹、前后不加任何文字；字符串值内不允许出现真实换行或制表符（会直接导致导入失败），所有换行一律写成 \\n，长代码字段尤其要逐行检查；请用分行缩进的格式输出整个 JSON（不要压成一行，压成一行极易漏括号）；代码或正则里的一个反斜杠在 JSON 里写成两个，不要再多转一层）：{"kind":"checklist","name":"材料名","hook":"…","tags":["…"],"content":"正文"}，纯 JSON、字符串内换行写成 \\n。）
+
+【我的想法】：（这杯里装了哪些状态栏、小剧场、机括，各要求每轮输出什么）`,
+
     filter: `请帮我编写一组"正文清洗规则"，用于自动清理 AI 回复里的文字怪癖。每条规则包含三样：
 - 查找：JS 正则（自动加 g 标志，不要写斜杠定界符），可用捕获组；
 - 替换：替换文本（$1 引用捕获组；留空即删除）；
-- 模式：「仅显示」= 只在渲染时替换，对全部历史即时生效、可随时反悔；「进上下文」= 入库前清洗，发回模型的历史也是洗过的，只影响新回复。
+- 模式：「仅显示」= 只在渲染时替换，对全部历史即时生效、可随时反悔；「进上下文」= 入库前清洗，发回模型的历史也是洗过的，只影响新回复（对局里「修改方案」有「对历史重跑滤网」，可把旧轮次也按当前规则洗一遍）。
 
 请分段输出：
 【材料名】给这张滤网起个名
@@ -224,12 +248,26 @@ export const MIX_CRAFT_PROMPTS: Record<MixMaterialKind, string> = {
 若我的想法说得笼统：先在【玩法方案】里用一两句话复述你理解的玩法，把它拆成「钩子做什么 / 界面做什么 / 数据存哪」；拿不准就先做最小可用版本，最后列两三个可选扩展。
 
 ① 钩子逻辑（纯 JS，可选）：定义这些可选的全局函数，应用会在对应时机调用：
-function onSessionStart(ctx) / onBeforeSend(ctx) / onAfterReply(ctx) / onSessionEnd(ctx)
-ctx 字段：turnCount 已发生轮数；state 记住的值；store 本机括自己的存储；charName / userName；text（发送前 = 玩家这句话，回复后 = 模型正文）；ticketRaw / encoreRaw（回复后的状态栏与小剧场原文）。
-返回一个普通对象（各项都可省略）：{ text: 改写后的 text, note: 只在这一轮生效的临时提示（≤2000字）, state: 要写入的记住值, store: 覆盖自己的存储 }。
-限制：单次执行 2 秒超时；无网络、碰不到页面；存储上限 100KB。
+function onSessionStart(ctx) / onBeforeSend(ctx) / onRawReply(ctx) / onAfterReply(ctx) / onSessionEnd(ctx)
+ctx 字段：turnCount 已发生轮数；state 记住的值；store 本机括自己的存储；charName / userName；text（发送前 = 玩家这句话，回复后 = 模型正文）；ticketRaw / encoreRaw（回复后的状态栏与小剧场原文）；edited（回复后专用：true 表示这是玩家编辑原文后手动要求的重跑，不是新生成。玩家选「替换」时应用已先把存储回滚到这一轮记账前，钩子照常当新一轮记就行；选「追加」则是在现有存储上再跑一遍。一般无需特殊处理，此标记仅供知情）。
+返回一个普通对象（各项都可省略）：{ text: 改写后的 text, raw: 改写后的模型原文（仅 onRawReply）, note: 只在这一轮生效的临时提示（不限长度，写多少注入多少，用量自己把握）, sections: 挂进系统提示词的段, lastReply: 改写后的最近一条 assistant 消息（仅 onBeforeSend）, state: 要写入的记住值, store: 覆盖自己的存储 }。
+onRawReply 在回复到手、剥状态栏/小剧场块之前跑：ctx.raw 是模型原文一个字不少，返回 { raw } 宿主就拿返回的这份去剥块、存库、画卡。用途：机括要模型伪装成状态栏写的块（如 [状态栏:拍立得]…[/状态栏]）在这里剪走存进 store，宿主就不会把它当状态栏画出来；下一轮再用 lastReply 放回历史。onAfterReply 照旧在剥完之后跑。
+lastReply 只在 onBeforeSend 里有效：ctx.lastReply 是最近一条 assistant 消息将要发给模型的完整文本（状态栏块 + 正文 + 小剧场块），返回同名字段就整条换掉——只改这次请求，不落库，界面与存档不动。典型用法：出杯后从正文里摘走的标记行/块存进 store，下一轮在 lastReply 里放回它当初的位置，模型每轮都能在历史里看到自己上一轮写过它（比只在提示词里要求稳得多）。多件机括按顺序接力，后一件看到的是前一件改过的版本。
+要模型每轮多写一段给机括用的东西（记忆行、拍摄单、选项之类）时的标准做法：契约用 sections 挂在 ticket 段（写成「## [状态栏:名字] 的输出契约」，说明它与其他状态栏一样放在回复最开头、[状态栏:名字] 起 [/状态栏] 止），模型就按它已经很熟的状态栏协议输出；onRawReply 里把这一块从原文剪走存进 store；onBeforeSend 里用 lastReply 把上一轮那块放回最近一条 assistant 消息、接在最后一个 [/状态栏] 之后；再用 sections 往 checklist 段挂一条核对项。四步缺一不可——只在提示词里要求、历史里没有示范，模型在长局里会越来越常漏写。
+sections 只在 onBeforeSend 里有效，形如 [{ at: "world", text: "## 记忆区\n…" }]：at 是分段键（base / character / persona / world / flavor / glass / ticket / encore / examples / checklist），text 原样接在那一段之后，标题自己带——写 # 就是独立一段，写 ## 就读作那一段的小节。note 挂在最末尾那条 user 消息，离模型开口最近，适合短提醒；sections 进系统提示词，适合档案、格式要求这类要和其他分段并列的内容。两者都只活这一轮，不落库，回溯不受影响。
+限制：单次执行 2 秒超时；无网络、碰不到页面。存储不设上限，但它随对局整份读写，写太大轮轮都要序列化，自己节制。
 
-② 常驻界面（完整 HTML，可选）：跑在沙盒 iframe 里。用 window.MIX_STATE / window.MIX_STORE 读数据，定义 window.onMixSync(state, store) 接收更新；通过 window.mix 请求动作：setStore(obj)、setState(obj)、say(text) 以玩家身份发言、move(x,y) 与 size(w,h)（占对局画面的百分比）、fit(px) 报内容高度、design(px) 设排版基准宽度、drag(bool)/resize(bool)/chrome(bool)/plate(bool)、z(n)、grab() 在自绘标题条上起拖。界面初始无外壳无底板，位置与尺寸请在代码里用 mix.move / mix.size 自己定好。界面里可用的数据只有 MIX_STATE 与 MIX_STORE 两个对象——没有角色名、玩家名这类现成变量，需要就让钩子写进 store 再读；写完自查一遍：用到的每个变量都必须已声明。
+② 常驻界面（完整 HTML，可选）：跑在沙盒 iframe 里。用 window.MIX_STATE / window.MIX_STORE 读数据，定义 window.onMixSync(state, store) 接收更新；通过 window.mix 请求动作：setStore(obj)、setState(obj)、say(text) 以玩家身份发言、move(x,y) 与 size(w,h)（占对局画面的百分比）、fit(px) 报内容高度、design(px) 设排版基准宽度、drag(bool)/resize(bool)/chrome(bool)/plate(bool)、z(n)、grab() 在自绘标题条上起拖。界面初始无外壳无底板，位置与尺寸请在代码里用 mix.move / mix.size 自己定好。除自由悬浮外还有五个挂点（材料的 layout.slot 字段声明，代码里不可改）："header"/"inputbar-left"/"inputbar-right" 三个按钮位——宿主在标题栏或输入栏画一颗图标按钮（图标由 layout.icon 给一两个 emoji），点击开合面板，面板宽度铺满、高度随内容，适合骰子/道具/快捷指令这类召之即来的工具；"flow-top"/"flow-bottom" 两个流内位——面板作为内嵌卡进滚动流（画布之下/最新一轮之下），随内容滚动，适合任务看板、选择器这类跟着剧情走的界面；"hidden"——不画面板，界面代码只在后台跑（配合对白按钮用）。非悬浮挂点下 move/size/drag/resize/chrome 无效，fit/design/plate 照常；按钮位面板关闭时会被卸载，要留住的状态写进 store。界面里可用的数据只有 MIX_STATE 与 MIX_STORE 两个对象——没有角色名、玩家名这类现成变量，需要就让钩子写进 store 再读；写完自查一遍：用到的每个变量都必须已声明。
+沙盒里没有网络。要调外部接口（语音合成、生图等）只能走连接器：连接器是玩家自己在酒柜里配的接口（地址、密钥、请求体模板都在玩家本机，材料碰不到），材料只在 connectors 字段里声明要用的名字（如 ["tts"]），界面里 mix.call("tts", { text: "…" }) 请宿主代调，返回 Promise，成功 resolve { status, data }（data 按玩家连接器的响应类型：JSON 对象 / 字符串 / 二进制转成的 data: URL），失败 reject（没声明、玩家没配、每分钟超过 30 次、网络错）。参数只能是扁平的字符串/数字/布尔。只在玩家点击后才调用，不要在同步回调或定时器里自动刷接口——那是在烧玩家的额度。以 MiniMax 语音为例：玩家用「MiniMax 语音」预设建一个叫 tts 的连接器后，mix.call("tts", { text }) 的 data.data.audio 是十六进制的 mp3，界面里按两位一字节解成 Uint8Array → Blob → URL.createObjectURL 交给 <audio> 播。
+对白按钮：界面代码启动时调 window.mix.dialogueButton({ icon: "speaker", title: "朗读这句" })（信任模式在 script 里调 mix.dialogueButton(...)）登记后，宿主在对局每句「对白」后面画这颗图标（样式统一、沙盒不用管排版）。icon 写内置名字 speaker / play / translate / note / bookmark / star / heart / quote / spark 会画成与特调同色系的线性图标（优先用这些，别用 emoji，emoji 在各机型上长得不一样）。玩家点击时界面收到 window.onMixDialogue({ id, text, turnId })——text 是这句对白（不含「」），旧轮次也能点；界面用 mix.mark(id, "busy" | "playing" | "") 回报状态，宿主把图标画成转圈/播放中/恢复。同一句再点一次仍会收到事件，界面自己判断是停止还是重播。"点一句念一句""点一句翻译""点一句记进笔记"这类玩法都用它，不要再用钩子把正文抄进 store 再让玩家从面板里选。
+音频一律交给宿主放：mix.play(id, audio, type)（audio 收 data: URL、ArrayBuffer、Uint8Array 或 Blob；type 默认 audio/mpeg；传了 id 那颗按钮自动标播放中、放完自动恢复），mix.stop() 停。不要在界面里自己 new Audio().play()——对白按钮的点击落在宿主上，沙盒没有手势，iOS 会拦掉。
+无界面机括：只靠对白按钮/钩子驱动、不需要画面板的机括（如朗读），layout.slot 写 "hidden"——界面代码照常在看不见的沙盒里跑，收事件、调连接器、mix.play 都照常，只是什么都不画；要跟玩家说话用 mix.toast(text) 弹一句短提示。
+
+③ 信任模式（trusted: true，可选，慎用）：不进沙盒，script 在对局页面里执行一次（与聊天插件同环境），像插件一样拿裸 DOM，能画进正文、能自己 fetch；玩家装入/入柜/导入时会看到风险提示。此模式下不用 panelHtml，界面全由代码画。script 里可用全局 mix：
+- mix.slot(名字, (el, ctx) => { …; return 清理函数 })：坑位。"turn" 每轮 AI 回复下方一块空容器；"prose" 每轮正文容器本身（.mix-prose，可以查它里面的 .mix-dialogue / .mix-narration 等语义类并就地改 DOM）；"float" 铺满对局画面的透明层（你画的元素自己 position:absolute 定位）；"bottom" 最新一轮之下。ctx: { turnId, text（这一轮正文）, index, state, store, charName, userName }（float/bottom 没有 turn 相关字段）。同一坑位每轮各挂一次；state/store 变了会卸载重挂，返回的清理函数在卸载时调。
+- mix.on(时机, fn)：sessionStart / beforeSend / rawReply / afterReply / sessionEnd 与沙盒钩子同一套 ctx 与返回值（{ text, raw, note, sections, lastReply, state, store }，含上面说的状态栏伪装块四步做法）；"dialogue" 收 { id, text, turnId }（材料声明了 dialogueButton 才有）。
+- mix.state / mix.store（读）、mix.setState(obj)、mix.setStore(obj)、mix.say(text)、mix.toast(text)、mix.mark(id, 状态)、mix.call(连接器名, 参数) → Promise、mix.play(id, 音频, type)、mix.stop()、mix.refresh()（全部坑位重挂）。
+- 不要在坑位回调里做昂贵计算或每轮联网；DOM 用应用已有的类名与配色（深色底、--mix-violet 主色），别把整页样式改掉。只在用户明确要"自由渲染进正文"或必须联网时用信任模式，其余一律沙盒。
 - 美学要求：形态跟着玩法走——一颗胶囊、一条窄边栏、一枚角标、一张卡片，或一块整面的仪表盘都可以。原则只有三条：默认别挡住对话（大面板要能收起或退场）；气质贴合对局，把它当世界里的道具来做（罗盘、签筒、终端、账本），不要做成工程感的调试面板；动效轻、不抢注意力。配色与深色界面协调。
 
 请分段输出：
@@ -237,10 +275,13 @@ ctx 字段：turnCount 已发生轮数；state 记住的值；store 本机括自
 【一句话介绍】一行说清它是什么玩法
 【标签】2~6 个短词，用顿号隔开
 【玩法方案】一两句话：这件机括怎么玩，钩子和界面各负责什么
+【需要的连接器】用到外部接口才写，逗号隔开的名字（如 tts）并说明玩家该配什么接口、mix.call 传什么参数；不需要则写"无"
+【对白按钮】要在每句对白后面画按钮的，在界面代码里调 window.mix.dialogueButton({ icon, title }) 登记（信任模式 mix.dialogueButton），不是单独的字段；不需要就不调
+【运行方式】沙盒（默认）或信任模式；信任模式要说明为什么非它不可
 【钩子逻辑】（不需要则写"无"）
 【界面代码】完整 HTML（不需要则写"无"）
 
-（若我在想法里注明「要 JSON」，请改为只输出（从 { 开始、到 } 结束，不要用 \`\`\` 代码块包裹、前后不加任何文字；字符串值内不允许出现真实换行或制表符（会直接导致导入失败），所有换行一律写成 \\n，长代码字段尤其要逐行检查；请用分行缩进的格式输出整个 JSON（不要压成一行，压成一行极易漏括号）；代码或正则里的一个反斜杠在 JSON 里写成两个，不要再多转一层）：{"kind":"mechanism","name":"材料名","hook":"…","tags":["…"],"script":"…","panelHtml":"…"}，纯 JSON、字符串内换行写成 \\n。）
+（若我在想法里注明「要 JSON」，请改为只输出（从 { 开始、到 } 结束，不要用 \`\`\` 代码块包裹、前后不加任何文字；字符串值内不允许出现真实换行或制表符（会直接导致导入失败），所有换行一律写成 \\n，长代码字段尤其要逐行检查；请用分行缩进的格式输出整个 JSON（不要压成一行，压成一行极易漏括号）；代码或正则里的一个反斜杠在 JSON 里写成两个，不要再多转一层）：{"kind":"mechanism","name":"材料名","hook":"…","tags":["…"],"connectors":["tts"],"dialogueButton":{"icon":"speaker","title":"朗读这句"},"trusted":false,"script":"…","panelHtml":"…"}（不用外部接口就不写 connectors，不要对白按钮就不写 dialogueButton，沙盒就不写 trusted），纯 JSON、字符串内换行写成 \\n。）
 
 【我的想法】：（想实现什么玩法，例如骰子面板、好感度进度条、随机事件抽卡）`,
 };
@@ -257,12 +298,16 @@ const MIX_CRAFT_FIELD_NOTES: Record<MixMaterialKind, string> = {
     character: `—— 工具字段对照 ——
 name＝角色名（同时是卡名）；hook＝一句话介绍；tags＝字符串数组（3~8 个短词）；
 baseInfo/personality/appearance/background/worldview/cognition/relations/plot/extra 对应基础信息/性格/外貌/背景/世界观/初始认知/关系与身份/当前剧情/附加设定；
+（另一种写法：profileMode＝"freeform" 时资料改为一框式——profileText＝「角色资料」整段正文、worldText＝「世界与剧情」整段正文，段内用 ## 小节自己分（如 ## 性格），角色名不用写进去；此时上面九个分框字段不再使用。用户的卡是哪种写法，查看材料 会说明，更新时沿用同一种。）
 openings＝字符串数组，每个元素是一条完整开场白，至少两条供玩家挑选（不需要 --- 分隔符）；
 examples＝数组 [{"role":"user"|"char","text":"…"}]，至少 2 轮（4 条），3~5 轮更好；canvas＝开场画布完整 HTML 字符串；cover＝封面图地址（https URL 或 dataURL，可用图床上传取得）。
 质量要求：开场白写满 2~3 条、每条四五百字起步且用正文标记书写（「」对白、*…*心声、【】场景行、~…~强调），示例对话写满 3~5 轮；画布按上方规格完整制作，不要缩水成一张简单信息卡交差。
 图片细则：画布里禁止编造图片外链；经图床上传得到的真实 URL 可以用，没有图床就留可替换占位框。`,
     persona: `—— 工具字段对照 ——
 name＝材料名；hook＝一句话介绍；tags＝字符串数组；userName＝你的名字；content＝人设正文。`,
+    preface: `—— 工具字段对照 ——
+name＝材料名；hook＝一句话介绍；tags＝字符串数组；content＝序言正文（提示词第一段，两三句为宜，建议保留优先级声明）；
+sectionTitles＝选填对象，覆写各分段标题让全篇措辞贴合序言基调，键为 base/character/persona/world/flavor/glass/ticket/encore/examples/checklist（对应默认标题 扮演总纲/角色资料/用户资料/世界与剧情/文风/正文输出要求/状态栏/小剧场/示例对话/输出格式检查），只写要改的键，提示词里的交叉引用会跟着换。`,
     base: `—— 工具字段对照 ——
 name＝材料名；hook＝一句话介绍；tags＝字符串数组；content＝扮演总纲正文。`,
     flavor: `—— 工具字段对照 ——
@@ -286,13 +331,19 @@ renderHtml＝渲染代码完整 HTML；previewRaw＝壳内原文本身，不带 
 historyFeed＝历史回传（选填）："latest"（默认）只把最近一轮的小剧场原文回传给模型——格式示范够用，长局不费 token；"all" 全部轮次回传，仅当契约需要衔接往期小剧场剧情时才用；"none" 完全不回传，每出独立、不需要接续时最省 token。
 列表封面由渲染效果自动生成，不收 cover。
 图片细则：渲染代码里禁止编造图片外链；经图床上传得到的真实 URL 可以用。`,
+    checklist: `—— 工具字段对照 ——
+name＝材料名；hook＝一句话介绍；tags＝字符串数组；content＝输出格式检查正文（系统提示词最后一节的收尾核对清单，槽里没装就没有这一段，官方出厂件可选；每轮必须出现的东西逐条列出，含机括要求的输出块）。`,
     filter: `—— 工具字段对照 ——
 name＝材料名；hook＝一句话介绍；tags＝字符串数组；
 rules＝数组 [{"find":"正则本体（不带斜杠定界符）","replace":"替换文本（删除传空串）","mode":"display"|"context"}]。`,
     mechanism: `—— 工具字段对照 ——
 name＝材料名；hook＝一句话介绍；tags＝字符串数组；script＝钩子逻辑纯 JS（可不传）；
-panelHtml＝常驻界面完整 HTML（可不传）；script 与 panelHtml 至少传一个。
-图片细则：机括沙盒完全断网（CSP default-src 'none'），任何外链（含图床 URL）都加载不了，界面素材只能内联。`,
+panelHtml＝常驻界面完整 HTML（可不传）；script 与 panelHtml 至少传一个；
+layout＝摆放对象（选填）：{"slot":"float|header|inputbar-left|inputbar-right|flow-top|flow-bottom|hidden","icon":"🎲","x":3,"y":62,"w":94,"h":20,"autoHeight":true,…}——slot 不写为自由悬浮；按钮位（header/inputbar-*）配 icon 一两个 emoji，宿主画按钮点击开合；流内位（flow-top/flow-bottom）嵌进滚动流随内容滚动。
+对白按钮不是字段：界面代码里 window.mix.dialogueButton({"icon":"speaker","title":"朗读这句"})（信任模式 mix.dialogueButton）登记，宿主在每句对白后画这颗图标（icon 用内置名字 speaker/play/translate/note/bookmark/star/heart/quote/spark），点击递进界面 window.onMixDialogue({id,text,turnId})，界面 mix.mark(id, "busy"|"playing"|"") 回报状态、mix.play(id, 音频) 让宿主放、mix.toast(text) 提示玩家；layout.slot 可写 "hidden" 表示不画面板只在后台跑；
+trusted＝布尔（选填）：true 为信任模式，script 在页面里执行、用 mix.slot/mix.on 登记（见上文③），此时 panelHtml 不用；
+connectors＝字符串数组（选填，如 ["tts"]）：界面要用的连接器名字，只有声明过的名字 mix.call 才放行；连接器本身由用户在酒柜「连接器」里配（地址与密钥留在用户本机），你只声明名字并在界面里 mix.call(名字, 参数) 调用。
+图片细则：机括沙盒完全断网（CSP default-src 'none'），任何外链（含图床 URL）都加载不了，界面素材只能内联；调外部接口唯一的口子是连接器。`,
 };
 
 /**

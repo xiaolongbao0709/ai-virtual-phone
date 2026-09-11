@@ -21,6 +21,11 @@ const MINIMAX_SPEED_MIN = 0.5;
 const MINIMAX_SPEED_MAX = 2.0;
 const MINIMAX_SPEED_STEP = 0.1;
 const DEFAULT_SPEECH_SPEED = 1.0;
+// Minimax voice_setting.pitch：半音，官方范围 ±12，0 为原声
+const MINIMAX_PITCH_MIN = -12;
+const MINIMAX_PITCH_MAX = 12;
+const MINIMAX_PITCH_STEP = 1;
+const DEFAULT_SPEECH_PITCH = 0;
 const VOICE_PROVIDER_OPTIONS = [
     { value: "OpenAI", label: "OpenAI TTS" },
     { value: "MinimaxCN", label: "Minimax 语音国内版" },
@@ -37,6 +42,7 @@ const DEFAULT_VOICE_CONFIGS: VoiceApiConfig[] = [
         model: "speech-2.8-turbo",
         defaultVoice: "male-qn-qingse",
         speechSpeed: DEFAULT_SPEECH_SPEED,
+        speechPitch: DEFAULT_SPEECH_PITCH,
         enableSTT: true,
         enableTTS: true,
     }
@@ -198,7 +204,10 @@ function normalizeVoiceConfigs(configs: VoiceApiConfig[]): VoiceApiConfig[] {
             const speechSpeed = typeof config.speechSpeed === "number" && Number.isFinite(config.speechSpeed)
                 ? Math.min(MINIMAX_SPEED_MAX, Math.max(MINIMAX_SPEED_MIN, config.speechSpeed))
                 : DEFAULT_SPEECH_SPEED;
-            return { ...config, baseUrl, speechSpeed };
+            const speechPitch = typeof config.speechPitch === "number" && Number.isFinite(config.speechPitch)
+                ? Math.min(MINIMAX_PITCH_MAX, Math.max(MINIMAX_PITCH_MIN, Math.round(config.speechPitch)))
+                : DEFAULT_SPEECH_PITCH;
+            return { ...config, baseUrl, speechSpeed, speechPitch };
         });
 }
 
@@ -735,7 +744,7 @@ export function VoiceSettings() {
                                             <>
                                                 <div className="flex flex-col gap-1">
                                                     <div className="flex items-center justify-between px-1">
-                                                        <label className="menu-desc">语速</label>
+                                                        <label className="menu-desc">语速 (Speed)</label>
                                                         <span className="menu-label font-medium">{(config.speechSpeed ?? DEFAULT_SPEECH_SPEED).toFixed(1)}×</span>
                                                     </div>
                                                     <input
@@ -748,13 +757,34 @@ export function VoiceSettings() {
                                                         className="w-full accent-black"
                                                         aria-label="Minimax 语速"
                                                     />
-                                                    <div className="relative mt-1 h-5 px-1 text-xs text-gray-500" aria-hidden="true">
+                                                    <div className="relative h-4 px-1 text-xs text-gray-500" aria-hidden="true">
                                                         <span className="absolute left-1 whitespace-nowrap">{MINIMAX_SPEED_MIN.toFixed(1)}×</span>
                                                         <span className="absolute whitespace-nowrap" style={{ left: "33.333%", transform: "translateX(-50%)" }}>1.0× 默认</span>
                                                         <span className="absolute right-1 whitespace-nowrap">{MINIMAX_SPEED_MAX.toFixed(1)}×</span>
                                                     </div>
                                                 </div>
-                                                <div className="flex flex-col gap-1">
+                                                <div className="flex flex-col gap-1 -mt-1">
+                                                    <div className="flex items-center justify-between px-1">
+                                                        <label className="menu-desc">音调 (Pitch)</label>
+                                                        <span className="menu-label font-medium">{config.speechPitch ?? DEFAULT_SPEECH_PITCH}</span>
+                                                    </div>
+                                                    <input
+                                                        type="range"
+                                                        min={MINIMAX_PITCH_MIN}
+                                                        max={MINIMAX_PITCH_MAX}
+                                                        step={MINIMAX_PITCH_STEP}
+                                                        value={config.speechPitch ?? DEFAULT_SPEECH_PITCH}
+                                                        onChange={(e) => updateConfig(config.id, { speechPitch: Number(e.target.value) })}
+                                                        className="w-full accent-black"
+                                                        aria-label="Minimax 音调"
+                                                    />
+                                                    <div className="relative h-4 px-1 text-xs text-gray-500" aria-hidden="true">
+                                                        <span className="absolute left-1 whitespace-nowrap">{MINIMAX_PITCH_MIN}</span>
+                                                        <span className="absolute whitespace-nowrap" style={{ left: "50%", transform: "translateX(-50%)" }}>0 默认</span>
+                                                        <span className="absolute right-1 whitespace-nowrap">+{MINIMAX_PITCH_MAX}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex flex-col gap-1 mt-1">
                                                     <label className="menu-desc ml-1">朗读语言</label>
                                                     <select
                                                         value={config.languageBoost || ""}

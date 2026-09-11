@@ -56,6 +56,8 @@ export type CustomAppPermission =
   | "ui.call"
   | "wallet.read"
   | "wallet.pay"
+  | "bridge.send"
+  | "bridge.read"
   | "online.play";
 
 export type CustomAppSdkVersion = "1.0" | string;

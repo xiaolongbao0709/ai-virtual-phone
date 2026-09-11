@@ -133,6 +133,51 @@
   flex: 1;
 }
 
+.offline-push-revamp-notice {
+  width: min(82%, 330px);
+  max-width: 330px;
+}
+
+.offline-push-revamp-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--c-accent, #6688b5);
+  background: color-mix(in srgb, var(--c-accent, #6688b5) 14%, transparent);
+}
+
+.offline-push-revamp-notice .modal-body {
+  display: grid;
+  gap: 10px;
+  text-align: left;
+}
+
+.offline-push-revamp-actions {
+  display: flex;
+}
+
+.offline-push-revamp-actions .ui-btn {
+  min-height: 44px;
+}
+
+.cloud-deployment-scope-dialog {
+  width: min(84%, 340px);
+  max-width: 340px;
+}
+
+.cloud-deployment-scope-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.cloud-deployment-scope-actions .ui-btn {
+  width: 100%;
+  min-height: 44px;
+}
+
 /* The import dialog is position:fixed inside the transformed phone shell; on iOS
    WebKit the spinner's repaints can leave a ghost of the button's previous frame
    ("two stacked buttons"). Promoting the dialog and its buttons to their own GPU
@@ -1482,6 +1527,54 @@
 .settings-tools-menu-toggle {
   margin-left: 12px;
 }
+.settings-tools-header {
+  margin: 8px 4px 0;
+}
+.settings-tools-title-wrap {
+  display: inline-flex;
+  align-items: flex-start;
+  position: relative;
+}
+.settings-tools-title-wrap .settings-menu-section-title {
+  margin: 0;
+}
+.settings-tools-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 999px;
+  outline: none;
+  margin-left: 3px;
+  transform: translateY(-5px);
+  position: relative;
+}
+.settings-tools-info-btn::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  right: -8px;
+  bottom: -8px;
+}
+.settings-tools-info-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c-icon) 22%, transparent);
+  color: var(--c-icon-active);
+  transition: all 0.2s ease;
+}
+.settings-tools-info-btn:hover .settings-tools-info-circle {
+  background: color-mix(in srgb, var(--c-icon) 38%, transparent);
+  transform: scale(1.08);
+}
 .card-featured-chevron {
   color: var(--c-icon);
   flex-shrink: 0;
@@ -1594,6 +1687,62 @@
   box-shadow:
     0 0 32px 8px rgba(96, 218, 195, 0.26),
     0 6px 18px rgba(70, 154, 195, 0.18);
+}
+
+/* 悬浮球贴边停靠状态（半隐藏、低透明度、平滑阻尼动效） */
+.prompt-viewer-float-button.is-docked {
+  transform: translateX(36px) scale(0.75);
+  opacity: 0.55;
+  animation: none !important;
+  transition: transform 320ms cubic-bezier(0.25, 0.8, 0.25, 1), opacity 240ms ease, box-shadow 200ms ease;
+}
+
+.prompt-viewer-float-button.is-docked[data-dock-side="left"] {
+  transform: translateX(-36px) scale(0.75);
+}
+
+.prompt-viewer-float-button.is-docked:hover {
+  opacity: 0.9;
+  transform: translateX(24px) scale(0.78);
+}
+
+.prompt-viewer-float-button.is-docked[data-dock-side="left"]:hover {
+  transform: translateX(-24px) scale(0.78);
+}
+
+/* 弹窗打开态与展开挑选状态：恢复完全可见，停止原浮动动画保证贴边过渡丝滑无跳帧 */
+.prompt-viewer-float-button.is-open,
+.prompt-viewer-float-button.is-expanded {
+  transform: translateX(0) scale(0.75);
+  opacity: 1;
+  animation: none !important;
+  transition: transform 320ms cubic-bezier(0.25, 0.8, 0.25, 1), opacity 240ms ease, box-shadow 200ms ease;
+}
+
+/* 双球模式横向并排展开：靠右贴边时，提示词球在快捷操作球左侧并排（间距约 10px） */
+.prompt-viewer-float-button.is-expanded.is-paired {
+  transform: translateX(-52px) scale(0.75) !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  animation: none !important;
+}
+
+/* 靠左贴边时，提示词球在快捷操作球右侧并排 */
+.prompt-viewer-float-button.is-expanded.is-paired[data-dock-side="left"] {
+  transform: translateX(52px) scale(0.75) !important;
+}
+
+/* 双球贴边收拢时，次级球叠在主球内部，展开时横向丝滑滑出 */
+.prompt-viewer-float-button.is-hidden-behind {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateX(36px) scale(0.4) !important;
+  animation: none !important;
+  transition: transform 320ms cubic-bezier(0.25, 0.8, 0.25, 1), opacity 240ms ease;
+}
+
+.prompt-viewer-float-button.is-hidden-behind[data-dock-side="left"] {
+  transform: translateX(-36px) scale(0.4) !important;
 }
 
 .quick-action-popover {
@@ -2618,7 +2767,7 @@
 
 .data-management-menu .data-cloud-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -3919,6 +4068,85 @@
 .ui-entry-card[data-active="true"] { border-color: var(--c-icon-active); }
 .ui-entry-card[data-disabled="true"] { opacity: 0.5; }
 
+/* ── 预设条目按 App 筛选：高亮/变暗 ── */
+.ui-entry-card[data-app-match="1"] {
+  border-color: var(--c-icon-active);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-icon-active) 30%, transparent);
+  background: color-mix(in srgb, var(--c-icon-active) 6%, var(--c-card, #fff));
+}
+.ui-entry-card[data-app-match="0"] {
+  opacity: 0.3;
+  filter: grayscale(0.5);
+}
+
+/* ── 折叠组：轻量摘要卡 ── */
+.ui-entry-collapsed-group {
+  padding: 10px 16px !important;
+  gap: 0 !important;
+  border-style: dashed !important;
+  border-width: 1.5px !important;
+}
+
+/* ── 多选悬浮条：跟随列表滚动（sticky），不固定顶部/底部 ── */
+.multi-select-float-bar {
+  position: sticky;
+  top: 8px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--c-card, #fff) 92%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid color-mix(in srgb, var(--c-icon-active) 28%, transparent);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12), inset 0 1px 2px rgba(255, 255, 255, 0.4);
+}
+.multi-select-float-bar .msfb-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.multi-select-float-bar .msfb-count {
+  font-size: calc(12px*var(--app-text-scale,1));
+  font-weight: 600;
+  color: var(--c-text-title, #111);
+  white-space: nowrap;
+  margin-right: 2px;
+}
+.multi-select-float-bar .msfb-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.multi-select-float-bar .msfb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: #fff;
+  color: #4b4b4b;
+  font-size: calc(12px*var(--app-text-scale,1));
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.2s, opacity 0.2s;
+  white-space: nowrap;
+}
+.multi-select-float-bar .msfb-btn:active { transform: scale(0.92); }
+.multi-select-float-bar .msfb-btn:disabled { opacity: 0.4; pointer-events: none; }
+.multi-select-float-bar .msfb-btn:hover { background: #f6f6f6; }
+.multi-select-float-bar .msfb-danger { color: var(--c-danger, #e5484d); border-color: color-mix(in srgb, var(--c-danger, #e5484d) 30%, transparent); }
+.multi-select-float-bar .msfb-done { background: var(--c-icon-active, #111); color: #fff; border-color: transparent; }
+.multi-select-float-bar .msfb-done:hover { background: color-mix(in srgb, var(--c-icon-active, #111) 88%, white); }
+
 /* ── Entry card 左滑操作（新增/删除） ── */
 .ui-swipe-wrap {
   position: relative;
@@ -4036,6 +4264,104 @@
   display: flex;
   justify-content: space-between;
   margin-top: 2px;
+}
+
+/* ── 预设生成参数发送选择 ── */
+.generation-parameter-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.generation-parameter-picker-btn {
+  width: 44px;
+  height: 44px;
+  margin-block: -12px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--c-icon);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.generation-parameter-picker-btn:hover,
+.generation-parameter-picker-btn:focus-visible {
+  background: color-mix(in srgb, var(--c-icon-active) 10%, transparent);
+  color: var(--c-icon-active);
+}
+
+.generation-parameter-picker-btn:active {
+  transform: scale(0.94);
+}
+
+.generation-parameter-control {
+  transition: opacity 160ms ease, filter 160ms ease;
+}
+
+.generation-parameter-control[data-disabled] {
+  opacity: 0.42;
+  filter: grayscale(0.35);
+}
+
+.generation-parameter-control[data-disabled] .ui-slider {
+  cursor: not-allowed;
+}
+
+.generation-parameter-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.generation-parameter-picker-desc,
+.generation-parameter-picker-note {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.generation-parameter-chips {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.generation-parameter-chip {
+  min-height: 44px;
+  padding: 10px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--c-page-body-bg);
+  color: var(--c-icon);
+  font-size: calc(11.5px*var(--app-text-scale,1));
+  font-weight: 400;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 160ms ease, color 160ms ease, transform 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.generation-parameter-chip[data-selected] {
+  background: var(--c-icon-active);
+  color: #fff;
+  font-weight: 600;
+}
+
+.generation-parameter-chip:active {
+  transform: scale(0.96);
+}
+
+.generation-parameter-chip:focus-visible {
+  outline: 2px solid var(--c-icon-active);
+  outline-offset: 2px;
 }
 
 /* ── Avatar Upload ── */
@@ -5419,4 +5745,28 @@
   font-weight: 700;
   line-height: 1;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* 提示词查看器：组成标签默认收起，点小按钮展开 */
+.pv-msg-badge-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  cursor: pointer;
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: rgba(128,128,128,0.08);
+  color: var(--c-icon);
+}
+.pv-msg-badge-toggle[data-active] {
+  background: rgba(100,170,255,0.12);
+  color: rgba(100,170,255,0.9);
+}
+.pv-msg-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px 8px;
 }

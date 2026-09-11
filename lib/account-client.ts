@@ -1,3 +1,28 @@
+import { kvGet, kvRemove, kvSet, registerKvMigration } from "./kv-db";
+
+// 当前登录账号 ID 的本地副本。有些同步代码（提示词组装、桥同步的缓存判定）取不到
+// React context 也等不了 /api/auth/me，但又必须按账号隔离缓存——同一台设备换账号
+// 后若继续复用上一个账号的凭据缓存，会把邮件发到上一个账号的收件箱。
+const ACTIVE_ACCOUNT_ID_KEY = "ai_phone_active_account_id_v1";
+registerKvMigration(ACTIVE_ACCOUNT_ID_KEY);
+
+/** 账号解析成功/登出时由 account-gate 维护；自部署模式下固定是 local_user。 */
+export function saveActiveAccountId(accountId: string): void {
+  try {
+    if (accountId) kvSet(ACTIVE_ACCOUNT_ID_KEY, accountId);
+    else kvRemove(ACTIVE_ACCOUNT_ID_KEY);
+  } catch { /* 写不进去只会让按账号隔离的缓存失效，不影响主流程 */ }
+}
+
+/** 读不到就返回空串——调用方一律按「与缓存不匹配」处理，宁可多取一次也不复用。 */
+export function loadActiveAccountId(): string {
+  try {
+    return kvGet(ACTIVE_ACCOUNT_ID_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
 export type AccountProfile = {
   id: string;
   username: string;
@@ -77,6 +102,9 @@ export async function changeAccountPassword(input: {
 }
 
 export async function logoutAccount(): Promise<void> {
+  // 先清账号标识：按账号隔离的缓存（桥代发令牌、邮件通道就绪）据此失效，
+  // 换账号后不会复用上一个账号的凭据。
+  saveActiveAccountId("");
   await fetch("/api/auth/logout", {
     method: "POST",
     credentials: "include",

@@ -15,6 +15,7 @@ import {
     importResourceHubFile,
     fetchPresetEntry,
     applyPresetEntry,
+    fetchResourceHubText,
     loadResourceHubSource,
     purgeShareIndexCache,
     resolveResourceHubAssetUrl,
@@ -40,7 +41,7 @@ import {
     type ResourceHubUploadConfig,
 } from "@/lib/resource-hub-upload";
 import { avatarBase64, fileToAvatarDataUrl, loadHubProfile, saveHubProfile, type HubProfile } from "@/lib/resource-hub-profile";
-import { fetchMergedContributions, type MergedContribution } from "@/lib/community-contrib";
+import { CONTRIB_WALL_PATH, fetchMergedContributions, parseContribWallJson, type MergedContribution } from "@/lib/community-contrib";
 import {
     ensureIdentityKey,
     exportKeyBundle,
@@ -130,10 +131,26 @@ export function ResourceHubApp({ onClose, onNotice }: { onClose: () => void; onN
         setSearchQuery("");
         if (buildWall || buildWallState === "loading") return;
         setBuildWallState("loading");
-        fetchMergedContributions()
-            .then(list => { setBuildWall(list); setBuildWallState("idle"); })
-            .catch(() => setBuildWallState("error"));
-    }, [buildWall, buildWallState]);
+        void (async () => {
+            // 首选：share 仓库里的 _wall.json 静态快照，走集市同款三镜像
+            // （jsDelivr 国内可达、免限流、不花函数额度）。自定义资源仓库没有
+            // 这个文件时静默落空，走下面的直连兜底。
+            try {
+                const wall = parseContribWallJson(await fetchResourceHubText(source, CONTRIB_WALL_PATH));
+                if (wall) {
+                    setBuildWall(wall);
+                    setBuildWallState("idle");
+                    return;
+                }
+            } catch { /* 快照读不到 → 直连 GitHub search 兜底 */ }
+            try {
+                setBuildWall(await fetchMergedContributions());
+                setBuildWallState("idle");
+            } catch {
+                setBuildWallState("error");
+            }
+        })();
+    }, [buildWall, buildWallState, source]);
     // 图片全屏预览（点开可保存）
     const [previewImage, setPreviewImage] = useState<string | null>(null);
     // 送花：各资源花数（我的货摊展示用）+ 非阻塞小提示
@@ -198,6 +215,8 @@ export function ResourceHubApp({ onClose, onNotice }: { onClose: () => void; onN
     const [confirmPlugin, setConfirmPlugin] = useState<string | null>(null);
     // 应用主题包前的覆盖确认：待导入的主题包文件路径
     const [confirmTheme, setConfirmTheme] = useState<string | null>(null);
+    // 特调资源里夹着信任模式机括：文件要先取下来才知道，所以是导入中途弹出、等用户答复
+    const [confirmTrusted, setConfirmTrusted] = useState<{ names: string[]; resolve: (ok: boolean) => void } | null>(null);
     // 「预设条目」四步流程：取到的条目 → 选新增/覆盖 → 选预设 → 选位置
     const [entryImport, setEntryImport] = useState<{
         prompt: Prompt;
@@ -403,7 +422,11 @@ export function ResourceHubApp({ onClose, onNotice }: { onClose: () => void; onN
         setImportingTo(contactId ?? destination);
         try {
             // authorName：条目投稿人署名，特调入柜时随材料带入（别的目的地忽略）
-            const message = await importResourceHubFile(source, path, destination, { contactId, authorName: activeEntry?.author?.trim() || undefined });
+            const message = await importResourceHubFile(source, path, destination, {
+                contactId,
+                authorName: activeEntry?.author?.trim() || undefined,
+                confirmTrusted: (names) => new Promise<boolean>((resolve) => setConfirmTrusted({ names, resolve })),
+            });
             onNotice?.(message);
         } catch (err) {
             onNotice?.(`导入失败：${err instanceof Error ? err.message : String(err)}`);
@@ -544,8 +567,12 @@ export function ResourceHubApp({ onClose, onNotice }: { onClose: () => void; onN
     const handleDeleteEntry = useCallback(async (entry: ShareIndexEntry) => {
         setDeleting(true);
         try {
-            // 本人上传的用删除凭证走上传服务；否则按管理员 Token 直删
-            const myRecord = loadMyUploads().find(r => r.path === entry.path);
+            // 本人上传的用删除凭证走上传服务；否则按管理员 Token 直删。
+            // 认人必须和显示删除按钮用同一套判断（myRecordFor）：它除了本机记录，
+            // 还认索引里的钥匙指纹。之前这里只查本机记录，换了设备、只导入了钥匙，
+            // 或者本机记录的路径和服务端安全化后的文件夹名对不上时，按钮照常显示，
+            // 点下去却走了管理员 Token 那条路，普通作者就会看到「请先填入 GitHub Token」。
+            const myRecord = myRecordFor(entry.path);
             if (myRecord) {
                 await ownerDeleteViaService(loadUploadConfig().endpoint, myRecord);
             } else {
@@ -565,7 +592,7 @@ export function ResourceHubApp({ onClose, onNotice }: { onClose: () => void; onN
         } finally {
             setDeleting(false);
         }
-    }, [onNotice]);
+    }, [myRecordFor, onNotice]);
 
     const handleSubmitClaim = useCallback(async () => {
         const entry = index?.entries.find(e => e.path === claimPath);
@@ -935,7 +962,7 @@ export function ResourceHubApp({ onClose, onNotice }: { onClose: () => void; onN
                             <div className="rh-build-wall-sub">每一条被采纳的改进，都会刻在这里</div>
                             {buildWallState === "loading" && <div className="rh-center-hint">正在读取贡献墙...</div>}
                             {buildWallState === "error" && (
-                                <div className="rh-center-hint">贡献墙暂时读取失败（GitHub 接口限流），稍后再来看看</div>
+                                <div className="rh-center-hint">贡献墙暂时读取失败（网络不通或 GitHub 接口限流），稍后再来看看</div>
                             )}
                             {buildWall && buildWall.length === 0 && (
                                 <div className="rh-center-hint">虚位以待——第一个被采纳的改进会出现在这里</div>
@@ -1628,6 +1655,27 @@ export function ResourceHubApp({ onClose, onNotice }: { onClose: () => void; onN
                                 setConfirmTheme(null);
                                 void runImport(target, "theme");
                             }}>确认应用</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 特调信任模式告知：这类机括不进沙盒，与插件同权限，落库前必须问一句 */}
+            {confirmTrusted && (
+                <div className="rh-dialog-overlay">
+                    <div className="rh-dialog" onClick={e => e.stopPropagation()}>
+                        <div className="rh-titlebar"><span className="rh-titlebar-text">这份资源里有信任模式的机括</span></div>
+                        <div className="rh-dialog-body">
+                            <span className="rh-dialog-icon">⚠️</span>
+                            <span>
+                                {confirmTrusted.names.map(n => `「${n}」`).join("、")}的代码<b>不进沙盒，直接在你的对局页面里运行</b>：
+                                它能画进正文、能自己联网，也能读写这台小手机上的数据（包括 API 配置与聊天记录）。
+                                这和安装聊天插件是同一级别的信任，只在你信任作者时入柜。
+                            </span>
+                        </div>
+                        <div className="rh-dialog-footer">
+                            <button className="rh-btn" onClick={() => { const c = confirmTrusted; setConfirmTrusted(null); c.resolve(false); }}>取消</button>
+                            <button className="rh-btn rh-btn-primary" onClick={() => { const c = confirmTrusted; setConfirmTrusted(null); c.resolve(true); }}>我知道，入柜</button>
                         </div>
                     </div>
                 </div>

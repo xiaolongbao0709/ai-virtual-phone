@@ -19,6 +19,23 @@ const MAX_MESSAGES_PER_SESSION = 200;
 
 export type QaToolStatus = { name: string; running: boolean; success?: boolean; detail?: string; result?: string; subtitle?: string };
 
+export type QaTextAttachment = { name: string; content: string };
+
+export const QA_TEXT_ATTACHMENT_MAX_BYTES = 1024 * 1024;
+export const QA_TEXT_ATTACHMENTS_MAX_COUNT = 6;
+export const QA_TEXT_ATTACHMENTS_MAX_CHARS = 200_000;
+
+export function validateQaTextAttachments(files?: QaTextAttachment[]): string | null {
+    if (!files?.length) return null;
+    if (files.length > QA_TEXT_ATTACHMENTS_MAX_COUNT) return `最多添加 ${QA_TEXT_ATTACHMENTS_MAX_COUNT} 个附件。`;
+    if (new Set(files.map((file) => file.name)).size !== files.length) return "不能添加同名附件。";
+    const chars = files.reduce((sum, file) => sum + file.name.length + file.content.length, 0);
+    if (chars > QA_TEXT_ATTACHMENTS_MAX_CHARS) {
+        return `附件文本合计不能超过 ${Math.floor(QA_TEXT_ATTACHMENTS_MAX_CHARS / 1000)}K 字符。`;
+    }
+    return null;
+}
+
 /** 消息内的时序分段：文字与工具行按实际发生顺序交错展示 */
 export type QaSegment =
     | { kind: "text"; text: string }
@@ -37,6 +54,8 @@ export type QaMsg = {
     content: string;
     /** user：随消息发送的图片（dataURL），点击可查看 */
     images?: string[];
+    /** user：随消息发送的纯文本或代码附件 */
+    files?: QaTextAttachment[];
     reasoning?: string;
     error?: string;
     aborted?: boolean;
@@ -57,6 +76,8 @@ export type QaSession = {
     createdAt: number;
     updatedAt: number;
     messages: QaMsg[];
+    /** 抽屉里置顶显示；只影响排序，不动 updatedAt */
+    isPinned?: boolean;
     /** 模型侧完整上下文（含工具调用与结果），跨轮保留；触顶时压缩为摘要 */
     context?: QaContextEntry[];
     /** 本会话中 agent 创建/更新过的本机内容（APP/游戏/剧场），供工坊内预览直接打开 */
@@ -90,6 +111,7 @@ function getContextBudget(): number {
 
 function entryChars(entry: QaContextEntry): number {
     let total = entry.content.length;
+    for (const file of entry.files ?? []) total += file.name.length + file.content.length;
     for (const call of entry.toolCalls ?? []) {
         total += call.name.length + JSON.stringify(call.args ?? {}).length;
     }
@@ -99,9 +121,24 @@ function entryChars(entry: QaContextEntry): number {
 /** 旧会话没有 context 字段：用可见消息引导出初始上下文 */
 function sessionContext(session: QaSession): QaContextEntry[] {
     if (session.context?.length) return session.context;
-    return session.messages
-        .filter((m) => !m.error && m.content.trim())
-        .map((m) => ({ role: m.role, content: m.content }));
+    const entries: QaContextEntry[] = [];
+    for (let index = 0; index < session.messages.length; index += 1) {
+        const message = session.messages[index];
+        if (message.error || (!message.content.trim() && !message.images?.length && !message.files?.length)) continue;
+        if (message.role === "user") {
+            const turn = session.messages.slice(index + 1).find((candidate) => candidate.role === "assistant")?.id;
+            entries.push({
+                role: "user",
+                content: message.content,
+                images: message.images,
+                files: message.files,
+                turn,
+            });
+        } else {
+            entries.push({ role: "assistant", content: message.content, turn: message.id });
+        }
+    }
+    return entries;
 }
 
 function contextUsageOf(session: QaSession | null): number {
@@ -269,6 +306,18 @@ export function getQaChatSnapshot(): QaChatSnapshot {
     return snapshot;
 }
 
+/** 重命名对话：只改标题，不碰 updatedAt——改个名字不该把会话顶到时间序最前 */
+export function renameQaSession(id: string, title: string): void {
+    const trimmed = title.trim().slice(0, 80);
+    if (!trimmed) return;
+    updateSession(id, (s) => ({ ...s, title: trimmed }));
+}
+
+/** 置顶开关：排序在抽屉渲染层做（置顶在前，其余按时间），存储顺序保持时间序 */
+export function toggleQaSessionPin(id: string): void {
+    updateSession(id, (s) => ({ ...s, isPinned: !s.isPinned }));
+}
+
 export async function hydrateQaChat(): Promise<void> {
     if (hydrated) return;
     if (hydratePromise) return hydratePromise;
@@ -358,15 +407,132 @@ export function deleteQaSession(sessionId: string) {
     publish();
 }
 
-/** 编辑一条已发送消息的内容（小坊助手界面"编辑"）。
- *  只覆盖 content 并清掉时序分段缓存（保证渲染用新内容），工具行/提交卡等历史保留。 */
-export function updateQaMessageContent(sessionId: string, msgId: string, content: string): void {
-    sessions = sessions.map((s) =>
-        s.id !== sessionId
-            ? s
-            : { ...s, messages: s.messages.map((m) => (m.id === msgId ? { ...m, content, segments: undefined } : m)) }
+export type QaMessageEditResult = { ok: true } | { ok: false; reason: string };
+
+function userMessageTurnId(session: QaSession, messageIndex: number): string | undefined {
+    return session.messages.slice(messageIndex + 1).find((message) => message.role === "assistant")?.id;
+}
+
+function resendTurnIds(session: QaSession, messageIndex: number): Set<string> {
+    return new Set(
+        session.messages
+            .slice(messageIndex + 1)
+            .filter((message) => message.role === "assistant")
+            .map((message) => message.id),
     );
-    publish();
+}
+
+/** 返回无法安全重新生成的原因；null 表示这是一段无工具副作用的用户对话。 */
+export function getQaEditAndResendBlockReason(sessionId: string, msgId: string): string | null {
+    if (isGenerating || isCompacting) return "小坊正在执行或整理上下文，请等待当前任务完成。";
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+    if (!session) return "会话已不存在。";
+    const messageIndex = session.messages.findIndex((message) => message.id === msgId);
+    if (messageIndex < 0) return "消息已不存在。";
+    const message = session.messages[messageIndex];
+    if (message.role !== "user") return "只有用户消息可以修改后重新发送。";
+    if (!userMessageTurnId(session, messageIndex)) return "这条消息缺少完整的回复轮次，无法安全重新发送。";
+
+    const turnIds = resendTurnIds(session, messageIndex);
+    const visibleSideEffects = session.messages.slice(messageIndex + 1).some((candidate) =>
+        candidate.role === "assistant" && (Boolean(candidate.tools?.length) || Boolean(candidate.pendingCommit)),
+    );
+    const contextSideEffects = sessionContext(session).some((entry) =>
+        Boolean(entry.turn && turnIds.has(entry.turn) && (entry.role === "tool" || entry.toolCalls?.length)),
+    );
+    if (visibleSideEffects || contextSideEffects) {
+        return "后续回复已经调用工具或产生实际操作，不能安全回滚；你仍可以保存文字修改。";
+    }
+    return null;
+}
+
+/** 修改已发送消息，并同步模型侧上下文。 */
+export function updateQaMessageContent(
+    sessionId: string,
+    msgId: string,
+    content: string,
+    images?: string[],
+    files?: QaTextAttachment[],
+): QaMessageEditResult {
+    if (isGenerating || isCompacting) return { ok: false, reason: "小坊正在执行或整理上下文，请稍后再修改。" };
+    if (!content.trim() && !images?.length && !files?.length) return { ok: false, reason: "消息内容不能为空。" };
+    const filesError = validateQaTextAttachments(files);
+    if (filesError) return { ok: false, reason: filesError };
+
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+    if (!session) return { ok: false, reason: "会话已不存在。" };
+    const messageIndex = session.messages.findIndex((message) => message.id === msgId);
+    if (messageIndex < 0) return { ok: false, reason: "消息已不存在。" };
+    const message = session.messages[messageIndex];
+    let nextContext = session.context;
+
+    if (nextContext?.length) {
+        if (message.role === "user") {
+            const turn = userMessageTurnId(session, messageIndex);
+            if (!turn || !nextContext.some((entry) => entry.role === "user" && entry.turn === turn)) {
+                return { ok: false, reason: "这条旧消息缺少上下文索引，无法安全修改。" };
+            }
+            nextContext = nextContext.map((entry) =>
+                entry.role === "user" && entry.turn === turn
+                    ? { ...entry, content, images: images?.length ? images : undefined, files: files?.length ? files : undefined }
+                    : entry,
+            );
+        } else {
+            const assistantIndexes = nextContext
+                .map((entry, index) => (entry.role === "assistant" && entry.turn === message.id ? index : -1))
+                .filter((index) => index >= 0);
+            const lastAssistantIndex = assistantIndexes.at(-1);
+            if (lastAssistantIndex == null) return { ok: false, reason: "这条旧消息缺少上下文索引，无法安全修改。" };
+            nextContext = nextContext.map((entry, index) =>
+                entry.role === "assistant" && entry.turn === message.id
+                    ? { ...entry, content: index === lastAssistantIndex ? content : "" }
+                    : entry,
+            );
+        }
+    }
+
+    updateSession(sessionId, (current) => ({
+        ...current,
+        updatedAt: Date.now(),
+        context: nextContext,
+        messages: current.messages.map((candidate) =>
+            candidate.id === msgId
+                ? { ...candidate, content, images: images?.length ? images : undefined, files: files?.length ? files : undefined, segments: undefined }
+                : candidate,
+        ),
+    }));
+    return { ok: true };
+}
+
+/** 修改用户消息并重新生成。只允许截断没有工具副作用的纯对话。 */
+export function editAndResendQaMessage(
+    sessionId: string,
+    msgId: string,
+    content: string,
+    images?: string[],
+    files?: QaTextAttachment[],
+): QaMessageEditResult {
+    if (!content.trim() && !images?.length && !files?.length) return { ok: false, reason: "消息内容不能为空。" };
+    const filesError = validateQaTextAttachments(files);
+    if (filesError) return { ok: false, reason: filesError };
+    const blocked = getQaEditAndResendBlockReason(sessionId, msgId);
+    if (blocked) return { ok: false, reason: blocked };
+
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+    if (!session || activeSessionId !== sessionId) return { ok: false, reason: "当前会话已经切换，请重新操作。" };
+    const messageIndex = session.messages.findIndex((message) => message.id === msgId);
+    if (messageIndex < 0) return { ok: false, reason: "消息已不存在。" };
+    const removedTurns = resendTurnIds(session, messageIndex);
+    const prefixContext = session.context?.filter((entry) => !entry.turn || !removedTurns.has(entry.turn));
+
+    updateSession(sessionId, (current) => ({
+        ...current,
+        messages: current.messages.slice(0, messageIndex),
+        context: prefixContext,
+        updatedAt: Date.now(),
+    }));
+    void sendQaMessage(content, images, files);
+    return { ok: true };
 }
 
 function updateSession(sessionId: string, updater: (session: QaSession) => QaSession, options?: { persist?: boolean }) {
@@ -388,10 +554,11 @@ function autoTitle(text: string): string {
 export async function sendQaMessage(
     text: string,
     images?: string[],
+    files?: QaTextAttachment[],
     options?: { /** true=不显示用户气泡，只把指令写入上下文（重试续接等内部续发用） */ silentUser?: boolean },
 ): Promise<void> {
     const trimmed = text.trim();
-    if ((!trimmed && !images?.length) || isGenerating) return;
+    if ((!trimmed && !images?.length && !files?.length) || isGenerating || isCompacting || validateQaTextAttachments(files)) return;
 
     let session = getActiveSession();
     if (!session) {
@@ -401,20 +568,34 @@ export async function sendQaMessage(
     }
     const sessionId = session.id;
 
-    // 触顶先压缩再开新轮（Claude Code 同款时机）
-    if (contextUsageOf(session) >= 1) {
+    const nextEntry: QaContextEntry = {
+        role: "user",
+        content: trimmed || "（用户发来图片或附件）",
+        images: images?.length ? images : undefined,
+        files: files?.length ? files : undefined,
+    };
+    // 当前内容加上新消息将触顶时，先压缩再开新轮。
+    const nextUsage = contextUsageOf(session) + entryChars(nextEntry) / getContextBudget();
+    if (nextUsage >= 1) {
         await compactSessionContext(sessionId);
     }
 
-    const userMsg: QaMsg = { id: makeId(), role: "user", content: trimmed, images: images?.length ? images : undefined, ts: Date.now() };
+    const userMsg: QaMsg = {
+        id: makeId(),
+        role: "user",
+        content: trimmed,
+        images: images?.length ? images : undefined,
+        files: files?.length ? files : undefined,
+        ts: Date.now(),
+    };
     const assistantMsg: QaMsg = { id: makeId(), role: "assistant", content: "", ts: Date.now() };
 
     updateSession(sessionId, (s) => ({
         ...s,
-        title: s.messages.length === 0 ? autoTitle(trimmed || "（图片）") : s.title,
+        title: s.messages.length === 0 ? autoTitle(trimmed || "（图片/附件）") : s.title,
         updatedAt: Date.now(),
         messages: [...s.messages, ...(options?.silentUser ? [] : [userMsg]), assistantMsg].slice(-MAX_MESSAGES_PER_SESSION),
-        context: [...sessionContext(s), { role: "user", content: trimmed || "（用户发来图片）", images: images?.length ? images : undefined, turn: assistantMsg.id }],
+        context: [...sessionContext(s), { ...nextEntry, turn: assistantMsg.id }],
     }));
 
     isGenerating = true;
@@ -683,6 +864,7 @@ export async function retryQaMessage(assistantMsgId: string): Promise<void> {
     }));
     await sendQaMessage(
         "上一轮执行中途失败。请从中断的地方继续完成剩余部分，已经完成的操作和说过的内容不要重复。",
+        undefined,
         undefined,
         { silentUser: true },
     );

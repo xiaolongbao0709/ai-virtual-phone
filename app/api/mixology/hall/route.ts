@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentAccount } from "@/lib/server/account-auth";
-import { getMixologySupabaseConfig, mixologyRestFetch } from "@/lib/server/mixology-supabase";
+import { getMixologySupabaseConfig, mixologyRestFetch, uploadMixologyCoverToStorage } from "@/lib/server/mixology-supabase";
 import { normalizeRecipeParts as normalizeParts, validateMechanismPayload, type RecipePartRef } from "@/lib/mixology/hall-parts";
 
 // 独家特调 · 酒材/配方 API：材料（mixology_items）与配方（mixology_recipes）共用一套路由，
@@ -12,7 +12,7 @@ import { normalizeRecipeParts as normalizeParts, validateMechanismPayload, type 
 // when 是这一件的生效条件。同一 kind 可以出现多条（一格叠多件），数组顺序即叠放顺序。
 // 详情接口现场联表把引用换成完整材料内容；已下架的标 gone。
 
-const MATERIAL_KINDS = ["character", "persona", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "filter", "mechanism"] as const;
+const MATERIAL_KINDS = ["character", "persona", "preface", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "checklist", "filter", "mechanism"] as const;
 
 const ITEM_SUMMARY_COLUMNS = "id,kind,name,hook,cover,tags,author_id,author_name,author_avatar,like_count,save_count,view_count,comment_count,created_at,updated_at";
 const ITEM_COLUMNS = `${ITEM_SUMMARY_COLUMNS},payload`;
@@ -35,6 +35,16 @@ const TABLES: Record<HallType, string> = {
  *（likedByMe/savedByMe 只在详情里给），响应对所有人相同，让 Netlify 边缘
  * 挡掉重复回源——列表带封面 base64，是特调这边 Supabase 出站的大头。
  */
+// 发布/更新时把 base64 封面转存到 Storage 公开桶，DB 只存公共 URL：
+// 浏览器直连桶拉图，函数与 PostgREST 都不再背封面字节。转存失败回落
+// 原 base64（老链路照常工作），空值或已是 URL 的原样保留。
+async function resolveCoverForWrite(type: HallType, id: string, rawCover: unknown): Promise<string> {
+  const cover = cleanText(rawCover, 2_000_000);
+  if (!cover.startsWith("data:image/")) return cover;
+  const url = await uploadMixologyCoverToStorage(type, id, cover);
+  return url || cover;
+}
+
 const CDN_LIST_CACHE_HEADERS = {
   "Cache-Control": "public, max-age=0, must-revalidate",
   "Netlify-CDN-Cache-Control": "public, durable, s-maxage=60, stale-while-revalidate=300",
@@ -310,17 +320,18 @@ export async function POST(request: Request) {
         const invalid = validateMechanismPayload(payload);
         if (invalid) return NextResponse.json({ ok: false, error: invalid }, { status: 400 });
       }
+      const materialId = createId("mxi");
       const insert = await supabaseFetch<unknown[]>(
         `mixology_items?select=${ITEM_COLUMNS}`,
         {
           method: "POST",
           headers: { Prefer: "return=representation" },
           body: JSON.stringify({
-            id: createId("mxi"),
+            id: materialId,
             kind,
             name,
             hook: cleanText(record.hook, 200),
-            cover: cleanText(record.cover, 2_000_000),
+            cover: await resolveCoverForWrite("material", materialId, record.cover),
             tags: normalizeTags(record.tags),
             payload,
             author_id: account.id,
@@ -341,16 +352,17 @@ export async function POST(request: Request) {
     }
     const shelfError = await verifyPartsOnShelf(normalized.parts);
     if (shelfError) return NextResponse.json({ ok: false, error: shelfError }, { status: 409 });
+    const recipeId = createId("mxr");
     const insert = await supabaseFetch<unknown[]>(
       `mixology_recipes?select=${RECIPE_COLUMNS}`,
       {
         method: "POST",
         headers: { Prefer: "return=representation" },
         body: JSON.stringify({
-          id: createId("mxr"),
+          id: recipeId,
           name,
           intro: cleanText(record.intro, 400),
-          cover: cleanText(record.cover, 2_000_000),
+          cover: await resolveCoverForWrite("recipe", recipeId, record.cover),
           char_name: cleanText(record.charName, 80),
           part_names: normalizeTags(record.partNames),
           materials: normalized.parts,
@@ -403,7 +415,7 @@ export async function PUT(request: Request) {
         kind,
         name,
         hook: cleanText(record.hook, 200),
-        cover: cleanText(record.cover, 2_000_000),
+        cover: await resolveCoverForWrite(type, id, record.cover),
         tags: normalizeTags(record.tags),
         payload: materialPayload,
         // 更新时同步刷新署名与头像：发布身份以创作者资料当前值为准
@@ -421,7 +433,7 @@ export async function PUT(request: Request) {
       payload = {
         name,
         intro: cleanText(record.intro, 400),
-        cover: cleanText(record.cover, 2_000_000),
+        cover: await resolveCoverForWrite(type, id, record.cover),
         char_name: cleanText(record.charName, 80),
         part_names: normalizeTags(record.partNames),
         materials: normalized.parts,
@@ -470,6 +482,38 @@ export async function PATCH(request: Request) {
     if (!currentResult.ok) return NextResponse.json({ ok: false, error: currentResult.error }, { status: currentResult.status });
     const current = currentResult.data[0] as Record<string, unknown> | undefined;
     if (!current) return NextResponse.json({ ok: false, error: "没有找到这份内容。" }, { status: 404 });
+
+    // 补封面：存量条目上架时还没有"拍缩略图"这回事，坐在大厅里等不到封面。
+    // 作者这边本地有整份材料，拍一张补上来即可。只写 cover 这一列，不动
+    // updated_at——补个封面不该把老条目全顶到大厅最前面。
+    if (action === "thumb") {
+      if (type !== "material") return NextResponse.json({ ok: false, error: "unsupported_target" }, { status: 400 });
+      const owner = await supabaseFetch<unknown[]>(
+        `${table}?id=eq.${encodeFilter(id)}&deleted_at=is.null&select=id,author_id,cover,updated_at&limit=1`,
+      );
+      if (!owner.ok) return NextResponse.json({ ok: false, error: owner.error }, { status: owner.status });
+      const row = owner.data[0] as Record<string, unknown> | undefined;
+      if (!row || cleanText(row.author_id, 160) !== userId) {
+        return NextResponse.json({ ok: false, error: "只能给自己发布的内容补封面。" }, { status: 403 });
+      }
+      const cover = await resolveCoverForWrite("material", id, record.cover);
+      const patch: Record<string, unknown> = { cover };
+      // 替换已有封面（拍图管线升版后的重拍）时把 updated_at 悄悄 +1 秒：
+      // 列表封面走 /api/mixology/cover?v=updated_at 且 CDN 按年 immutable 缓存，
+      // v 不变的话新图永远被旧缓存挡住；+1 秒不足以改变列表排序。
+      // 首次补空封面仍只写 cover，一如既往不把老条目顶到大厅最前面。
+      const previous = cleanText(row.cover, 2_000_000);
+      if (previous && previous !== cover) {
+        const stamp = Date.parse(cleanText(row.updated_at, 80));
+        if (Number.isFinite(stamp)) patch.updated_at = new Date(stamp + 1000).toISOString();
+      }
+      const written = await supabaseFetch<unknown[]>(
+        `${table}?id=eq.${encodeFilter(id)}`,
+        { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(patch) },
+      );
+      if (!written.ok) return NextResponse.json({ ok: false, error: written.error }, { status: written.status });
+      return NextResponse.json({ ok: true, cover });
+    }
 
     let liked = false;
     let saved = false;

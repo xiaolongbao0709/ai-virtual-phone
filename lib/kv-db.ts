@@ -17,6 +17,8 @@ const kvDb = new KvDatabase();
 // ── In-memory cache ──
 const _cache = new Map<string, string>();
 let _hydrated = false;
+let _hydratePromise: Promise<void> | null = null;
+let _hydrateError: unknown = null;
 
 // ── Migration registry ──
 const _fixedKeys: string[] = [];
@@ -109,9 +111,14 @@ function isAbortLikeError(err: unknown): boolean {
 }
 
 // ── Hydration (call once at app startup) ──
-export async function hydrateKvDb(): Promise<void> {
-    if (_hydrated || typeof window === "undefined") return;
-    try {
+// 语义与 chat-storage 对齐：成功才置 _hydrated，失败清掉在途 promise 允许下次重试。
+// 此前失败也置 _hydrated=true：IndexedDB 一次临时读不出来，缓存就是空的，kvGet
+// 全部返回 null，「读取失败」和「本来就没有」无法区分——下一次任何整包
+// 读改写（如线下记录追加）都会拿空数据把 IndexedDB 里的真实历史覆盖掉。
+export function hydrateKvDb(): Promise<void> {
+    if (_hydrated || typeof window === "undefined") return Promise.resolve();
+    if (_hydratePromise) return _hydratePromise;
+    _hydratePromise = (async () => {
         // Load existing IDB data into cache
         const all = await kvDb.entries.toArray();
         for (const { key, value } of all) {
@@ -149,13 +156,32 @@ export async function hydrateKvDb(): Promise<void> {
 
         if (batch.length > 0) await kvDb.entries.bulkPut(batch);
         for (const k of removeKeys) localStorage.removeItem(k);
-    } catch (err) {
-        console.warn("[KvDB] hydration error:", err);
-    }
-    _hydrated = true;
+    })().then(() => {
+        _hydrated = true;
+        _hydrateError = null;
+        _hydratePromise = null;
+    }).catch(err => {
+        // 不向上抛：既有调用方大多不接 catch。失败状态通过 isKvHydrated() /
+        // getKvHydrationError() 暴露，入口（MainApp）负责拦住用户并提供重试。
+        console.warn("[KvDB] hydration failed, will retry on next call:", err);
+        _hydrateError = err;
+        _hydratePromise = null;
+    });
+    return _hydratePromise;
+}
+
+/** 最近一次水合失败的错误（成功后清空）。配合 isKvHydrated() 判断失败态。 */
+export function getKvHydrationError(): unknown {
+    return _hydrateError;
 }
 
 // ── Synchronous read (IndexedDB-backed in-memory cache only) ──
+/** kv 是否已从 IndexedDB 水合完成。孤儿素材清理等「以 kv 内容为安全依据」的
+ *  流程必须先确认此状态：未水合时 kvEntries() 是空的，扫不到引用会导致误删。 */
+export function isKvHydrated(): boolean {
+    return _hydrated;
+}
+
 export function kvGet(key: string): string | null {
     const cached = _cache.get(key);
     if (cached !== undefined) return cached;

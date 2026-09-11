@@ -8,6 +8,7 @@ import { generateChatCompletion, flattenCompletionResult } from "./chat-engine";
 import type { MediaAttachment } from "./tool-executor";
 import { loadMediaBlob, isMediaStoreRef } from "./media-cache-storage";
 import { parseAIResponse, type ParsedMessagePart } from "./rich-message-parser";
+import { getStatusRegionConfig, isCustomStatusRegionActive } from "./chat-status-region";
 import { splitBilingualText } from "./bilingual-text";
 import { resolveVoiceConfig, synthesizeSpeech } from "./tts-service";
 import { formatShoppingPaymentRequestHistory } from "./shopping-payment-request";
@@ -945,6 +946,11 @@ async function handleIncomingMessage(
 
     const { parts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(rawReply, previousState);
 
+    // 自定义状态栏渲染戳：不盖的话 custom 模式下 [状态栏] 原文按 markdown 渲染，看着像掉格式
+    const statusRegionMode = statusPanel && isCustomStatusRegionActive(getStatusRegionConfig(session.id))
+        ? ("custom" as const)
+        : undefined;
+
     // 解析角色名
     const sessions = loadChatSessions();
     const sess = sessions.find(s => s.id === session.id);
@@ -977,7 +983,7 @@ async function handleIncomingMessage(
     if (visibleParts.length === 0 && (statusPanel || innerMonologue)) {
         pushChatMessage({
             sessionId: session.id, role: "assistant", content: "",
-            statusPanel, innerMonologue, stateValues: stateValues.length > 0 ? stateValues : undefined,
+            statusPanel, statusRegionMode, innerMonologue, stateValues: stateValues.length > 0 ? stateValues : undefined,
             freshStateValues,
         });
     } else {
@@ -989,6 +995,7 @@ async function handleIncomingMessage(
                 mediaType: visibleParts[i].mediaType,
                 mediaData: visibleParts[i].mediaData,
                 statusPanel: i === 0 && statusPanel ? statusPanel : undefined,
+                statusRegionMode: i === 0 && statusPanel ? statusRegionMode : undefined,
                 innerMonologue: i === 0 && innerMonologue ? innerMonologue : undefined,
                 stateValues: i === 0 && stateValues.length > 0 ? stateValues : undefined,
                 freshStateValues: i === 0 ? freshStateValues : undefined,

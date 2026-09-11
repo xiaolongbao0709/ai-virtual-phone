@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, getLatestCharacterStateValues } from "@/lib/chat-storage";
+import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
 import type { StateValue } from "@/lib/chat-storage";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
 import { parseAIResponse } from "@/lib/rich-message-parser";
@@ -261,6 +262,11 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
         const { parts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(aiResponseText, previousState);
 
+        // 自定义状态栏渲染戳：不盖的话 custom 模式下 [状态栏] 原文按 markdown 渲染，看着像掉格式
+        const statusRegionMode = statusPanel && isCustomStatusRegionActive(getStatusRegionConfig(session.id))
+            ? ("custom" as const)
+            : undefined;
+
         // Filter out non-chat action types (voice_call, video_call, poke, etc.)
         const chatParts = parts.filter(p =>
             !p.mediaType || !["voice_call", "video_call", "poke", "accept_red_packet", "decline_red_packet", "accept_transfer", "decline_transfer", "accept_payment_request", "decline_payment_request"].includes(p.mediaType)
@@ -273,6 +279,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 role: "assistant",
                 content: "",
                 statusPanel,
+                statusRegionMode,
                 innerMonologue,
                 stateValues: stateValues.length > 0 ? stateValues : undefined,
                 freshStateValues,
@@ -287,6 +294,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                     mediaType: part.mediaType,
                     mediaData: part.mediaData,
                     statusPanel: idx === 0 && statusPanel ? statusPanel : undefined,
+                    statusRegionMode: idx === 0 && statusPanel ? statusRegionMode : undefined,
                     innerMonologue: idx === 0 && innerMonologue ? innerMonologue : undefined,
                     stateValues: idx === 0 && stateValues.length > 0 ? stateValues : undefined,
                     freshStateValues: idx === 0 ? freshStateValues : undefined,

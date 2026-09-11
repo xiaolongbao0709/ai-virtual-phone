@@ -6,6 +6,8 @@
 //   【场景】   → scene（独占一行，渲染成 — 场景 — 的过场行）
 //   ~强调~    → accent      其余     → narration（普通叙述）
 // 状态栏块 [状态栏]...[/状态栏] 在解析正文前剥离，交给沙盒 iframe 渲染。
+// 另外两种"块"：独立成段、从 < 开头的 HTML 片段，以及 ``` 围起来的代码块——
+// HTML（含 ```html）交给沙盒框就地渲染，其他代码按等宽块显示；块内不做标记解析。
 
 import type { MixFilterRule } from "./types";
 
@@ -51,7 +53,16 @@ export type MixProseSegment = {
 
 export type MixProseParagraph =
     | { type: "scene"; text: string }
-    | { type: "text"; segments: MixProseSegment[] };
+    | { type: "text"; segments: MixProseSegment[] }
+    /** HTML 片段（模型直接写的标签，或 ```html 代码块）：沙盒框就地渲染 */
+    | { type: "html"; html: string }
+    /** 其他代码块：等宽显示，lang 是 ``` 后面写的语言名（可空） */
+    | { type: "code"; lang: string; code: string };
+
+export type MixProseParseOptions = {
+    /** 流式过程中：没闭合的 HTML/代码块先按原文显示，闭合了再渲染，免得半截 HTML 闪来闪去 */
+    streaming?: boolean;
+};
 
 // 兼容旧标签（[小票]/[尾调]）、全角括号与标签内空格——模型输出没那么规矩。
 // 开标签可带块名（[状态栏:心情卡]，冒号认全半角与间隔号）——一轮多块时靠名字对号入座。
@@ -104,21 +115,15 @@ function pullFamily(text: string, tags: TagFamily): { text: string; blocks: MixE
 }
 
 /**
- * 流式过程中显示的内容：原文照流，不再扣块。
- * 以前状态栏/小剧场块在流式里被整段扣住，模型写块的那几秒到十几秒界面一动不动，
- * 用户以为卡死了（结尾写小剧场时最明显：正文流得好好的突然定住）。现在 raw
- * 原样当正文流出来——先看到状态栏的键值行长出来、再是正文、最后小剧场逐行盖楼，
- * 和模型的真实输出顺序一致；整轮落库那一刻各块自然换成正式的壳渲染。
- * 只有机括的标记行（〔记〕这类，出杯后才被摘掉）仍在末尾行扣一下，免得闪现又消失。
+ * 流式过程中显示的内容：原文一字不扣，照流。
+ * 状态栏/小剧场块、机括的标记行（〔选项〕〔记〕这类）全都原样流出来——
+ * 模型写到哪用户看到哪，任何扣留都会让画面在那几秒定格、看起来像卡死
+ * （机括标记行通常是回复最后一行，扣末尾行等于把整段收尾都藏了）。
+ * 落库那一刻块换成正式壳渲染、标记行被钩子摘走变成面板内容，
+ * 短暂的"变身"就是流式与成品之间该有的交接，不必藏。
  */
 export function mixStreamText(partial: string): string {
-    const lines = String(partial ?? "").split("\n");
-    while (lines.length) {
-        const tail = lines[lines.length - 1].trim();
-        if (tail === "" || tail.startsWith("〔")) { lines.pop(); continue; }
-        break;
-    }
-    return lines.join("\n");
+    return String(partial ?? "");
 }
 
 export function extractMixBlocks(rawInput: string): {
@@ -162,8 +167,12 @@ export function extractMixTicket(raw: string): { text: string; ticketRaw?: strin
     return { text: result.text, ticketRaw: result.ticketRaw };
 }
 
-// 强调认全半角波浪号（模型两种都写）；对白/心声先整段匹配，强调再进去嵌套解析
-const INLINE_RE = /「([^」]*)」|\*([^*\n]+)\*|[~～]([^~～\n]+)[~～]/g;
+// 强调认全半角波浪号（模型两种都写）；对白同理兼容双引号——模型在长篇里经常
+// 滑回 “” / ""，认下来照样当对白渲染。只认这一层：存储一个字不改，正文永远是
+// 模型写的原样，回传给模型的历史也照旧。只吃单行、非空、不过长的一段，
+// 免得把跨段落的引号并成一大坨。
+// 对白/心声先整段匹配，强调再进去嵌套解析
+const INLINE_RE = /「([^」]*)」|[“"]([^”"\n]{1,200})[”"]|\*([^*\n]+)\*|[~～]([^~～\n]+)[~～]/g;
 const ACCENT_RE = /[~～]([^~～\n]+)[~～]/g;
 
 /** 把一段文字按 ~强调~ 拆成子段；没有强调返回 undefined（走整段渲染的旧路） */
@@ -190,9 +199,11 @@ function parseInline(line: string): MixProseSegment[] {
         if (match.index > cursor) {
             segments.push({ type: "narration", text: line.slice(cursor, match.index) });
         }
-        if (match[1] !== undefined) segments.push({ type: "dialogue", text: `「${match[1]}」`, inner: parseAccentRuns(match[1]) });
-        else if (match[2] !== undefined) segments.push({ type: "thought", text: match[2], inner: parseAccentRuns(match[2]) });
-        else segments.push({ type: "accent", text: match[3] });
+        // 「」与双引号都是对白，一律按「」渲染，看不出模型当时掉没掉格式
+        const said = match[1] ?? match[2];
+        if (said !== undefined) segments.push({ type: "dialogue", text: `「${said}」`, inner: parseAccentRuns(said) });
+        else if (match[3] !== undefined) segments.push({ type: "thought", text: match[3], inner: parseAccentRuns(match[3]) });
+        else segments.push({ type: "accent", text: match[4] });
         cursor = match.index + match[0].length;
     }
     if (cursor < line.length) {
@@ -201,22 +212,88 @@ function parseInline(line: string): MixProseSegment[] {
     return segments;
 }
 
+// ── HTML / 代码块 ─────────────────────────────────────
+// 只认"行首就是标签"的行作为 HTML 块的开头：叙述里偶尔夹一个 <b> 不算。
+// 用开/闭标签配平来找块尾（自闭合与 void 元素不计深度），配平到 0 的那一行结束。
+const HTML_BLOCK_START_RE = /^<([a-zA-Z][\w-]*)(?:\s[^<>]*)?\/?>/;
+const HTML_TAG_RE = /<(\/?)([a-zA-Z][\w-]*)[^<>]*?(\/?)>/g;
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+const HTML_LANGS = new Set(["html", "htm", "xml", "svg"]);
+
+/** 这一行让标签深度变化了多少 */
+function tagDepthDelta(line: string): number {
+    let delta = 0;
+    HTML_TAG_RE.lastIndex = 0;
+    for (let m = HTML_TAG_RE.exec(line); m; m = HTML_TAG_RE.exec(line)) {
+        const name = m[2].toLowerCase();
+        if (VOID_TAGS.has(name) || m[3] === "/") continue;
+        delta += m[1] === "/" ? -1 : 1;
+    }
+    return delta;
+}
+
+type OpenBlock =
+    | { kind: "code"; lang: string; lines: string[] }
+    | { kind: "html"; lines: string[]; depth: number };
+
+function pushTextLine(paragraphs: MixProseParagraph[], rawLine: string): void {
+    const line = rawLine.trim();
+    if (!line) return;
+    const scene = line.match(/^【(.+)】$/);
+    if (scene) {
+        paragraphs.push({ type: "scene", text: scene[1].trim() });
+        return;
+    }
+    const segments = parseInline(line);
+    if (segments.length) paragraphs.push({ type: "text", segments });
+}
+
+function closeBlock(paragraphs: MixProseParagraph[], block: OpenBlock): void {
+    const body = block.lines.join("\n").trim();
+    if (!body) return;
+    if (block.kind === "html" || HTML_LANGS.has(block.lang)) paragraphs.push({ type: "html", html: body });
+    else paragraphs.push({ type: "code", lang: block.lang, code: body });
+}
+
 /**
  * 把 AI 正文解析成段落序列。
- * 段落按空行/换行切分；整行被【】包裹的行视为场景过场，其余走内联解析。
+ * 段落按行切分；整行被【】包裹的行视为场景过场，行首是标签的 HTML 片段与 ``` 代码块
+ * 整块成段（块内不做标记解析），其余走内联解析。
  */
-export function parseMixProse(text: string): MixProseParagraph[] {
+export function parseMixProse(text: string, options: MixProseParseOptions = {}): MixProseParagraph[] {
     const paragraphs: MixProseParagraph[] = [];
-    for (const rawLine of text.split(/\n+/)) {
+    let block: OpenBlock | null = null;
+    for (const rawLine of text.split(/\r?\n/)) {
         const line = rawLine.trim();
-        if (!line) continue;
-        const scene = line.match(/^【(.+)】$/);
-        if (scene) {
-            paragraphs.push({ type: "scene", text: scene[1].trim() });
+        if (block?.kind === "code") {
+            if (/^```/.test(line)) { closeBlock(paragraphs, block); block = null; }
+            else block.lines.push(rawLine);
             continue;
         }
-        const segments = parseInline(line);
-        if (segments.length) paragraphs.push({ type: "text", segments });
+        if (block?.kind === "html") {
+            block.lines.push(rawLine);
+            block.depth += tagDepthDelta(rawLine);
+            if (block.depth <= 0) { closeBlock(paragraphs, block); block = null; }
+            continue;
+        }
+        if (!line) continue;
+        const fence = line.match(/^```\s*([\w+-]*)\s*$/);
+        if (fence) {
+            block = { kind: "code", lang: fence[1].toLowerCase(), lines: [] };
+            continue;
+        }
+        if (HTML_BLOCK_START_RE.test(line)) {
+            const depth = tagDepthDelta(rawLine);
+            if (depth <= 0) paragraphs.push({ type: "html", html: line });
+            else block = { kind: "html", lines: [rawLine], depth };
+            continue;
+        }
+        pushTextLine(paragraphs, rawLine);
+    }
+    if (block) {
+        // 没闭合：流式中先按原文一行行显示；成品里模型忘了闭合也照渲染，浏览器兜得住
+        if (options.streaming) for (const l of block.lines) pushTextLine(paragraphs, l);
+        else closeBlock(paragraphs, block);
     }
     return paragraphs;
 }

@@ -19,6 +19,7 @@ import {
   isMediaStoreRef,
   listMediaCacheSummaries,
   loadMediaBlob,
+  MEDIA_STORE_PROTOCOL,
 } from "./media-cache-storage";
 import { momentsDb } from "./moments-db";
 import { hydrateMomentsStorage, updateMomentPost } from "./moments-storage";
@@ -142,22 +143,28 @@ function chatMediaClass(message: ChatMessage): ChatMediaClass | null {
   return null;
 }
 
-async function mediaRefBytes(ref: string | undefined, seen: Set<string>): Promise<number> {
+/** 同步版媒体尺寸：media-store 引用查摘要表（不加载 blob），dataURL 按字符串估算。
+ *  统计路径必须保持"游标逐条 + 零 blob 加载"，否则重度用户（消息表里带
+ *  语音 dataURL 音频）会在进入数据管理时整页 OOM 闪退。 */
+function mediaRefBytes(ref: string | undefined, seen: Set<string>, mediaBytesById: Map<string, number>): number {
   if (!ref || seen.has(ref)) return 0;
   seen.add(ref);
   if (isMediaStoreRef(ref)) {
-    const stored = await loadMediaBlob(ref).catch(() => null);
-    return stored?.blob.size ?? 0;
+    return mediaBytesById.get(ref.slice(MEDIA_STORE_PROTOCOL.length)) ?? 0;
   }
   if (ref.startsWith("data:")) return estimateValueBytes(ref);
   return 0;
 }
 
-async function chatMessageMediaBytes(message: ChatMessage, themeBytesById: Map<string, number>): Promise<number> {
+function chatMessageMediaBytes(
+  message: ChatMessage,
+  themeBytesById: Map<string, number>,
+  mediaBytesById: Map<string, number>,
+): number {
   const seen = new Set<string>();
   let bytes = 0;
-  bytes += await mediaRefBytes(message.mediaUrl, seen);
-  bytes += await mediaRefBytes(message.mediaData?.imageGenerationMediaRef, seen);
+  bytes += mediaRefBytes(message.mediaUrl, seen, mediaBytesById);
+  bytes += mediaRefBytes(message.mediaData?.imageGenerationMediaRef, seen, mediaBytesById);
   const assetId = message.mediaData?.xiaohongshuImageAssetId;
   if (assetId) bytes += themeBytesById.get(assetId) ?? 0;
   return bytes;
@@ -198,39 +205,42 @@ export async function scanStorageSpace(onProgress?: (detail: string) => void): P
   stats.push(makeStat("theme_assets", themeSummaries.reduce((sum, item) => sum + item.bytes, 0), themeSummaries.length));
 
   onProgress?.("统计聊天媒体…");
-  const messages = await chatDb.messages.toArray().catch(() => [] as ChatMessage[]);
+  const mediaSummaries = await listMediaCacheSummaries().catch(() => []);
+  const mediaBytesById = new Map(mediaSummaries.map((item) => [item.id, item.bytes] as const));
   const chatTotals: Record<ChatMediaClass, { bytes: number; count: number }> = {
     image: { bytes: 0, count: 0 },
     voice: { bytes: 0, count: 0 },
     file: { bytes: 0, count: 0 },
   };
-  for (const message of messages) {
+  // 游标逐条：不再 toArray() 把整张消息表二次搬进内存（启动水合已有一份全量缓存，
+  // 语音条的 dataURL 音频动辄数 MB，重度用户曾因此进数据管理页即 OOM 闪退）
+  await chatDb.messages.each((message) => {
     const kind = chatMediaClass(message);
-    if (!kind) continue;
-    const bytes = await chatMessageMediaBytes(message, themeBytesById);
-    if (bytes <= 0) continue;
+    if (!kind) return;
+    const bytes = chatMessageMediaBytes(message, themeBytesById, mediaBytesById);
+    if (bytes <= 0) return;
     chatTotals[kind].bytes += bytes;
     chatTotals[kind].count += 1;
-  }
+  }).catch(() => undefined);
   stats.push(makeStat("chat_images", chatTotals.image.bytes, chatTotals.image.count));
   stats.push(makeStat("chat_voice", chatTotals.voice.bytes, chatTotals.voice.count));
   stats.push(makeStat("chat_media_files", chatTotals.file.bytes, chatTotals.file.count));
 
   onProgress?.("统计朋友圈图片…");
   await hydrateMomentsStorage().catch(() => undefined);
-  const posts = await momentsDb.posts.toArray().catch(() => []);
   let momentsBytes = 0;
   let momentsCount = 0;
-  for (const post of posts) {
-    if (!post.photoUrl) continue;
+  // 同聊天：游标逐条，避免整表二次进内存
+  await momentsDb.posts.each((post) => {
+    if (!post.photoUrl) return;
     const assetId = themeAssetIdFromUrl(post.photoUrl);
     const bytes = assetId
       ? themeBytesById.get(assetId) ?? 0
-      : await mediaRefBytes(post.photoUrl, new Set());
-    if (bytes <= 0) continue;
+      : mediaRefBytes(post.photoUrl, new Set(), mediaBytesById);
+    if (bytes <= 0) return;
     momentsBytes += bytes;
     momentsCount += 1;
-  }
+  }).catch(() => undefined);
   stats.push(makeStat("moments_images", momentsBytes, momentsCount));
 
   onProgress?.("统计小红书图片…");

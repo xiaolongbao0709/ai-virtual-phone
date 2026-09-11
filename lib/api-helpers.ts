@@ -3,6 +3,7 @@
 // request headers, and response parsing. All LLM-calling modules should use these.
 
 import type { ApiConfig } from "./settings-types";
+import { pushApiLog } from "./api-log-store";
 
 const SIMPLE_ANTHROPIC_AUTO_MAX_TOKENS = 8192;
 
@@ -97,7 +98,7 @@ export function isNativeGoogleApi(config: ApiConfig): boolean {
 export async function simpleLLMCall(
     config: ApiConfig,
     messages: { role: string; content: string }[],
-    options?: { temperature?: number; max_tokens?: number; signal?: AbortSignal },
+    options?: { temperature?: number; max_tokens?: number; signal?: AbortSignal; label?: string },
 ): Promise<{ content: string | null; error?: string; finishReason?: string; wasTruncated?: boolean }> {
     const baseUrl = determineBaseUrl(config);
     if (!baseUrl || !config.apiKey) {
@@ -164,6 +165,13 @@ export async function simpleLLMCall(
         if (!res.ok) {
             const errText = await res.text().catch(() => "");
             console.warn("[simpleLLMCall] API error:", res.status, errText.slice(0, 300));
+            pushApiLog({
+                characterName: options?.label,
+                source: "background",
+                model: config.defaultModel,
+                messages: messages.map(m => ({ role: m.role, content: m.content })),
+                rawResponse: `[API 错误 ${res.status}] ${errText.slice(0, 2000)}`,
+            });
             return { content: null, error: `API 错误 ${res.status}: ${errText.slice(0, 200)}` };
         }
 
@@ -173,6 +181,14 @@ export async function simpleLLMCall(
         const content = extractLLMContent(data, config.provider);
         const finishReason = extractFinishReason(data);
         const wasTruncated = isTruncationFinishReason(finishReason);
+        pushApiLog({
+            characterName: options?.label,
+            source: "background",
+            model: config.defaultModel,
+            messages: messages.map(m => ({ role: m.role, content: m.content })),
+            rawResponse: content ?? describeEmptyLLMResponse(data, finishReason, wasTruncated, config),
+            usage: extractUsage(data),
+        });
         if (!content) {
             console.warn("[simpleLLMCall] Empty response. Keys:", JSON.stringify(Object.keys(data || {})),
                 "Full:", JSON.stringify(data).slice(0, 500));
@@ -182,8 +198,28 @@ export async function simpleLLMCall(
         return { content, finishReason, wasTruncated };
     } catch (err) {
         console.warn("[simpleLLMCall] fetch error:", err);
+        pushApiLog({
+            characterName: options?.label,
+            source: "background",
+            model: config.defaultModel,
+            messages: messages.map(m => ({ role: m.role, content: m.content })),
+            rawResponse: `[请求失败] ${err instanceof Error ? err.message : String(err)}`,
+        });
         return { content: null, error: `请求失败: ${err instanceof Error ? err.message : String(err)}` };
     }
+}
+
+export function extractUsage(data: Record<string, unknown>): { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined {
+    if (!data) return undefined;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const d = data as any;
+    const usage = d?.usage ?? d?.output?.usage ?? d?.candidates?.[0]?.usageMetadata;
+    if (!usage) return undefined;
+    return {
+        prompt_tokens: usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokenCount,
+        completion_tokens: usage.completion_tokens ?? usage.output_tokens ?? usage.candidatesTokenCount,
+        total_tokens: usage.total_tokens ?? usage.totalTokenCount,
+    };
 }
 
 export function extractFinishReason(data: Record<string, unknown>): string | undefined {

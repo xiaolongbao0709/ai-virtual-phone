@@ -7,7 +7,7 @@
 // 抽成独立模块是为了能脱离路由单测——这段错了不会报错，只会让所有人的配方悄悄变形。
 
 /** 只能放一件的格：叠了也没意义，直接判非法，免得别人下载下来一脸问号 */
-export const SINGLE_PART_KINDS: readonly string[] = ["character", "persona"];
+export const SINGLE_PART_KINDS: readonly string[] = ["character", "persona", "preface"];
 /** 整份引用数组的条数上限：纯防滥用的护栏（正常配方远碰不到），不是玩法限制 */
 export const MAX_RECIPE_PARTS = 200;
 

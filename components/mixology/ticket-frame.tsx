@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MixState } from "@/lib/mixology/types";
 import { createMixFrameHeightTracker, nextMixFrameHeight } from "@/lib/mixology/frame-height";
+import { buildMixTicketDoc } from "@/lib/mixology/ticket-doc";
 
 const FRAME_MIN_HEIGHT = 36;
 /**
@@ -16,22 +17,6 @@ const FRAME_MIN_HEIGHT = 36;
  */
 const FRAME_MAX_HEIGHT = 5000;
 
-function escapeHtmlText(value: string): string {
-    return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function buildSrcDoc(html: string, raw: string, state?: MixState): string {
-    const withRaw = html.split("{{RAW}}").join(escapeHtmlText(raw));
-    const base = /<html[\s>]/i.test(withRaw)
-        ? withRaw
-        : `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head><body>${withRaw}</body></html>`;
-    // MIX_STATE：这一局记住的值。渲染代码可以据此画血条、换配色，不必等 AI 每轮重报
-    const inject = `<script>window.TICKET_RAW=${JSON.stringify(raw)};window.ENCORE_RAW=window.TICKET_RAW;window.MIX_STATE=${JSON.stringify(state ?? {})};</` + `script>`;
-    return /<head[\s>]/i.test(base)
-        ? base.replace(/<head([^>]*)>/i, `<head$1>${inject}`)
-        : inject + base;
-}
-
 export function MixTicketFrame({ html, raw, state }: { html: string; raw: string; state?: MixState }) {
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const [frameId] = useState(() => `mtf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
@@ -39,7 +24,7 @@ export function MixTicketFrame({ html, raw, state }: { html: string; raw: string
     const trackerRef = useRef(createMixFrameHeightTracker(FRAME_MIN_HEIGHT));
 
     const srcDoc = useMemo(() => {
-        const doc = buildSrcDoc(html, raw, state);
+        const doc = buildMixTicketDoc(html, raw, state);
         const bridge = `<script>(function(){
   var frameId=${JSON.stringify(frameId)};
   /* 只用内容包围盒测高（scrollHeight 会跟着 iframe 视口涨，会形成"越量越高"的回路） */

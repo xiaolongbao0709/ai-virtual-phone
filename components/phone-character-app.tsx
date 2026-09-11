@@ -53,6 +53,7 @@ import {
 import { notifyMascotPageContext } from "@/lib/mascot-events";
 import { kvGet, kvSet } from "@/lib/kv-db";
 import { normalizeTimeZone } from "@/lib/character-time";
+import { removeCharacterChatReferences } from "@/lib/character-chat-cleanup";
 
 type ViewType = "list" | "detail";
 
@@ -62,6 +63,17 @@ type CanvasRelationLine = { key: string; aId: string; bId: string; labels: strin
 // 每个世界一张画布：平移缩放记忆按世界分 key（默认世界沿用旧 key，存量零迁移）
 const PAN_STORAGE_BASE_KEY = 'ai_phone_canvas_pan_v2';
 const WORLD_TAB_KEY = 'ai_phone_character_app_world_v1';
+const CHARACTER_AVATAR_MAX_BYTES = 600 * 1024;
+const CHARACTER_AVATAR_COMPRESSION_FALLBACKS = [
+  { maxSize: 1280, quality: 0.8 },
+  { maxSize: 1024, quality: 0.8 },
+  { maxSize: 1024, quality: 0.72 },
+  { maxSize: 768, quality: 0.72 },
+  { maxSize: 640, quality: 0.68 },
+  { maxSize: 512, quality: 0.64 },
+  { maxSize: 400, quality: 0.6 },
+  { maxSize: 320, quality: 0.56 },
+] as const;
 function worldPanKey(worldId: string): string {
   return worldId === DEFAULT_CHARACTER_WORLD_ID ? PAN_STORAGE_BASE_KEY : `${PAN_STORAGE_BASE_KEY}_${worldId}`;
 }
@@ -298,10 +310,12 @@ export function PhoneCharacterApp({ onClose, onNotice }: PhoneCharacterAppProps)
               setView({ type: "detail", id: existing.id, isEditing: false });
               onNotice(`已切换到 V${activeVersion}，未创建新版本`);
             }}
-            onDelete={() => {
-              if (view.id) {
-                clearCharacterVersions(view.id);
-                updateChars(characters.filter((c) => c.id !== view.id));
+            onDelete={async () => {
+              const characterId = view.id;
+              if (characterId) {
+                await removeCharacterChatReferences(characterId);
+                clearCharacterVersions(characterId);
+                updateChars(characters.filter((c) => c.id !== characterId));
               }
               setView({ type: "list", id: null, isEditing: false });
               onNotice("已删除档案");
@@ -317,6 +331,7 @@ export function PhoneCharacterApp({ onClose, onNotice }: PhoneCharacterAppProps)
                 onNotice("导出成功");
               }
             }}
+            onNotice={onNotice}
           />
         )}
       </div>
@@ -663,6 +678,7 @@ function CharListView({
   }
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'char' | 'bg' } | null>(null);
   const [deleteConfirmReady, setDeleteConfirmReady] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [isAnyDragging, setIsAnyDragging] = useState(false);
   const [overTrashBin, setOverTrashBin] = useState(false);
   // 拖拽结束（含取消）时清掉世界 tab 的归档高亮
@@ -682,6 +698,7 @@ function CharListView({
   useEffect(() => {
     if (!deleteConfirm) {
       setDeleteConfirmReady(false);
+      setDeleteBusy(false);
       return;
     }
     setDeleteConfirmReady(false);
@@ -1165,6 +1182,7 @@ function CharListView({
                   onEditTap={handleCharEditTap}
                   onDragMoveAt={handleCharDragMoveAt}
                   onDropAt={handleCharDropAt}
+                  use2dTransform
                   trashBinRef={trashBinRef}
                   onDragActiveChange={setIsAnyDragging}
                   onOverTrashChange={setOverTrashBin}
@@ -1306,31 +1324,43 @@ function CharListView({
           className="modal-overlay"
           style={{ zIndex: 8000000, backdropFilter: "blur(var(--ui-blur-light))" }}
           onClick={() => {
-            if (deleteConfirmReady) setDeleteConfirm(null);
+            if (deleteConfirmReady && !deleteBusy) setDeleteConfirm(null);
           }}
         >
           <div className="char-punched-hole-note" onClick={(e) => e.stopPropagation()}>
             <h3>销毁确认</h3>
-            <p>您确定要丢弃该档案或物件吗？此操作将永远无法恢复。</p>
+            <p>{deleteConfirm.type === "char"
+              ? "角色档案、联系人及与该角色的单聊记录将一并删除；角色会从群聊成员中移除，但群聊和群聊历史会保留。此操作无法恢复。"
+              : "您确定要丢弃该物件吗？此操作将永远无法恢复。"}</p>
             <div className="char-punched-hole-btn-group">
               <button
                 className="char-punched-hole-btn"
-                disabled={!deleteConfirmReady}
+                disabled={!deleteConfirmReady || deleteBusy}
                 onClick={() => {
-                  if (deleteConfirmReady) setDeleteConfirm(null);
+                  if (deleteConfirmReady && !deleteBusy) setDeleteConfirm(null);
                 }}
               >驳回申请</button>
-              <button className="char-punched-hole-btn danger" disabled={!deleteConfirmReady} onClick={() => {
-                if (!deleteConfirmReady) return;
-                if (deleteConfirm.type === 'char') {
-                  onUpdateChars(characters.filter(c => c.id !== deleteConfirm.id));
-                  onNotice?.("已销毁调查档案");
-                } else {
-                  onUpdateBgItems((bgItems || []).filter(b => b.id !== deleteConfirm.id));
-                  onNotice?.("已销毁散落物件");
+              <button className="char-punched-hole-btn danger" disabled={!deleteConfirmReady || deleteBusy} onClick={async () => {
+                if (!deleteConfirmReady || deleteBusy) return;
+                const target = deleteConfirm;
+                setDeleteBusy(true);
+                try {
+                  if (target.type === 'char') {
+                    await removeCharacterChatReferences(target.id);
+                    clearCharacterVersions(target.id);
+                    onUpdateChars(characters.filter(c => c.id !== target.id));
+                    onNotice?.("已销毁调查档案");
+                  } else {
+                    onUpdateBgItems((bgItems || []).filter(b => b.id !== target.id));
+                    onNotice?.("已销毁散落物件");
+                  }
+                  setDeleteConfirm(null);
+                } catch (error) {
+                  console.error("[Character] delete failed:", error);
+                  setDeleteBusy(false);
+                  onNotice?.("删除失败，请重试");
                 }
-                setDeleteConfirm(null);
-              }}>批准销毁</button>
+              }}>{deleteBusy ? "销毁中…" : "批准销毁"}</button>
             </div>
           </div>
         </div>
@@ -1600,7 +1630,7 @@ function CharListView({
 function DraggableNode({
   id, x, y, rot, zIndex, children, onDragEnd, onClick, className, w, isEditing, onDeleteIntent,
   trashBinRef, onDragActiveChange, onOverTrashChange, zoom = 1, pinchRef,
-  onEditTap, onDragMoveAt, onDropAt
+  onEditTap, onDragMoveAt, onDropAt, use2dTransform = false
 }: {
   id: string; x: number; y: number; rot: number; zIndex: number;
   children: React.ReactNode;
@@ -1619,6 +1649,8 @@ function DraggableNode({
   onDragMoveAt?: (clientX: number, clientY: number) => void;
   /** 松手时的落点处理；返回 true 表示已被消费（如归档进其他世界），位置回弹 */
   onDropAt?: (id: string, clientX: number, clientY: number) => boolean;
+  /** 使用二维位移，避免 3D 合成导致档案墙图片重采样模糊 */
+  use2dTransform?: boolean;
 }) {
   const [pos, setPos] = useState({ x, y });
   const [isDragging, setIsDragging] = useState(false);
@@ -1740,7 +1772,9 @@ function DraggableNode({
       onClickCapture={handleClick}
       style={{
         width: w,
-        transform: `translate3d(${pos.x}px, ${pos.y}px, 0) rotate(${rot}deg)`,
+        transform: use2dTransform
+          ? `translate(${pos.x}px, ${pos.y}px) rotate(${rot}deg)`
+          : `translate3d(${pos.x}px, ${pos.y}px, 0) rotate(${rot}deg)`,
         zIndex: isDragging ? 9999999 : zIndex,
         cursor: isDragging ? 'grabbing' : 'grab',
         touchAction: 'none',
@@ -1767,6 +1801,7 @@ function CharArchiveView({
   onDelete,
   onExportJson,
   onExportPng,
+  onNotice = () => { },
   dummy,
 }: {
   char: Character;
@@ -1777,12 +1812,14 @@ function CharArchiveView({
   onCancelEdit?: () => void;
   onSave?: (data: CharacterImportData, createVersion: boolean) => void;
   onRestoreVersion?: (version: CharacterVersion) => void;
-  onDelete: () => void;
+  onDelete: () => void | Promise<void>;
   onExportJson: () => void;
   onExportPng: () => Promise<void>;
+  onNotice?: (text: string) => void;
   dummy?: boolean;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState<"back" | "cancel" | null>(null);
   const [showSaveVersionConfirm, setShowSaveVersionConfirm] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
@@ -1803,6 +1840,7 @@ function CharArchiveView({
   const [avatar, setAvatar] = useState<string | null>(char.avatar || null);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [urlInput, setUrlInput] = useState("");
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Send mascot page context (on mount + field changes)
@@ -1882,8 +1920,21 @@ function CharArchiveView({
   }, [isEditing, char]);
 
   async function handleAvatarFile(file: File) {
-    const url = await fileToDataUrl(file);
-    setAvatar(url);
+    setAvatarBusy(true);
+    try {
+      const url = await fileToDataUrl(file, {
+        maxSize: 1280,
+        quality: 0.86,
+        maxBytes: CHARACTER_AVATAR_MAX_BYTES,
+        fallbacks: CHARACTER_AVATAR_COMPRESSION_FALLBACKS,
+      });
+      setAvatar(url);
+    } catch (error) {
+      console.error("Failed to optimize character avatar", error);
+      onNotice(error instanceof Error ? error.message : "图片处理失败，请更换图片");
+    } finally {
+      setAvatarBusy(false);
+    }
   }
 
   function handleAvatarUrl() {
@@ -2014,9 +2065,9 @@ function CharArchiveView({
           <div className="char-archive-left">
             <div
               className="char-archive-photo relative"
-              style={{ cursor: isEditing ? "pointer" : "default" }}
+              style={{ cursor: avatarBusy ? "wait" : isEditing ? "pointer" : "default" }}
               onClick={() => {
-                if (isEditing) {
+                if (isEditing && !avatarBusy) {
                   fileRef.current?.click();
                 }
               }}
@@ -2029,7 +2080,7 @@ function CharArchiveView({
               {isEditing && (
                 <div className="absolute inset-0 bg-black/30 flex flex-col items-center justify-center pointer-events-none text-white">
                   <IconCamera size={24} />
-                  <span className="ts-10 mt-1">Change Photo</span>
+                  <span className="ts-10 mt-1">{avatarBusy ? "Optimizing..." : "Change Photo"}</span>
                 </div>
               )}
             </div>
@@ -2039,6 +2090,7 @@ function CharArchiveView({
               type="file"
               accept="image/*"
               className="hidden"
+              disabled={avatarBusy}
               onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (file) await handleAvatarFile(file);
@@ -2255,9 +2307,19 @@ function CharArchiveView({
         <div className="char-archive-actions">
           {!dummy && confirmDelete ? (
             <div className="char-confirm-row">
-              <span className="char-confirm-text">CONFIRM DELETE?</span>
-              <button className="char-confirm-yes" onClick={onDelete}>YES</button>
-              <button className="char-confirm-no" onClick={() => setConfirmDelete(false)}>NO</button>
+              <span className="char-confirm-text">DELETE CHARACTER + PRIVATE CHAT?</span>
+              <button className="char-confirm-yes" disabled={deleteBusy} onClick={async () => {
+                if (deleteBusy) return;
+                setDeleteBusy(true);
+                try {
+                  await onDelete();
+                } catch (error) {
+                  console.error("[Character] delete failed:", error);
+                  setDeleteBusy(false);
+                  onNotice?.("删除失败，请重试");
+                }
+              }}>{deleteBusy ? "..." : "YES"}</button>
+              <button className="char-confirm-no" disabled={deleteBusy} onClick={() => setConfirmDelete(false)}>NO</button>
             </div>
           ) : (
             !dummy && isEditing ? (
@@ -2608,40 +2670,88 @@ function AutoResizingTextarea({
 
 // ── 工具函数 ─────────────────────────────────────────
 
-function fileToDataUrl(file: File): Promise<string> {
+type ImageCompressionAttempt = { maxSize: number; quality: number };
+
+function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const MAX_SIZE = 400;
-        let w = img.width;
-        let h = img.height;
-        if (w > MAX_SIZE || h > MAX_SIZE) {
-          if (w > h) {
-            h = Math.round(h * MAX_SIZE / w);
-            w = MAX_SIZE;
-          } else {
-            w = Math.round(w * MAX_SIZE / h);
-            h = MAX_SIZE;
-          }
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return resolve(reader.result as string);
-        ctx.drawImage(img, 0, 0, w, h);
-
-        // Use webp or jpeg to heavily compress large png files before saving to localstorage
-        resolve(canvas.toDataURL("image/webp", 0.8));
-      };
-      img.onerror = () => resolve(reader.result as string); // fallback to raw
-      img.src = reader.result as string;
-    };
-    reader.onerror = reject;
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("读取图片失败"));
     reader.readAsDataURL(file);
   });
+}
+
+function loadDataUrlImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("无法解析图片，请更换图片"));
+    img.src = dataUrl;
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      blob => blob ? resolve(blob) : reject(new Error("图片编码失败，请更换图片")),
+      "image/webp",
+      quality,
+    );
+  });
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("读取压缩图片失败"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function fileToDataUrl(
+  file: File,
+  options: {
+    maxSize?: number;
+    quality?: number;
+    maxBytes?: number;
+    fallbacks?: readonly ImageCompressionAttempt[];
+  } = {},
+): Promise<string> {
+  const sourceDataUrl = await readFileAsDataUrl(file);
+  const maxSize = options.maxSize ?? 400;
+  const quality = options.quality ?? 0.8;
+
+  try {
+    const img = await loadDataUrlImage(sourceDataUrl);
+    const attempts: ImageCompressionAttempt[] = [
+      { maxSize, quality },
+      ...(options.fallbacks ?? []),
+    ];
+    const canvas = document.createElement("canvas");
+
+    for (const attempt of attempts) {
+      const scale = Math.min(1, attempt.maxSize / Math.max(img.width, img.height));
+      const width = Math.max(1, Math.round(img.width * scale));
+      const height = Math.max(1, Math.round(img.height * scale));
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("当前浏览器无法处理图片，请更换图片");
+      ctx.drawImage(img, 0, 0, width, height);
+
+      const blob = await canvasToBlob(canvas, attempt.quality);
+      if (!options.maxBytes || blob.size <= options.maxBytes) {
+        return await blobToDataUrl(blob);
+      }
+    }
+
+    throw new Error(`图片压缩后仍超过 ${Math.ceil((options.maxBytes ?? 0) / 1024)}KB，请更换图片`);
+  } catch (error) {
+    // 旧调用未要求体积上限时维持原有兼容兜底；角色头像的受限链路绝不保存原始大图。
+    if (!options.maxBytes) return sourceDataUrl;
+    throw error;
+  }
 }
 
 // ── 图标 ─────────────────────────────────────────────

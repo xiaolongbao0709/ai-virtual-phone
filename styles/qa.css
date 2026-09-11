@@ -695,6 +695,42 @@
 .qa-attach-btn {
   color: var(--qa-text-secondary);
 }
+.qa-attach-menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.qa-attach-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  min-width: 132px;
+  padding: 6px;
+  border: 1px solid rgba(60, 50, 90, 0.1);
+  border-radius: 13px;
+  background: var(--qa-bg-overlay);
+  box-shadow: 0 8px 24px rgba(40, 34, 60, 0.18);
+}
+.qa-attach-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 9px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--qa-text-primary);
+  font: inherit;
+  font-size: 13px;
+  min-height: 44px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.qa-attach-menu button:hover {
+  background: var(--qa-bg-raised);
+}
 .qa-attach-strip {
   display: flex;
   gap: 8px;
@@ -733,6 +769,52 @@
   justify-content: center;
   background: rgba(40, 34, 60, 0.75);
   color: #fff;
+}
+.qa-file-strip,
+.qa-msg-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.qa-file-strip {
+  padding: 2px 2px 0;
+}
+.qa-msg-files {
+  margin-bottom: 6px;
+}
+.qa-file-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 220px;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 9px;
+  background: rgba(115, 89, 230, 0.09);
+  color: var(--qa-text-secondary);
+  font-size: 12px;
+  line-height: 1.2;
+}
+.qa-file-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qa-file-chip > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin: -6px -5px -6px 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(60, 50, 90, 0.12);
+  color: inherit;
+  cursor: pointer;
 }
 .qa-msg-images {
   display: flex;
@@ -1380,6 +1462,7 @@
 }
 /* 选中列表为灰色，不选中无底色 */
 .qa-drawer-item {
+  position: relative; /* 三点菜单的定位锚 */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1430,6 +1513,65 @@
   color: var(--qa-danger);
   opacity: 1;
   filter: none;
+}
+/* 列表内三点按钮：沿用删除键的扁平样式 */
+.qa-drawer-item-more {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--qa-text-tertiary);
+  opacity: 0.55;
+}
+.qa-drawer-item-more:hover {
+  color: var(--qa-text-primary);
+  opacity: 1;
+  filter: none;
+}
+/* 标题前的置顶小图钉 */
+.qa-drawer-pin-mark {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 4px;
+  color: var(--qa-accent);
+}
+/* 三点菜单：置顶 / 重命名 / 删除 */
+.qa-drawer-item-menu {
+  position: absolute;
+  top: 34px;
+  right: 8px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 108px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--qa-border-subtle);
+  background: var(--qa-bg-overlay);
+  box-shadow: var(--qa-shadow-md);
+}
+.qa-drawer-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--qa-text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.qa-drawer-menu-btn:hover {
+  background: var(--qa-state-hover);
+}
+.qa-drawer-menu-btn.is-danger {
+  color: var(--qa-danger);
 }
 /* 底部创建新会话按钮 */
 .qa-drawer-foot {
@@ -1507,6 +1649,8 @@
 }
 .qa-edit-dialog {
   width: min(100%, 520px);
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1551,6 +1695,37 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+.qa-edit-actions .qa-devnotice-btn {
+  min-height: 44px;
+}
+.qa-edit-attachment-row {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+}
+.qa-edit-warning {
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: rgba(240, 170, 80, 0.12);
+  color: var(--qa-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.qa-edit-hint {
+  color: var(--qa-text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.qa-attach-menu button:focus-visible,
+.qa-file-chip > button:focus-visible,
+.qa-edit-actions button:focus-visible {
+  outline: 2px solid var(--qa-accent);
+  outline-offset: 2px;
+}
+.qa-edit-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* 工坊配置面板 */
@@ -1677,4 +1852,193 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* ── 工坊调用记录面板 ── */
+.qa-sheet-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qa-sheet-head-actions .qa-sheet-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  width: auto;
+  font-size: 12.5px;
+  border-radius: 9px;
+}
+.qa-log-body {
+  padding-top: 10px;
+}
+.qa-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.qa-log-item {
+  border: 1px solid var(--qa-border-subtle);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--qa-bg-overlay) 55%, transparent);
+  overflow: hidden;
+}
+.qa-log-item-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--qa-text-primary);
+  text-align: left;
+}
+.qa-log-item-head:hover {
+  background: var(--qa-state-hover);
+}
+.qa-log-item-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.qa-log-item-time {
+  font-size: 13px;
+  font-weight: 600;
+}
+.qa-log-item-detail {
+  font-size: 11.5px;
+  color: var(--qa-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qa-log-chevron-open {
+  transform: rotate(90deg);
+}
+.qa-log-item-body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--qa-border-subtle);
+}
+.qa-log-label {
+  margin: 12px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--qa-accent, #5b7b64);
+}
+.qa-log-label.is-danger {
+  color: var(--c-danger, #d33);
+}
+.qa-log-entry {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--qa-text-primary) 5%, transparent);
+}
+.qa-log-entry[data-role="system"] {
+  border-left: 3px solid var(--qa-accent, #5b7b64);
+}
+.qa-log-entry[data-role="user"] {
+  border-left: 3px solid #4a7ba6;
+}
+.qa-log-entry[data-role="assistant"] {
+  border-left: 3px solid #a67a3d;
+}
+.qa-log-entry-role {
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  opacity: 0.75;
+}
+.qa-log-entry-content {
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--qa-text-primary);
+}
+.qa-log-response {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--qa-text-primary) 5%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--qa-text-primary);
+  overflow-x: hidden;
+}
+/* ── 会话重命名弹窗：盖住舞台与抽屉，配色全走工坊主题变量 ── */
+.qa-rename-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.38);
+  animation: qa-fade-in 0.18s ease;
+}
+.qa-rename-dialog {
+  width: min(100%, 320px);
+  padding: 20px;
+  border: 1px solid var(--qa-border-subtle);
+  border-radius: 12px;
+  background: var(--qa-bg-overlay);
+  box-shadow: var(--qa-shadow-lg);
+}
+.qa-rename-title {
+  margin-bottom: 14px;
+  color: var(--qa-text-primary);
+  font-size: 16px;
+  font-weight: 600;
+}
+.qa-rename-input {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--qa-border-strong);
+  border-radius: 10px;
+  outline: none;
+  background: var(--qa-bg-surface);
+  color: var(--qa-text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+.qa-rename-input:focus {
+  border-color: var(--qa-accent);
+  box-shadow: 0 0 0 3px var(--qa-accent-subtle);
+}
+.qa-rename-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+.qa-rename-cancel {
+  height: 42px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--qa-text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+}
+.qa-rename-confirm {
+  min-width: 88px;
+  height: 42px;
+  justify-content: center;
+  padding: 0 22px;
+}
+.qa-rename-confirm:disabled {
+  opacity: 0.45;
+  cursor: default;
 }

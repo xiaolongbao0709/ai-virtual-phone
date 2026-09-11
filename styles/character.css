@@ -105,6 +105,7 @@
 }
 
 .char-polaroid-board-item {
+  transform-style: flat;
   position: absolute;
   width: 130px;
   /* 固定尺寸，适合散落布局 */

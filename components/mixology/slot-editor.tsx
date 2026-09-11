@@ -7,9 +7,10 @@
 // 条件只有五种一句话说得清的形式，不做嵌套、不做表达式——
 // 真要写逻辑那是另一回事，不该在这里开口子。
 
-import { useState } from "react";
-import { ArrowDown, ArrowUp, Plus, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { ArrowDown, ArrowUp, Pencil, Plus, Trash2, X } from "lucide-react";
 import { describeMixCondition } from "@/lib/mixology/state";
+import { isMixBuiltinId } from "@/lib/mixology/storage";
 import {
     MIX_KIND_LABELS,
     MIX_SLOT_STACK,
@@ -210,6 +211,8 @@ export function MixSlotEditor({
     varNames,
     onChange,
     onPickMore,
+    onEdit,
+    onCreate,
     onClose,
 }: {
     kind: MixMaterialKind;
@@ -220,10 +223,128 @@ export function MixSlotEditor({
     varNames: string[];
     onChange: (next: MixSlotEntry[]) => void;
     onPickMore: () => void;
+    /** 传了就在每条上出编辑入口（官方出厂件与别人上传的导入件除外，与酒柜同一条准入线）：对局里就地改材料用 */
+    onEdit?: (material: MixMaterial) => void;
+    /** 传了就在右上出「+」：不离开弹窗直接新建一件这一格的材料 */
+    onCreate?: () => void;
     onClose: () => void;
 }) {
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
     const stackMode = MIX_SLOT_STACK[kind];
+
+    // ── 长按拖动排序 ──────────────────────────────────
+    // 按住一条不动约 0.25 秒进入拖动；手指一开始就滑动则当作在滚列表，不拦。
+    // 拖动中被拖的那条跟着手指走，其余的让位；松手按落点重排。上下箭头照旧保留。
+    const listRef = useRef<HTMLDivElement | null>(null);
+    const pressRef = useRef<{ timer: number; index: number; x: number; y: number; pointerId: number } | null>(null);
+    const dragRef = useRef<{ from: number; over: number; grab: number; tops: number[]; heights: number[] } | null>(null);
+    const [drag, setDrag] = useState<{ from: number; over: number; y: number } | null>(null);
+    const entriesRef = useRef(entries);
+    entriesRef.current = entries;
+    const onChangeRef = useRef(onChange);
+    onChangeRef.current = onChange;
+
+    const cancelPress = useCallback(() => {
+        if (pressRef.current) window.clearTimeout(pressRef.current.timer);
+        pressRef.current = null;
+    }, []);
+
+    const blockTouchScroll = useCallback((event: TouchEvent) => { if (dragRef.current) event.preventDefault(); }, []);
+
+    const finishDrag = useCallback(() => {
+        const state = dragRef.current;
+        dragRef.current = null;
+        document.removeEventListener("touchmove", blockTouchScroll);
+        setDrag(null);
+        if (!state || state.over === state.from) return;
+        const next = [...entriesRef.current];
+        const [item] = next.splice(state.from, 1);
+        next.splice(state.over, 0, item);
+        onChangeRef.current(next);
+    }, [blockTouchScroll]);
+
+    const updateDrag = useCallback((clientY: number) => {
+        const state = dragRef.current;
+        const list = listRef.current;
+        if (!state || !list) return;
+        const listTop = list.getBoundingClientRect().top;
+        const rel = clientY - listTop;
+        const y = rel - state.grab - state.tops[state.from];
+        const center = rel - state.grab + state.heights[state.from] / 2;
+        let over = state.tops.length - 1;
+        for (let i = 0; i < state.tops.length; i += 1) {
+            if (center < state.tops[i] + state.heights[i]) { over = i; break; }
+        }
+        over = Math.max(0, Math.min(state.tops.length - 1, over));
+        state.over = over;
+        setDrag({ from: state.from, over, y });
+        // 贴近弹窗上下沿时替玩家滚一滚，长列表才拖得到头
+        const scroller = list.closest<HTMLElement>(".mix-sheet-body");
+        if (scroller) {
+            const rect = scroller.getBoundingClientRect();
+            if (clientY < rect.top + 48) scroller.scrollTop -= 6;
+            else if (clientY > rect.bottom - 48) scroller.scrollTop += 6;
+        }
+    }, []);
+
+    useEffect(() => {
+        const onMove = (event: PointerEvent) => {
+            const press = pressRef.current;
+            if (press && !dragRef.current) {
+                // 长按还没成立就滑开了：是在滚列表，取消
+                if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) cancelPress();
+                return;
+            }
+            if (dragRef.current) { event.preventDefault(); updateDrag(event.clientY); }
+        };
+        const onUp = () => { cancelPress(); if (dragRef.current) finishDrag(); };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+        return () => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            window.removeEventListener("pointercancel", onUp);
+            cancelPress();
+            document.removeEventListener("touchmove", blockTouchScroll);
+        };
+    }, [cancelPress, finishDrag, updateDrag, blockTouchScroll]);
+
+    const startDrag = useCallback((index: number, clientY: number) => {
+        const list = listRef.current;
+        if (!list) return;
+        const rows = Array.from(list.children) as HTMLElement[];
+        const tops = rows.map((row) => row.offsetTop);
+        const heights = rows.map((row) => row.offsetHeight);
+        const listTop = list.getBoundingClientRect().top;
+        dragRef.current = { from: index, over: index, grab: clientY - listTop - tops[index], tops, heights };
+        document.addEventListener("touchmove", blockTouchScroll, { passive: false });
+        try { navigator.vibrate?.(8); } catch { /* 不支持就算了 */ }
+        setDrag({ from: index, over: index, y: 0 });
+    }, [blockTouchScroll]);
+
+    const onRowPointerDown = (event: React.PointerEvent<HTMLDivElement>, index: number) => {
+        if (event.button !== 0) return;
+        // 按在按钮上是要点按钮，不算长按
+        if ((event.target as HTMLElement).closest("button")) return;
+        cancelPress();
+        const { clientX, clientY, pointerId } = event;
+        pressRef.current = {
+            index, x: clientX, y: clientY, pointerId,
+            timer: window.setTimeout(() => { pressRef.current = null; startDrag(index, clientY); }, 260),
+        };
+    };
+
+    /** 拖动中每条的位移：被拖的跟手指，其余按方向让开一格 */
+    const rowStyle = (index: number): CSSProperties | undefined => {
+        const state = dragRef.current;
+        if (!drag || !state) return undefined;
+        if (index === drag.from) return { transform: `translateY(${drag.y}px)` };
+        const step = state.heights[drag.from] + (state.tops.length > 1 ? Math.max(0, state.tops[1] - state.tops[0] - state.heights[0]) : 8);
+        if (drag.from < drag.over && index > drag.from && index <= drag.over) return { transform: `translateY(${-step}px)` };
+        if (drag.from > drag.over && index >= drag.over && index < drag.from) return { transform: `translateY(${step}px)` };
+        return undefined;
+    };
 
     const move = (index: number, delta: number) => {
         const target = index + delta;
@@ -253,6 +374,9 @@ export function MixSlotEditor({
                 <div className="mix-sheet" onClick={(e) => e.stopPropagation()}>
                     <div className="mix-sheet-head">
                         <div className="mix-sheet-title">这一格的{MIX_KIND_LABELS[kind]}</div>
+                        {onCreate ? (
+                            <button type="button" className="mix-icon-btn" onClick={onCreate} aria-label={`自建一件${MIX_KIND_LABELS[kind]}`} title={`自建一件${MIX_KIND_LABELS[kind]}`}><Plus size={18} /></button>
+                        ) : null}
                         <button type="button" className="mix-icon-btn" onClick={onClose} aria-label="关闭"><X size={18} /></button>
                     </div>
                     <div className="mix-sheet-body">
@@ -262,13 +386,21 @@ export function MixSlotEditor({
                                 : stackMode === "concat"
                                     ? "这一格里条件满足的会全部生效，按下面的顺序依次叠加。"
                                     : "这一格从上往下找，用第一件条件满足的；其余的这一轮不出场。"}
+                            {entries.length > 1 ? "长按一条可以拖动排序。" : ""}
                         </div>
 
-                        <div className="mix-stack-list">
+                        <div className="mix-stack-list" ref={listRef} data-dragging={drag ? "true" : undefined}>
                             {entries.map((entry, index) => {
                                 const material = resolve(entry.materialId);
                                 return (
-                                    <div className="mix-stack-row" key={`${entry.materialId}-${index}`}>
+                                    <div
+                                        className="mix-stack-row"
+                                        key={`${entry.materialId}-${index}`}
+                                        data-dragging={drag?.from === index ? "true" : undefined}
+                                        style={rowStyle(index)}
+                                        onPointerDown={(event) => onRowPointerDown(event, index)}
+                                        onContextMenu={(event) => { if (pressRef.current || dragRef.current) event.preventDefault(); }}
+                                    >
                                         <div className="mix-stack-order">{index + 1}</div>
                                         <div className="mix-stack-glyph"><KindGlyph kind={kind} size={20} /></div>
                                         <div className="mix-stack-main">
@@ -284,6 +416,9 @@ export function MixSlotEditor({
                                             </button>
                                         </div>
                                         <div className="mix-stack-ops">
+                                            {onEdit && material && !isMixBuiltinId(material.id) && !material.imported ? (
+                                                <button type="button" className="mix-icon-btn" onClick={() => onEdit(material)} aria-label="编辑"><Pencil size={15} /></button>
+                                            ) : null}
                                             <button type="button" className="mix-icon-btn" onClick={() => move(index, -1)} disabled={index === 0} aria-label="上移"><ArrowUp size={15} /></button>
                                             <button type="button" className="mix-icon-btn" onClick={() => move(index, 1)} disabled={index === entries.length - 1} aria-label="下移"><ArrowDown size={15} /></button>
                                             <button type="button" className="mix-icon-btn" onClick={() => remove(index)} aria-label="移除"><Trash2 size={15} /></button>

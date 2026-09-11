@@ -140,6 +140,27 @@ function buildXiaohongshuNpcPrompt(
   return [guard, body].filter(Boolean).join("\n\n");
 }
 
+// 解析层剪枝：保留名单守卫只是提示词约束，模型不听话时仍会产出冒用
+// 用户名的"路人"评论（实报）。朋友圈引擎早有同类剪枝，这里对齐口径：
+// 命中用户名的生成评论整条丢弃，挂在它下面的楼中楼一并丢弃。
+function normalizeXiaohongshuAuthorName(value: unknown): string {
+  return cleanReservedName(value).toLowerCase();
+}
+
+function buildXiaohongshuUserNameSet(extraNames: string[] = []): Set<string> {
+  const names = [
+    resolveUserIdentity()?.name,
+    resolveUserIdentity(undefined, "xiaohongshu")?.name,
+    ...extraNames,
+  ].map(normalizeXiaohongshuAuthorName).filter(Boolean);
+  return new Set(names);
+}
+
+function isXiaohongshuUserAuthorName(authorName: string, userNames: Set<string>): boolean {
+  const normalized = normalizeXiaohongshuAuthorName(authorName);
+  return normalized !== "" && userNames.has(normalized);
+}
+
 function getUserXiaohongshuNamesFromNote(note: XiaohongshuNote): string[] {
   const names = [
     note.source === "user" ? note.authorName : "",
@@ -291,21 +312,36 @@ function parseBlockComments(fields: Record<string, string>, noteId: string, sour
     .filter((value): value is string => Boolean(value))
     .map(Number)
     .sort((a, b) => a - b);
-  return numbers.map((number) => {
+  const userNames = buildXiaohongshuUserNameSet();
+  const prunedNumbers = new Set<number>();
+  const comments: XiaohongshuComment[] = [];
+  for (const number of numbers) {
     const authorName = cleanText(fields[`评论${number}作者`], 60) || "小红书用户";
     const replyTarget = cleanText(fields[`评论${number}回复对象`], 40);
     const replyNumber = /^评论(\d+)$/.exec(replyTarget)?.[1];
-    return makeXiaohongshuComment({
+    if (isXiaohongshuUserAuthorName(authorName, userNames)) {
+      console.warn(`[Xiaohongshu] 剪掉冒用用户名的生成评论: "${authorName}"`);
+      prunedNumbers.add(number);
+      continue;
+    }
+    if (replyNumber && prunedNumbers.has(Number(replyNumber))) {
+      prunedNumbers.add(number);
+      continue;
+    }
+    const text = cleanMultiline(fields[`评论${number}内容`], 600);
+    if (!text) continue;
+    comments.push(makeXiaohongshuComment({
       noteId,
       authorType: source,
       authorId: source === "npc" ? makeXiaohongshuNpcId(authorName) : source,
       authorName,
-      text: cleanMultiline(fields[`评论${number}内容`], 600),
+      text,
       replyTo: replyNumber ? undefined : replyTarget || undefined,
       replyToCommentId: replyNumber ? `${noteId}_comment_${replyNumber}` : undefined,
       unread: source === "npc",
-    });
-  }).filter(comment => comment.text);
+    }));
+  }
+  return comments;
 }
 
 /**
@@ -359,10 +395,21 @@ function appendCharacterThreadToNote(args: {
   const { note, characterDisplayName, characterName, characterId, thread, mainCommentId, shouldNotifyUser } = args;
   const appended: XiaohongshuComment[] = [];
   const numberToId = new Map<number, string>();
+  const userNames = buildXiaohongshuUserNameSet(getUserXiaohongshuNamesFromNote(note));
+  const prunedNumbers = new Set<number>();
   thread.forEach((item) => {
     const isCharacter = isCharacterXiaohongshuAuthor(item.authorName, characterDisplayName, characterName);
     const replyTarget = (item.replyTo || "").trim();
     const referenceMatch = /^延伸(\d+)$/.exec(replyTarget);
+    if (!isCharacter && isXiaohongshuUserAuthorName(item.authorName, userNames)) {
+      console.warn(`[Xiaohongshu] 剪掉冒用用户名的楼中楼评论: "${item.authorName}"`);
+      prunedNumbers.add(item.number);
+      return;
+    }
+    if (referenceMatch && prunedNumbers.has(Number(referenceMatch[1]))) {
+      prunedNumbers.add(item.number);
+      return;
+    }
     const isMainReply = !replyTarget || /^主评论$/.test(replyTarget);
     const replyToCommentId = isMainReply
       ? mainCommentId
@@ -510,22 +557,33 @@ export function parseXiaohongshuNpcCommentReply(raw: string, noteId: string, fal
     .filter((value): value is string => Boolean(value))
     .map(Number)
     .sort((a, b) => a - b);
-  const comments = numbers.map((number) => {
+  const userNames = buildXiaohongshuUserNameSet();
+  const prunedNumbers = new Set<number>();
+  const comments: ParsedXiaohongshuNpcCommentReply["comments"] = [];
+  for (const number of numbers) {
+    if (comments.length >= 4) break;
     const authorName = cleanText(fields[`评论${number}作者`], 60) || "小红书用户";
     const replyValue = cleanText(fields[`评论${number}回复评论ID`] ?? fields[`评论${number}回复对象`], 180);
     const replyNumber = /^评论(\d+)$/.exec(replyValue)?.[1];
+    if (isXiaohongshuUserAuthorName(authorName, userNames)) {
+      console.warn(`[Xiaohongshu] 剪掉冒用用户名的生成评论: "${authorName}"`);
+      prunedNumbers.add(number);
+      continue;
+    }
+    if (replyNumber && prunedNumbers.has(Number(replyNumber))) {
+      prunedNumbers.add(number);
+      continue;
+    }
     const isEmptyReply = !replyValue || /^(无|none|null|-)$/.test(replyValue.toLowerCase()) || /被回复|候选|评论id/i.test(replyValue);
     const replyToCommentId = replyNumber
       ? `${noteId}_comment_${replyNumber}`
       : !isEmptyReply
         ? replyValue
         : fallbackReplyToCommentId;
-    return {
-      authorName,
-      text: cleanMultiline(fields[`评论${number}内容`], 600),
-      replyToCommentId,
-    };
-  }).filter(comment => comment.text).slice(0, 4);
+    const text = cleanMultiline(fields[`评论${number}内容`], 600);
+    if (!text) continue;
+    comments.push({ authorName, text, replyToCommentId });
+  }
   return { comments };
 }
 
@@ -537,23 +595,38 @@ export function parseXiaohongshuNpcMoreComments(raw: string): ParsedXiaohongshuN
     .filter((value): value is string => Boolean(value))
     .map(Number)
     .sort((a, b) => a - b);
-  const comments = numbers.map((number) => {
+  const userNames = buildXiaohongshuUserNameSet();
+  const prunedNumbers = new Set<number>();
+  const comments: ParsedXiaohongshuNpcCommentReply["comments"] = [];
+  for (const number of numbers) {
+    if (comments.length >= 8) break;
     const authorName = cleanText(fields[`评论${number}作者`], 60) || "小红书用户";
     const replyId = cleanText(fields[`评论${number}回复评论ID`], 180);
     const replyTarget = cleanText(fields[`评论${number}回复对象`], 80);
     const replyNumber = /^评论(\d+)$/.exec(replyTarget)?.[1];
+    if (isXiaohongshuUserAuthorName(authorName, userNames)) {
+      console.warn(`[Xiaohongshu] 剪掉冒用用户名的生成评论: "${authorName}"`);
+      prunedNumbers.add(number);
+      continue;
+    }
+    if (replyNumber && prunedNumbers.has(Number(replyNumber))) {
+      prunedNumbers.add(number);
+      continue;
+    }
     const isEmptyReplyId = !replyId || /^(无|none|null|-)$/.test(replyId.toLowerCase()) || /从上下文|真实评论id|被回复|候选|评论id/i.test(replyId);
-    return {
+    const text = cleanMultiline(fields[`评论${number}内容`], 600);
+    if (!text) continue;
+    comments.push({
       authorName,
-      text: cleanMultiline(fields[`评论${number}内容`], 600),
+      text,
       replyTo: !replyNumber && replyTarget ? replyTarget : undefined,
       replyToCommentId: !isEmptyReplyId
         ? replyId
         : replyNumber
           ? `__generated_comment_${replyNumber}`
           : undefined,
-    };
-  }).filter(comment => comment.text).slice(0, 8);
+    });
+  }
   return { comments };
 }
 

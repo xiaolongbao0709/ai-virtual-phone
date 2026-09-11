@@ -297,10 +297,17 @@ async function exportIndexedDbSource(
 }
 
 async function readKvRecords(source: KvSource): Promise<{ key: string; value: string }[]> {
+  // 读不到真实存储时必须失败，绝不静默退回内存缓存：KV 水合失败时缓存可能是
+  // 空的/不完整的，退回缓存会生成一份「导出成功」但缺数据的备份——用户换设备
+  // 导入后才发现历史没了。宁可备份报错，也不产出表面正常的残缺 ZIP。
   const byKey = new Map<string, { key: string; value: string }>();
   const db = await openDb("AiPhoneKvDB");
-  if (db && Array.from(db.objectStoreNames).includes("entries")) {
-    try {
+  if (!db) {
+    throw new Error("本机数据库（AiPhoneKvDB）打不开，为避免生成不完整的备份已中止。请重启浏览器后重试。");
+  }
+  try {
+    // 库刚建、还没有 entries 表 = 这台设备确实没写过 KV 数据，不算读取失败
+    if (Array.from(db.objectStoreNames).includes("entries")) {
       const transaction = db.transaction("entries", "readonly");
       const request = transaction.objectStore("entries").openCursor();
       await new Promise<void>((resolve, reject) => {
@@ -315,13 +322,14 @@ async function readKvRecords(source: KvSource): Promise<{ key: string; value: st
         transaction.onerror = () => reject(transaction.error);
         transaction.onabort = () => reject(transaction.error);
       });
-    } catch {
-      // Fall back to cache-only below.
-    } finally {
-      db.close();
     }
+  } catch (error) {
+    throw new Error(`本机数据读取失败，为避免生成不完整的备份已中止（${error instanceof Error ? error.message : String(error)}）。请重试。`);
+  } finally {
+    db.close();
   }
 
+  // 内存缓存仍然要并进来：kvSet 是先写缓存再异步落盘，缓存可能比 IndexedDB 新
   for (const record of kvEntries()) {
     if (matchesKey(record.key, source)) byKey.set(record.key, record);
   }

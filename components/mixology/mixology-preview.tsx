@@ -6,16 +6,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronLeft, Copy, Play, X } from "lucide-react";
-import { MixProseView } from "./prose-view";
+import { MixProseView, type MixProseDialogue } from "./prose-view";
 import { MixRichText } from "./rich-text";
 import { MixTicketFrame } from "./ticket-frame";
-import { MixMechanismPanel } from "./mechanism-panel";
+import { MixMechanismInline, MixMechanismPanel, sendMixDialogue } from "./mechanism-panel";
+import { primeMixAudio } from "@/lib/mixology/audio-player";
 import { scopeMixCss } from "@/lib/mixology/css-scope";
 import { MIX_HOOK_LABELS, type MixHook } from "@/lib/mixology/mechanism-protocol";
 import { disposeMixSandboxesForMaterial, runMixHook } from "@/lib/mixology/mechanism-runtime";
+import { disposeMixTrusted, ensureMixTrusted, runMixTrustedHook, sendMixTrustedDialogue, type MixTrustedHost } from "@/lib/mixology/trusted-runtime";
+import { MixTrustedSlot } from "./trusted-slot";
 import { applyMixFilterRules } from "@/lib/mixology/prose";
 import { MIX_CRAFT_PROMPTS } from "@/lib/mixology/crafting-guides";
-import { MIX_KIND_LABELS, mixEncoreRenderHtml, type MixFilterRule, type MixMaterial, type MixMaterialKind, type MixPanelLayout, type MixState } from "@/lib/mixology/types";
+import { MIX_KIND_LABELS, mixEncoreRenderHtml, type MixDialogueButton, type MixFilterRule, type MixMaterial, type MixMaterialKind, type MixPanelLayout, type MixState } from "@/lib/mixology/types";
 
 /** 装饰预览用的样例正文：覆盖五种正文标记，方便作者一眼看全 */
 const GARNISH_SAMPLE = [
@@ -31,7 +34,7 @@ export type MixPreviewTarget =
     | { kind: "encore"; html: string; raw?: string }
     | { kind: "canvas"; html: string; cover?: string }
     | { kind: "filter"; rules: MixFilterRule[] }
-    | { kind: "mechanism"; name: string; html: string; layout: MixPanelLayout; script: string };
+    | { kind: "mechanism"; name: string; html: string; layout: MixPanelLayout; script: string; connectors?: string[]; dialogueButton?: MixDialogueButton; trusted?: boolean };
 
 /**
  * 预览内容本体：各类材料的"眼见为实"。
@@ -220,6 +223,25 @@ function MixMechanismStage({ target }: { target: Extract<MixPreviewTarget, { kin
     const [state, setState] = useState<MixState>({});
     const [box, setBox] = useState<Partial<MixPanelLayout> | null>(null);
     const [said, setSaid] = useState<string[]>([]);
+    // 对白按钮试点：声明了 dialogueButton 的机括，示例正文里每句对白后也画按钮，点了真递进界面
+    const [marks, setMarks] = useState<Record<string, string>>({});
+    // 代码里 mix.dialogueButton 登记的按钮（材料上填的旧写法也认）
+    const [runtimeButton, setRuntimeButton] = useState<MixDialogueButton | null>(null);
+    const handleDialogueButton = useCallback((_id: string, button: MixDialogueButton | null) => setRuntimeButton(button), []);
+    const dialogue = useMemo<MixProseDialogue | undefined>(() => {
+        const button = runtimeButton ?? target.dialogueButton;
+        if (!button?.icon || !(target.html.trim() || (target.trusted && target.script.trim()))) return undefined;
+        return {
+            actions: [{ key: MECH_MATERIAL, icon: button.icon, title: button.title || target.name }],
+            states: marks,
+            idPrefix: "preview:",
+            onTap: (_key, segmentId, text) => {
+                primeMixAudio();
+                if (target.trusted) sendMixTrustedDialogue(MECH_SESSION, MECH_MATERIAL, { id: segmentId, text, turnId: "preview" });
+                else sendMixDialogue(MECH_MATERIAL, { id: segmentId, text, turnId: "preview" });
+            },
+        };
+    }, [runtimeButton, target.dialogueButton, target.html, target.name, target.trusted, target.script, marks]);
     const [turn, setTurn] = useState(0);
     const [running, setRunning] = useState<MixHook | "">("");
     const [result, setResult] = useState<{ hook: MixHook; lines: string[] } | null>(null);
@@ -243,12 +265,18 @@ function MixMechanismStage({ target }: { target: Extract<MixPreviewTarget, { kin
             charName: MECH_CHAR,
             userName: MECH_USER,
             text: hook === "beforeSend" ? MECH_SAY : hook === "afterReply" ? MECH_REPLY : undefined,
+            raw: hook === "rawReply" ? `[状态栏]\n好感度：61\n地点：吧台\n[/状态栏]\n\n${MECH_REPLY}` : undefined,
+            lastReply: hook === "beforeSend" ? MECH_REPLY : undefined,
             ticketRaw: hook === "afterReply" ? "好感度：61\n地点：吧台" : undefined,
             encoreRaw: undefined,
         };
-        const out = await runMixHook(MECH_SESSION, MECH_MATERIAL, target.script, hook, payload);
+        const out = target.trusted
+            ? await runMixTrustedHook(MECH_SESSION, MECH_MATERIAL, hook, payload)
+            : await runMixHook(MECH_SESSION, MECH_MATERIAL, target.script, hook, payload);
         const lines: string[] = [];
         if (typeof out.text === "string") lines.push(`正文改写\n${short(out.text, 400)}`);
+        if (typeof out.raw === "string") lines.push(`原文改写（剥块前）\n${short(out.raw, 400)}`);
+        if (typeof out.lastReply === "string") lines.push(`最近一条 assistant 改写\n${short(out.lastReply, 400)}`);
         if (out.note) lines.push(`临时提示 · ${out.note.length} 字\n${short(out.note, 600)}`);
         if (out.state) lines.push(`记住的值 · ${Object.entries(out.state).map(([k, v]) => `${k}=${v}`).join("、")}`);
         if (out.store) {
@@ -260,9 +288,41 @@ function MixMechanismStage({ target }: { target: Extract<MixPreviewTarget, { kin
         setResult({ hook, lines });
         setRunning("");
         if (hook === "afterReply") setTurn((n) => n + 1);
-    }, [target.script, turn, state, store]);
+    }, [target.script, target.trusted, turn, state, store]);
 
-    const hasPanel = target.html.trim().length > 0;
+    const trusted = target.trusted === true && target.script.trim().length > 0;
+    const hasPanel = trusted || target.html.trim().length > 0;
+    const headless = !trusted && target.layout.slot === "hidden";
+    const [toasts, setToasts] = useState<string[]>([]);
+    const pushToast = useCallback((text: string) => setToasts((prev) => [...prev.slice(-2), text]), []);
+
+    // 信任模式：在假舞台上真跑一遍代码——坑位挂到舞台的正文与下方，钩子按钮直接调它登记的函数
+    const stateRef = useRef(state); stateRef.current = state;
+    const storeRef = useRef(store); storeRef.current = store;
+    const trustedHost = useMemo<MixTrustedHost>(() => ({
+        getState: () => stateRef.current,
+        getStore: () => storeRef.current,
+        setStore: (_id, next) => setStore(next),
+        setState: (patch) => setState((prev) => ({ ...prev, ...patch })),
+        say: (text) => setSaid((prev) => [...prev.slice(-2), text]),
+        toast: pushToast,
+        mark: (_id, id, st) => setMarks((prev) => { const key = `${MECH_MATERIAL}|${id}`; const next = { ...prev }; if (st) next[key] = st; else delete next[key]; return next; }),
+        dialogueButton: (_id, button) => setRuntimeButton(button),
+        call: async () => { throw new Error("试摆里不调连接器，进对局再试。"); },
+        play: () => pushToast("试摆里不播放音频，进对局再试。"),
+        stop: () => undefined,
+        charName: () => MECH_CHAR,
+        userName: () => MECH_USER,
+    }), [pushToast]);
+    useEffect(() => {
+        if (!trusted) return;
+        ensureMixTrusted(MECH_SESSION, {
+            id: MECH_MATERIAL, kind: "mechanism", name: target.name || "机括", script: target.script,
+            connectors: target.connectors, dialogueButton: target.dialogueButton, trusted: true,
+            createdAt: 0, updatedAt: Date.now(),
+        }, trustedHost);
+        return () => disposeMixTrusted(MECH_SESSION);
+    }, [trusted, target.script, target.name, target.connectors, target.dialogueButton, trustedHost]);
 
     return (
         <>
@@ -271,10 +331,46 @@ function MixMechanismStage({ target }: { target: Extract<MixPreviewTarget, { kin
             <div className="mix-detail-label">界面</div>
             <div className="mix-mech-stage" ref={shellRef} style={{ aspectRatio: ratio }}>
                 <div className="mix-mech-bar">{MECH_CHAR}</div>
-                <div className="mix-mech-prose"><MixProseView text={MECH_SAMPLE} /></div>
+                <div className="mix-mech-prose" data-turn="preview">
+                    <MixProseView text={MECH_SAMPLE} dialogue={dialogue} />
+                    {trusted ? (
+                        <>
+                            <MixTrustedSlot sessionId={MECH_SESSION} materialId={MECH_MATERIAL} slot="prose" turnId="preview" text={MECH_SAMPLE} index={0} state={state} store={store} charName={MECH_CHAR} userName={MECH_USER}
+                                target={() => shellRef.current?.querySelector<HTMLElement>('[data-turn="preview"] .mix-prose') ?? null} />
+                            <MixTrustedSlot sessionId={MECH_SESSION} materialId={MECH_MATERIAL} slot="turn" turnId="preview" text={MECH_SAMPLE} index={0} state={state} store={store} charName={MECH_CHAR} userName={MECH_USER} />
+                            <MixTrustedSlot sessionId={MECH_SESSION} materialId={MECH_MATERIAL} slot="bottom" state={state} store={store} charName={MECH_CHAR} userName={MECH_USER} />
+                        </>
+                    ) : null}
+                </div>
                 <div className="mix-mech-input" />
                 <div className="mix-panel-layer">
-                    {target.html.trim() ? (
+                    {trusted ? (
+                        <MixTrustedSlot sessionId={MECH_SESSION} materialId={MECH_MATERIAL} slot="float" state={state} store={store} charName={MECH_CHAR} userName={MECH_USER} className="mix-trusted-float" />
+                    ) : null}
+                    {target.html.trim() && headless ? (
+                        <div hidden aria-hidden="true">
+                            <MixMechanismInline
+                                materialId={MECH_MATERIAL}
+                                name={target.name || "机括"}
+                                html={target.html}
+                                state={state}
+                                store={store}
+                                onStore={(_id, next) => setStore(next)}
+                                onState={(patch) => setState((prev) => ({ ...prev, ...patch }))}
+                                onSay={(text) => setSaid((prev) => [...prev.slice(-2), text])}
+                                connectors={target.connectors}
+                                onDialogueButton={handleDialogueButton}
+                                onMark={(_id, id, st) => setMarks((prev) => {
+                                    const key = `${MECH_MATERIAL}|${id}`;
+                                    const next = { ...prev };
+                                    if (st) next[key] = st; else delete next[key];
+                                    return next;
+                                })}
+                                onToast={pushToast}
+                            />
+                        </div>
+                    ) : null}
+                    {target.html.trim() && !headless ? (
                         <MixMechanismPanel
                             materialId={MECH_MATERIAL}
                             name={target.name || "机括"}
@@ -286,6 +382,15 @@ function MixMechanismStage({ target }: { target: Extract<MixPreviewTarget, { kin
                             onState={(patch) => setState((prev) => ({ ...prev, ...patch }))}
                             onSay={(text) => setSaid((prev) => [...prev.slice(-2), text])}
                             onBox={(_id, next) => setBox(next)}
+                            connectors={target.connectors}
+                                onDialogueButton={handleDialogueButton}
+                            onMark={(_id, id, state) => setMarks((prev) => {
+                                const key = `${MECH_MATERIAL}|${id}`;
+                                const next = { ...prev };
+                                if (state) next[key] = state; else delete next[key];
+                                return next;
+                            })}
+                            onToast={pushToast}
                         />
                     ) : null}
                 </div>
@@ -295,6 +400,9 @@ function MixMechanismStage({ target }: { target: Extract<MixPreviewTarget, { kin
                     已拖动过 · <button type="button" className="mix-mech-reset" onClick={() => setBox(null)}>归位</button>
                 </div>
             ) : null}
+            {headless ? <div className="mix-mech-hint">无界面机括：面板不画，点示例对白后面的按钮可试它的反应</div> : null}
+            {trusted ? <div className="mix-mech-hint">信任模式：代码已在这块舞台上执行，坑位挂在示例正文上；连接器与音频要进对局才真调</div> : null}
+            {toasts.length ? <div className="mix-mech-hint">机括提示：{toasts[toasts.length - 1]}</div> : null}
             </>
             ) : null}
 
@@ -347,7 +455,7 @@ function previewKey(target: MixPreviewTarget): string {
         case "encore": return `e${target.html}${target.raw ?? ""}`;
         case "canvas": return `c${target.html}${target.cover ?? ""}`;
         case "filter": return `f${JSON.stringify(target.rules)}`;
-        case "mechanism": return `m${target.html}${target.script}${JSON.stringify(target.layout)}`;
+        case "mechanism": return `m${target.html}${target.script}${JSON.stringify(target.layout)}${(target.connectors ?? []).join(",")}${JSON.stringify(target.dialogueButton ?? null)}`;
     }
 }
 
@@ -425,17 +533,17 @@ export function MixPreviewInline({
 // 让作者知道自己写的东西最终落在提示词的哪一段、和别的材料怎么排队。
 
 const STRUCTURE_ROWS: { section: string; from: string; kind?: string }[] = [
-    { section: "（固定开场说明）", from: "系统自带，声明这是角色扮演、越靠后优先级越高" },
+    { section: "（开场说明）", from: "序言材料（一局一件），声明这是角色扮演、越靠后优先级越高；没配则没有这一段（官方出厂件在槽位候选里可选）", kind: "preface" },
     { section: "# 扮演总纲", from: "基底（叠多件时每件一个 ##，标题取材料名）", kind: "base" },
-    { section: "# 角色资料", from: "角色卡，每个框一个 ##：角色名 / 基础信息 / 性格 / 外貌 / 背景", kind: "character" },
+    { section: "# 角色资料", from: "角色卡。分框填写时每个框一个 ##：角色名 / 基础信息 / 性格 / 外貌 / 背景；一框式时 ## 角色名 + 「角色资料」框的原文", kind: "character" },
     { section: "# 用户资料", from: "面具，每个框一个 ##：名字 / 用户人设（写了才有这一段）", kind: "persona" },
-    { section: "# 世界与剧情", from: "角色卡，每个框一个 ##：世界观 / 对{{user}}的初始认知 / 关系与身份 / 当前剧情 / 附加设定", kind: "character" },
+    { section: "# 世界与剧情", from: "角色卡。分框填写时每个框一个 ##：世界观 / 对{{user}}的初始认知 / 关系与身份 / 当前剧情 / 附加设定；一框式时是「世界与剧情」框的原文", kind: "character" },
     { section: "# 文风", from: "风味（叠多件时每件一个 ##，标题取材料名）", kind: "flavor" },
     { section: "# 正文输出要求", from: "两个 ##：内置的正文标记规则（在前）+ 杯型内容（在后）", kind: "glass" },
     { section: "# 状态栏", from: "格式说明在前，小票的「输出契约」是一个 ##，壳为 [状态栏]...[/状态栏]", kind: "ticket" },
     { section: "# 小剧场", from: "格式说明在前，尾调的「输出契约」是一个 ##，壳为 [小剧场]...[/小剧场]", kind: "encore" },
     { section: "# 示例对话", from: "角色卡：示例对话", kind: "character" },
-    { section: "# 输出格式检查", from: "系统自带的收尾核对清单（带状态栏/小剧场时出现）" },
+    { section: "# 输出格式检查", from: "核对材料（叠多件按顺序拼）；没装则没有这一段（官方出厂件在槽位候选里可选）", kind: "checklist" },
 ];
 
 export function MixStructureSheet({ highlight, onClose }: { highlight?: string; onClose: () => void }) {
@@ -450,6 +558,7 @@ export function MixStructureSheet({ highlight, onClose }: { highlight?: string; 
                     <div className="mix-struct-note">
                         <b>编辑器里的框标题，就是提示词里的标题。</b>没填的框整段消失；
                         文本里的 <code>{"{{char}}"}</code> / <code>{"{{user}}"}</code> 会换成角色名和你填的名字。
+                        下方各段的 # 标题可在序言材料的「自定义分段标题」里整套改写（交叉引用跟着换），这里展示的是默认标题。
                     </div>
 
                     <div className="mix-detail-label" style={{ marginTop: 14 }}>系统提示词（对话历史之前）</div>

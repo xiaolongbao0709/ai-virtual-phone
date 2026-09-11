@@ -102,10 +102,11 @@ export async function runSummarizationPipeline(
         .replace(/\{\{events\}\}/gi, eventsText);
 
     // Call LLM for summarization — compatible with all providers
+    // label 用于在「底层调用大模型日志」中标识这是记忆总结调用
     const result = await simpleLLMCall(
         apiConfig,
         [{ role: "user", content: summaryPrompt }],
-        { temperature: 0.3 },
+        { temperature: 0.3, label: `记忆总结·${characterName}` },
     );
 
     if (!result.content) {

@@ -8,7 +8,7 @@ import {
   mixologyRestFetch,
 } from "@/lib/server/mixology-supabase";
 
-const MATERIAL_KINDS = ["character", "persona", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "filter", "mechanism"] as const;
+const MATERIAL_KINDS = ["character", "persona", "preface", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "checklist", "filter", "mechanism"] as const;
 type HallType = "material" | "recipe";
 type HallListRow = { id?: unknown; kind?: unknown; name?: unknown; hook?: unknown; tags?: unknown; intro?: unknown; char_name?: unknown; part_names?: unknown; author_id?: unknown; author_name?: unknown; author_avatar?: unknown; like_count?: unknown; save_count?: unknown; view_count?: unknown; comment_count?: unknown; created_at?: unknown; updated_at?: unknown; has_cover?: unknown; cover?: unknown };
 const PUBLIC_CACHE_HEADERS = { "Cache-Control": "public, max-age=0, must-revalidate", "Netlify-CDN-Cache-Control": "public, durable, s-maxage=120, stale-while-revalidate=600", "Netlify-Vary": "query" } as const;
