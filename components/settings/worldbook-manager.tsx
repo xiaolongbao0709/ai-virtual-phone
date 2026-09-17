@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useContext, useCallback } from "react";
-import { Plus, BookOpen, Trash2, Upload, Download, ChevronLeft, AlertCircle, Maximize2, Replace } from "lucide-react";
+import { useState, useEffect, useRef, useContext, useCallback, useMemo } from "react";
+import { Plus, BookOpen, Trash2, Upload, Download, ChevronLeft, AlertCircle, Maximize2, Replace, GripVertical, FolderInput, Check, CheckSquare, RotateCcw } from "lucide-react";
 import {
     loadWorldBooks,
     saveWorldBooks,
@@ -16,6 +16,16 @@ import { SettingsContext } from "../phone-settings-app";
 import { BottomSheet, ConfirmDialog, TextExpandModal } from "@/components/ui/modal";
 import { SwipeActionRow, useSwipeActions } from "@/components/ui/swipe-actions";
 import { notifyMascotPageContext } from "@/lib/mascot-events";
+import { useTouchSort } from "@/lib/use-touch-sort";
+import { estimateTokens } from "@/lib/token-counter";
+
+function estimateEntryTokens(entry: WorldBookEntry): number {
+    return estimateTokens(entry.content || "");
+}
+
+function estimateBookTokens(book: WorldBookConfig): number {
+    return (book.entries || []).reduce((sum, entry) => sum + estimateEntryTokens(entry), 0);
+}
 
 export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {}) {
     const [books, setBooks] = useState<WorldBookConfig[]>([]);
@@ -25,6 +35,11 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
     const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<{ type: 'book' | 'entry', id: string } | null>(null);
     const [isLoaded, setIsLoaded] = useState(false);
     const [expandUid, setExpandUid] = useState<string | null>(null);
+    // ── 多选模式（右滑选中 / 批量操作 / 多选拖拽，与预设一致） ──
+    const [selectMode, setSelectMode] = useState(false);
+    const [selectedUids, setSelectedUids] = useState<Set<string>>(new Set());
+    const [selectionBookId, setSelectionBookId] = useState<string | null>(null);
+    const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
     const [importError, setImportError] = useState<string | null>(null);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -324,11 +339,40 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
 
     const visibleEntries = activeBook?.entries || [];
 
-    // ── 条目左滑操作（微信式：左滑露出「新增/删除」） ──
-    const swipe = useSwipeActions();
+    // 多选模式切换世界书时自动退出，避免跨书误操作
+    useEffect(() => {
+        setSelectMode(false);
+        setSelectedUids(new Set());
+        setSelectionBookId(null);
+        setConfirmDeleteSelected(false);
+    }, [activeBookId, viewMode]);
+
+    // 选中集合始终约束在当前世界书条目范围内
+    useEffect(() => {
+        setSelectedUids(previous => {
+            if (previous.size === 0) return previous;
+            const valid = new Set((activeBook?.entries || []).map(entry => entry.uid));
+            const next = new Set([...previous].filter(uid => valid.has(uid)));
+            if (next.size === previous.size && [...next].every(uid => previous.has(uid))) return previous;
+            return next;
+        });
+    }, [books, activeBookId]);
+
+    const actionableSelectedUids = useMemo(() => {
+        if (!activeBookId || selectionBookId !== activeBookId) return new Set<string>();
+        const valid = new Set((activeBook?.entries || []).map(entry => entry.uid));
+        return new Set([...selectedUids].filter(uid => valid.has(uid)));
+    }, [activeBook?.entries, activeBookId, selectedUids, selectionBookId]);
+
+    // ── 条目左滑操作（微信式：左滑露出操作按钮；三键宽 186） ──
+    const swipe = useSwipeActions(186);
+
+    // 跨书：先选目标书，再选「复制到 / 转移到」
+    const [crossBookEntryUid, setCrossBookEntryUid] = useState<string | null>(null);
+    const [crossBookTargetId, setCrossBookTargetId] = useState<string | null>(null);
 
     const makeNewEntry = (): WorldBookEntry => ({
-        uid: `wb-entry-${Date.now()}`,
+        uid: `wb-entry-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         key: "",
         content: "",
         comment: "",
@@ -342,6 +386,19 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
         role: 0,
         insertion_order: 50,
     });
+
+    const scrollEntryIntoView = (uid: string) => {
+        window.setTimeout(() => {
+            wbContainerRef.current
+                ?.querySelector(`[data-swipe-id="${CSS.escape(uid)}"]`)
+                ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 80);
+    };
+
+    const closeCrossBookSheet = () => {
+        setCrossBookEntryUid(null);
+        setCrossBookTargetId(null);
+    };
 
     const addEntry = () => {
         if (!activeBook) return;
@@ -360,12 +417,105 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
         updateBook(activeBook.id, { entries });
         swipe.close();
         setEditingUid(newEntry.uid);
-        window.setTimeout(() => {
-            wbContainerRef.current
-                ?.querySelector(`[data-swipe-id="${CSS.escape(newEntry.uid)}"]`)
-                ?.scrollIntoView({ behavior: "smooth", block: "center" });
-        }, 80);
+        scrollEntryIntoView(newEntry.uid);
     };
+
+    /** 将条目复制到其他世界书（保留原条目，目标书末尾追加副本） */
+    const copyEntryToBook = (uid: string, targetBookId: string) => {
+        if (!activeBook || targetBookId === activeBook.id) return;
+        const target = books.find(b => b.id === targetBookId);
+        if (!target) return;
+        const entry = activeBook.entries.find(e => e.uid === uid);
+        if (!entry) return;
+
+        const copy: WorldBookEntry = {
+            ...entry,
+            uid: `wb-entry-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        };
+        persist(books.map(b => {
+            if (b.id !== targetBookId) return b;
+            return {
+                ...b,
+                entries: [...(b.entries || []), copy],
+                updatedAt: Date.now(),
+            };
+        }));
+        closeCrossBookSheet();
+        swipe.close();
+    };
+
+    /** 将条目转移到其他世界书（从本书移除，追加到目标书末尾） */
+    const moveEntryToBook = (uid: string, targetBookId: string) => {
+        if (!activeBook || targetBookId === activeBook.id) return;
+        const target = books.find(b => b.id === targetBookId);
+        if (!target) return;
+        const entry = activeBook.entries.find(e => e.uid === uid);
+        if (!entry) return;
+
+        const nextBooks = books.map(b => {
+            if (b.id === activeBook.id) {
+                return {
+                    ...b,
+                    entries: b.entries.filter(e => e.uid !== uid),
+                    updatedAt: Date.now(),
+                };
+            }
+            if (b.id === targetBookId) {
+                return {
+                    ...b,
+                    entries: [...(b.entries || []), entry],
+                    updatedAt: Date.now(),
+                };
+            }
+            return b;
+        });
+        persist(nextBooks);
+        if (editingUid === uid) setEditingUid(null);
+        closeCrossBookSheet();
+        swipe.close();
+    };
+
+    // ── 条目拖拽排序（长按上下拖动；多选时整组批量移动，与预设一致） ──
+    const handleEntryReorder = useCallback((from: number, to: number) => {
+        if (from < 0 || to < 0 || from === to) return;
+        const book = books.find(b => b.id === activeBookId);
+        if (!book) return;
+        const entries = [...(book.entries || [])];
+        if (from >= entries.length || to >= entries.length) return;
+        const dragged = entries[from];
+        const isBulk = selectMode && actionableSelectedUids.size > 1 && actionableSelectedUids.has(dragged.uid);
+        if (isBulk) {
+            const selected = entries.filter(e => actionableSelectedUids.has(e.uid));
+            if (selected.length === entries.length) return;
+            const rest = entries.filter(e => !actionableSelectedUids.has(e.uid));
+            const anchor = rest.find(e => {
+                const idx = entries.indexOf(e);
+                return to > from ? idx > to : idx >= to;
+            });
+            const insertPos = anchor ? rest.indexOf(anchor) : rest.length;
+            const next = [...rest.slice(0, insertPos), ...selected, ...rest.slice(insertPos)];
+            persist(books.map(b => b.id === book.id ? { ...b, entries: next, updatedAt: Date.now() } : b));
+            return;
+        }
+        const [item] = entries.splice(from, 1);
+        entries.splice(to, 0, item);
+        persist(books.map(b => b.id === book.id ? { ...b, entries, updatedAt: Date.now() } : b));
+    }, [actionableSelectedUids, activeBookId, books, persist, selectMode]);
+
+    const getEntryDragIndices = useCallback((pressedIndex: number) => {
+        if (!selectMode) return [pressedIndex];
+        const entries = books.find(b => b.id === activeBookId)?.entries || [];
+        const pressedUid = entries[pressedIndex]?.uid;
+        if (!pressedUid || !actionableSelectedUids.has(pressedUid)) return [pressedIndex];
+        return entries.flatMap((entry, index) => actionableSelectedUids.has(entry.uid) ? [index] : []);
+    }, [actionableSelectedUids, activeBookId, books, selectMode]);
+
+    const {
+        containerRef: entryListRef,
+        onTouchStart: onEntryTouchStart,
+        onTouchMove: onEntryTouchMove,
+        onTouchEnd: onEntryTouchEnd,
+    } = useTouchSort(handleEntryReorder, 400, getEntryDragIndices);
 
     // ── 条目级导入/导出（左滑「替换/导出」+ 底部「添加条目」菜单） ──
     const [addEntryMenuOpen, setAddEntryMenuOpen] = useState(false);
@@ -410,11 +560,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
         }
         updateBook(book.id, { entries: [...(book.entries || []), ...appended] });
         if (appended.length === 1) setEditingUid(appended[0].uid);
-        window.setTimeout(() => {
-            wbContainerRef.current
-                ?.querySelector(`[data-swipe-id="${CSS.escape(appended[0].uid)}"]`)
-                ?.scrollIntoView({ behavior: "smooth", block: "center" });
-        }, 80);
+        scrollEntryIntoView(appended[0].uid);
     };
 
     const replaceImportedEntry = (book: WorldBookConfig, targetUid: string, raw: unknown) => {
@@ -467,6 +613,79 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
         updateBook(activeBook.id, { entries: activeBook.entries.filter(e => e.uid !== uid) });
         if (editingUid === uid) setEditingUid(null);
     };
+
+    // ── 多选模式：右滑选中 / 批量操作 / 多选拖拽（与预设一致） ──
+    const enterSelectMode = useCallback(() => {
+        if (!activeBookId) return;
+        setSelectMode(true);
+        setSelectionBookId(activeBookId);
+        setSelectedUids(new Set());
+        setEditingUid(null);
+        swipe.close();
+    }, [activeBookId, swipe]);
+
+    const exitSelectMode = useCallback(() => {
+        setSelectMode(false);
+        setSelectedUids(new Set());
+        setSelectionBookId(null);
+        swipe.close();
+    }, [swipe]);
+
+    const toggleSelect = useCallback((uid: string) => {
+        setSelectedUids(prev => {
+            const next = new Set(prev);
+            if (next.has(uid)) next.delete(uid);
+            else next.add(uid);
+            return next;
+        });
+    }, []);
+
+    // 右滑条目 → 选中并进入多选模式；已处于多选模式时追加选中
+    const handleSwipeRightSelect = useCallback((uid: string) => {
+        if (!activeBookId) return;
+        setSelectMode(true);
+        setEditingUid(null);
+        setSelectedUids(prev => {
+            const next = selectionBookId === activeBookId ? new Set(prev) : new Set<string>();
+            next.add(uid);
+            return next;
+        });
+        setSelectionBookId(activeBookId);
+        swipe.close();
+    }, [activeBookId, selectionBookId, swipe]);
+
+    const selectAllEntries = useCallback(() => {
+        if (!activeBookId) return;
+        setSelectionBookId(activeBookId);
+        setSelectedUids(new Set((activeBook?.entries || []).map(entry => entry.uid)));
+    }, [activeBook?.entries, activeBookId]);
+
+    const bulkSetEnabled = useCallback((enabled: boolean) => {
+        if (!activeBook || actionableSelectedUids.size === 0) return;
+        updateBook(activeBook.id, {
+            entries: activeBook.entries.map(entry =>
+                actionableSelectedUids.has(entry.uid) ? { ...entry, disable: !enabled } : entry,
+            ),
+        });
+    }, [actionableSelectedUids, activeBook]);
+
+    const bulkExportSelected = useCallback(async () => {
+        if (!activeBook || actionableSelectedUids.size === 0) return;
+        const selected = activeBook.entries.filter(entry => actionableSelectedUids.has(entry.uid));
+        const { downloadFile } = await import("@/lib/download-utils");
+        const blob = new Blob([JSON.stringify(selected, null, 2)], { type: "application/json" });
+        await downloadFile(blob, `${activeBook.name || "worldbook"}-entries.json`);
+    }, [actionableSelectedUids, activeBook]);
+
+    const deleteSelectedEntries = useCallback(() => {
+        if (!activeBook || actionableSelectedUids.size === 0) return;
+        updateBook(activeBook.id, { entries: activeBook.entries.filter(entry => !actionableSelectedUids.has(entry.uid)) });
+        if (editingUid && actionableSelectedUids.has(editingUid)) setEditingUid(null);
+        setSelectedUids(new Set());
+        setSelectionBookId(null);
+        setConfirmDeleteSelected(false);
+        setSelectMode(false);
+    }, [actionableSelectedUids, activeBook, editingUid]);
 
     if (!isLoaded) return null;
 
@@ -553,7 +772,12 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                 </button>
                             </div>
 
-                            <h2 className="mx-2 mb-0 mt-2 ts-20 font-bold leading-none text-black">Worldbook Info</h2>
+                            <div className="mx-2 mb-0 mt-2 flex items-center justify-between gap-2">
+                                <h2 className="ts-20 font-bold leading-none text-black">Worldbook Info</h2>
+                                <span className="menu-desc !mt-0 shrink-0 ts-12">
+                                    总计 {estimateBookTokens(activeBook).toLocaleString()} tk
+                                </span>
+                            </div>
                             <div className="ui-entry-card" style={{ cursor: "default" }}>
                                 <div className="flex flex-col gap-2">
                                     <label className="menu-label ts-13 font-semibold ml-1">世界书名称</label>
@@ -580,17 +804,77 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
 
                             {/* Entries Section */}
                             <div className="flex flex-col gap-4 mt-2">
-                            <h2 className="mx-2 mb-0 mt-2 ts-20 font-bold leading-none text-black">Worldbook Entries ({activeBook.entries?.length || 0})</h2>
+                            <div className="mx-2 mt-2 flex items-center justify-between gap-2">
+                                <h2 className="mb-0 ts-20 font-bold leading-none text-black">
+                                    Worldbook Entries ({activeBook.entries?.length || 0})
+                                </h2>
+                                {!selectMode && (
+                                    <button
+                                        type="button"
+                                        onClick={enterSelectMode}
+                                        className="inline-flex h-8 items-center justify-center gap-1 rounded-full border border-black/10 bg-white px-3 text-xs font-bold text-gray-800 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
+                                    >
+                                        <CheckSquare size={14} strokeWidth={1.8} />
+                                        <span>多选</span>
+                                    </button>
+                                )}
+                            </div>
+
+                            {selectMode && (() => {
+                                const bookEntries = activeBook?.entries || [];
+                                const allVisibleSelected = bookEntries.length > 0 && bookEntries.every(entry => actionableSelectedUids.has(entry.uid));
+                                const selectedEntries = bookEntries.filter(entry => actionableSelectedUids.has(entry.uid));
+                                const allEnabled = selectedEntries.length > 0 && selectedEntries.every(entry => !entry.disable);
+                                return (
+                                <div className="multi-select-float-bar">
+                                    <div className="msfb-main">
+                                        <span className="msfb-count">已选 {actionableSelectedUids.size} 项</span>
+                                        <button type="button" className="msfb-btn" onClick={() => {
+                                            if (allVisibleSelected) setSelectedUids(new Set());
+                                            else selectAllEntries();
+                                        }}>
+                                            <CheckSquare size={15} strokeWidth={1.8} />
+                                            <span>{allVisibleSelected ? "取消全选" : "全选可见"}</span>
+                                        </button>
+                                        <button type="button" className="msfb-btn" onClick={() => bulkSetEnabled(!allEnabled)} disabled={actionableSelectedUids.size === 0}>
+                                            {allEnabled ? <RotateCcw size={15} strokeWidth={1.8} /> : <Check size={15} strokeWidth={2} />}
+                                            <span>{allEnabled ? "禁用" : "启用"}</span>
+                                        </button>
+                                        <button type="button" className="msfb-btn" onClick={() => bulkExportSelected()} disabled={actionableSelectedUids.size === 0}>
+                                            <Download size={15} strokeWidth={1.8} />
+                                            <span>导出</span>
+                                        </button>
+                                        <button type="button" className="msfb-btn msfb-danger" onClick={() => setConfirmDeleteSelected(true)} disabled={actionableSelectedUids.size === 0}>
+                                            <Trash2 size={15} strokeWidth={1.8} />
+                                            <span>删除</span>
+                                        </button>
+                                    </div>
+                                    <div className="msfb-actions">
+                                        <button type="button" className="msfb-btn msfb-done" onClick={exitSelectMode}>
+                                            <Check size={15} strokeWidth={2} />
+                                            <span>完成</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                );
+                            })()}
 
                             {/* Entry Cards */}
-                            <div className="flex flex-col gap-2">
-                                {visibleEntries.length === 0 ? (
-                                    <div className="menu-desc text-center mt-10 ts-14">
-                                        没找到相关的世界书条目
-                                    </div>
-                                ) : (
-                                    visibleEntries.map(entry => {
+                            {visibleEntries.length === 0 ? (
+                                <div className="menu-desc text-center mt-10 ts-14">
+                                    没找到相关的世界书条目
+                                </div>
+                            ) : (
+                            <div
+                                ref={entryListRef}
+                                className="flex flex-col gap-2"
+                                onTouchMove={onEntryTouchMove}
+                                onTouchEnd={onEntryTouchEnd}
+                                onTouchCancel={onEntryTouchEnd}
+                            >
+                                    {visibleEntries.map((entry, entryIndex) => {
                                         const isEditing = editingUid === entry.uid;
+                                        const isEntrySelected = selectionBookId === activeBookId && selectedUids.has(entry.uid);
 
                                         return (
                                             <SwipeActionRow
@@ -598,7 +882,11 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                 controller={swipe}
                                                 id={entry.uid}
                                                 disabled={isEditing}
-                                                actions={
+                                                leftSwipeDisabled={selectMode}
+                                                rightSwipeEnabled
+                                                onSwipeRight={() => handleSwipeRightSelect(entry.uid)}
+                                                onTouchStart={isEditing ? undefined : (e) => onEntryTouchStart(entryIndex, e)}
+                                                actions={selectMode ? null : (
                                                     <>
                                                         <button
                                                             type="button"
@@ -612,27 +900,15 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                         <button
                                                             type="button"
                                                             className="ui-swipe-action"
-                                                            data-variant="replace"
+                                                            data-variant="transfer"
                                                             onClick={() => {
-                                                                entryImportModeRef.current = { mode: "replace", uid: entry.uid };
-                                                                entryFileInputRef.current?.click();
+                                                                setCrossBookEntryUid(entry.uid);
+                                                                setCrossBookTargetId(null);
                                                                 swipe.close();
                                                             }}
                                                         >
-                                                            <Replace size={18} strokeWidth={2} />
-                                                            <span>替换</span>
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            className="ui-swipe-action"
-                                                            data-variant="export"
-                                                            onClick={() => {
-                                                                exportEntry(entry);
-                                                                swipe.close();
-                                                            }}
-                                                        >
-                                                            <Download size={18} strokeWidth={2} />
-                                                            <span>导出</span>
+                                                            <FolderInput size={18} strokeWidth={2} />
+                                                            <span>转移</span>
                                                         </button>
                                                         <button
                                                             type="button"
@@ -647,13 +923,18 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                             <span>删除</span>
                                                         </button>
                                                     </>
-                                                }
+                                                )}
                                             >
                                             <div
                                                 className="ui-entry-card"
                                                 data-active={isEditing ? "true" : undefined}
+                                                data-selected={selectMode && isEntrySelected ? "true" : undefined}
                                                 data-disabled={entry.disable && !isEditing ? "true" : undefined}
-                                                style={{ gap: isEditing ? 12 : 0 }}
+                                                style={{
+                                                    gap: isEditing ? 12 : 0,
+                                                    userSelect: isEditing ? undefined : "none",
+                                                    WebkitUserSelect: isEditing ? undefined : "none",
+                                                }}
                                             >
                                                 {/* Summary Row */}
                                                 <div className="flex justify-between items-start">
@@ -664,24 +945,47 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                                 swipe.close();
                                                                 return;
                                                             }
+                                                            if (selectMode) {
+                                                                toggleSelect(entry.uid);
+                                                                return;
+                                                            }
                                                             setEditingUid(isEditing ? null : entry.uid);
                                                         }}
                                                         className="flex gap-3 flex-1 bg-none border-none text-left cursor-pointer p-0"
+                                                        style={{ cursor: isEditing ? "default" : "grab" }}
                                                     >
-                                                        <div className="mt-0.5 ui-entry-icon">
-                                                            <BookOpen size={20} />
-                                                        </div>
+                                                        {selectMode ? (
+                                                            <div
+                                                                className="mt-[2px] flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2"
+                                                                style={{
+                                                                    borderColor: isEntrySelected ? "var(--c-icon-active)" : "rgba(0,0,0,0.25)",
+                                                                    background: isEntrySelected ? "var(--c-icon-active)" : "transparent",
+                                                                    color: "#fff",
+                                                                }}
+                                                            >
+                                                                {isEntrySelected && <Check size={13} strokeWidth={3} />}
+                                                            </div>
+                                                        ) : (
+                                                            <div className="mt-0.5 ui-entry-icon">
+                                                                <BookOpen size={20} />
+                                                            </div>
+                                                        )}
                                                         <div className="flex flex-col gap-1 flex-1">
-                                                            <span className="menu-label font-semibold break-all ts-15">
-                                                                {entry.comment || "(未设置名称)"}
-                                                            </span>
-                                                            <div className="flex items-center gap-1.5 flex-wrap">
-                                                                <span className="ui-tag" data-variant="muted">
-                                                                    {entry.key || "(无触发词)"}
+                                                            <div className="flex items-center gap-[6px]">
+                                                                <GripVertical size={14} className="text-[var(--c-text)] shrink-0" style={{ opacity: isEditing ? 0 : 0.5 }} />
+                                                                <span className="menu-label font-semibold break-all ts-15">
+                                                                    {entry.comment || "(未设置名称)"}
                                                                 </span>
+                                                            </div>
+                                                            <div className="flex items-center gap-1.5 flex-wrap">
                                                                 {entry.constant && <span className="ui-status-tag" data-variant="warning">常驻激活</span>}
+                                                                {!entry.constant && <span className="ui-status-tag" data-variant="success">关键词触发</span>}
                                                                 {entry.use_regex && !entry.constant && <span className="ui-status-tag" data-variant="action">正则触发</span>}
-                                                                {!entry.constant && !entry.use_regex && <span className="ui-status-tag" data-variant="success">关键词触发</span>}
+                                                                {!entry.constant && (
+                                                                    <span className="ui-tag" data-variant="muted">
+                                                                        {entry.use_regex ? (entry.key || "/(regex)/") : (entry.key || "(无触发词)")}
+                                                                    </span>
+                                                                )}
                                                                 {entry.disable && <span className="ui-status-tag">已禁用</span>}
                                                             </div>
                                                         </div>
@@ -817,7 +1121,12 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                         </div>
 
                                                         <div className="flex flex-col gap-1">
-                                                            <label className="menu-desc">设定内容 (Content)</label>
+                                                            <div className="flex items-center justify-between gap-2">
+                                                                <label className="menu-desc">设定内容 (Content)</label>
+                                                                <span className="menu-desc !mt-0 ts-11">
+                                                                    {estimateEntryTokens(entry).toLocaleString()} tk
+                                                                </span>
+                                                            </div>
                                                             <div className="relative">
                                                                 <textarea
                                                                     value={entry.content}
@@ -830,14 +1139,36 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                                             </div>
                                                         </div>
 
+                                                        <div className="flex flex-wrap gap-2">
+                                                            <button
+                                                                type="button"
+                                                                className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-[16px] border border-black/10 bg-white px-3 text-xs font-bold text-gray-800 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
+                                                                onClick={() => {
+                                                                    entryImportModeRef.current = { mode: "replace", uid: entry.uid };
+                                                                    entryFileInputRef.current?.click();
+                                                                }}
+                                                            >
+                                                                <Replace size={14} strokeWidth={2} />
+                                                                替换 JSON
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-[16px] border border-black/10 bg-white px-3 text-xs font-bold text-gray-800 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
+                                                                onClick={() => exportEntry(entry)}
+                                                            >
+                                                                <Download size={14} strokeWidth={2} />
+                                                                导出 JSON
+                                                            </button>
+                                                        </div>
+
                                                     </div>
                                                 )}
                                             </div>
                                             </SwipeActionRow>
                                         )
-                                    })
-                                )}
+                                    })}
                             </div>
+                            )}
 
                             <button
                                 type="button"
@@ -876,14 +1207,26 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
 
             {importError && (
                 <ConfirmDialog
-                    title="导入失败"
-                    message={importError}
+                    title="导入失败"                    message={importError}
                     icon={AlertCircle}
                     variant="danger"
                     confirmLabel="知道了"
                     cancelLabel=""
                     onConfirm={() => setImportError(null)}
                     onCancel={() => setImportError(null)}
+                />
+            )}
+
+            {/* Confirm bulk delete selected entries */}
+            {confirmDeleteSelected && activeBook && (
+                <ConfirmDialog
+                    title="确认批量删除？"
+                    message={`将删除当前已选中的 ${actionableSelectedUids.size} 个条目，删除后无法恢复。是否继续？`}
+                    icon={AlertCircle}
+                    variant="danger"
+                    confirmLabel="确认删除"
+                    onConfirm={() => deleteSelectedEntries()}
+                    onCancel={() => setConfirmDeleteSelected(false)}
                 />
             )}
 
@@ -914,6 +1257,79 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                     </div>
                 </BottomSheet>
             )}
+
+            {crossBookEntryUid && activeBook && (() => {
+                const sourceEntry = activeBook.entries.find(e => e.uid === crossBookEntryUid);
+                const otherBooks = books.filter(b => b.id !== activeBook.id);
+                const targetBook = crossBookTargetId ? books.find(b => b.id === crossBookTargetId) : null;
+                const entryLabel = sourceEntry?.comment || sourceEntry?.key || "未命名条目";
+
+                if (targetBook) {
+                    return (
+                        <BottomSheet title="复制 / 转移" onClose={closeCrossBookSheet}>
+                            <div className="flex flex-col gap-2">
+                                <p className="menu-desc !mt-0 text-center px-1">
+                                    将「{entryLabel}」复制 / 转移到「{targetBook.name || "未命名世界书"}」
+                                </p>
+                                <button
+                                    type="button"
+                                    className="ui-btn ui-btn-primary w-full"
+                                    onClick={() => copyEntryToBook(crossBookEntryUid, targetBook.id)}
+                                >
+                                    复制到该世界书
+                                </button>
+                                <button
+                                    type="button"
+                                    className="ui-btn ui-btn-outline w-full"
+                                    onClick={() => moveEntryToBook(crossBookEntryUid, targetBook.id)}
+                                >
+                                    转移到该世界书
+                                </button>
+                                <button
+                                    type="button"
+                                    className="ui-btn ui-btn-ghost w-full"
+                                    onClick={closeCrossBookSheet}
+                                >
+                                    取消
+                                </button>
+                            </div>
+                        </BottomSheet>
+                    );
+                }
+
+                return (
+                    <BottomSheet title="选择目标世界书" onClose={closeCrossBookSheet}>
+                        <div className="flex flex-col gap-2">
+                            <p className="menu-desc !mt-0 text-center px-1">
+                                将「{entryLabel}」复制 / 转移到其他世界书
+                            </p>
+                            {otherBooks.length === 0 ? (
+                                <p className="menu-desc text-center py-4">暂无其他世界书</p>
+                            ) : (
+                                otherBooks.map(book => (
+                                    <button
+                                        key={book.id}
+                                        type="button"
+                                        className="ui-btn ui-btn-outline w-full justify-start gap-2"
+                                        onClick={() => setCrossBookTargetId(book.id)}
+                                    >
+                                        <BookOpen size={16} className="shrink-0" />
+                                        <span className="truncate flex-1 text-left">{book.name || "未命名世界书"}</span>
+                                        <span className="menu-desc !mt-0 shrink-0">{book.entries?.length || 0} 条</span>
+                                    </button>
+                                ))
+                            )}
+                            <button
+                                type="button"
+                                className="ui-btn ui-btn-ghost w-full"
+                                onClick={closeCrossBookSheet}
+                            >
+                                取消
+                            </button>
+                        </div>
+                    </BottomSheet>
+                );
+            })()}
 
             {expandUid && (() => {
                 const entry = activeBook?.entries?.find(e => e.uid === expandUid);
