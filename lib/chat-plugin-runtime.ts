@@ -15,6 +15,8 @@ import { isMediaStoreRef, loadMediaBlob } from "./media-cache-storage";
 import { loadCharacters } from "./character-storage";
 import { loadApiConfigs, loadBindingConfig } from "./settings-storage";
 import { simpleLLMCall } from "./api-helpers";
+import { generateDiaryEntryForCharacter } from "./diary-entry-engine";
+import { loadDiaryEntries, createDiaryEntry, deleteDiaryEntry } from "./diary-entry-storage";
 import { getChatPluginHookBus } from "./chat-plugin-hooks";
 import { loadChatPluginModule } from "./chat-plugin-loader";
 import {
@@ -384,6 +386,16 @@ class ChatPluginRuntime {
                     if (result.error) throw new Error(result.error);
                     return result.content ?? "";
                 },
+            },
+            
+            diary: {
+                generate: (characterId) => generateDiaryEntryForCharacter(characterId, loadDiaryEntries(), "manual"),
+                list: (characterId) => {
+                    const entries = loadDiaryEntries();
+                    return characterId ? entries.filter(entry => entry.characterId === characterId) : entries;
+                },
+                create: (input) => createDiaryEntry(input),
+                remove: (id) => deleteDiaryEntry(id),
             },
 
             prompts: {

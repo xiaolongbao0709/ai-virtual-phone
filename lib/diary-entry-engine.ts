@@ -1,7 +1,7 @@
 import { loadCharacters } from "./character-storage";
 import type { Character } from "./character-types";
 import { previewMessagesForApi, sendLLMRequest, ChatEngineError } from "./chat-engine";
-import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
+import { assemblePromptPayload, ensureTrailingUserTurn, type LLMMessage } from "./llm-prompt-assembler";
 import { loadBindingConfig, loadApiConfigs, loadPresets, loadWorldBooks, loadRegexes, resolveBinding, resolveUserIdentity } from "./settings-storage";
 import type { ApiConfig, PresetConfig, RegexConfig, WorldBookConfig } from "./settings-types";
 import { loadMemoryConfig } from "./memory-storage";
@@ -54,7 +54,16 @@ async function resolveDiaryEntryGeneration(
   const userIdentity = resolveUserIdentity(character.id, "diary");
   const userName = userIdentity?.name ?? "用户";
   const memConfig = loadMemoryConfig();
-  const prepared = prepareShortTermContext(character.id, "diary", { history: [] });
+  // chatAsHistory：把私聊读成真正的对话历史，user 的发言走 user、角色的发言走
+  // assistant，和聊天/剧情一致；而不是全部压进 <shortTermMemory> 的 system 文本里。
+  const prepared = prepareShortTermContext(character.id, "diary", {
+    userName,
+    chatAsHistory: true,
+  });
+  // 角色写自己的日记只参考角色自己写过的日记，绝不掺进用户手写的「我的日记」——
+  // 否则角色写日记很容易变成回应用户日记，而不是像平常一样正常记录自己的生活。
+  // 用户日记该不该被角色知道，由聊天时的记忆/近期动态注入负责，与这里无关。
+  const ownEntries = entries.filter(entry => entry.authorType !== "user");
 
   const [memories, coreMemories] = await Promise.all([
     retrieveMemoriesForPrompt(character.id, prepared.wbActivationContext, memConfig).catch(() => []),
@@ -63,7 +72,7 @@ async function resolveDiaryEntryGeneration(
 
   const messages = assemblePromptPayload({
     character,
-    history: [],
+    history: prepared.truncatedHistory,
     preset,
     worldBooks,
     regexes,
@@ -75,8 +84,10 @@ async function resolveDiaryEntryGeneration(
     worldBookActivationContext: prepared.wbActivationContext,
     recentBlocks: prepared.recentBlocks,
     unifiedRecentItems: prepared.unifiedRecentItems,
-    diaryEntryContext: formatDiaryEntryContext(entries),
+    diaryEntryContext: formatDiaryEntryContext(ownEntries),
   });
+
+  ensureTrailingUserTurn(messages, "请按以上设定和规则，开始写这篇日记。");
 
   return { character, apiConfig, preset, regexes, messages, userName };
 }

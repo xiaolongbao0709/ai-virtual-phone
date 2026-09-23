@@ -148,7 +148,11 @@ function formatDiaryEntryForTimeline(entry: DiaryEntry, timeAware: boolean, time
     const markerText = markers.length > 0 ? `（${markers.join(" / ")}）` : "";
     const title = entry.title.trim() || "未命名日记";
     const text = clipTimelineText(body || title, 900);
-    return `${formatPromptEventLabel("日记", entry.createdAt, timeAware, timestampOptions)} ${entry.characterName}写了一篇日记《${title}》${markerText}：${text}`;
+    const signaturePart = entry.authorType === "user" && entry.signature.trim() ? `（署名：${entry.signature.trim()}）` : "";
+    // 「我的日记」是用户手写给角色看的，不能说成是角色自己写的——那样会让模型误以为
+    // 这是角色自己的日记，读到里面对角色说的话时会自相矛盾。
+    const byline = entry.authorType === "user" ? `用户写了一篇给${entry.characterName}的日记` : `${entry.characterName}写了一篇日记`;
+    return `${formatPromptEventLabel("日记", entry.createdAt, timeAware, timestampOptions)} ${byline}《${title}》${markerText}：${text}${signaturePart}`;
 }
 
 /**
@@ -645,9 +649,14 @@ export function loadNativeTimeline(
     }
 
     // ── Diary entries ──
+    // 角色自己写日记时（appId === "diary"）不能把用户写的「我的日记」混进参考材料——
+    // 否则角色写自己的日记很容易变成回应用户日记，而不是像原来一样正常记录自己的生活。
+    // 其余场景（尤其是聊天）应该看到用户日记，让角色"记得"你写过它，所以只在这一个
+    // appId 上做排除，不是全局排除。
     const diaryEntries = loadDiaryEntries().filter(entry =>
         entry.characterId === characterId
         && (!options?.afterTimestamp || entry.createdAt > options.afterTimestamp)
+        && (options?.appId !== "diary" || entry.authorType !== "user")
     );
     for (const diaryEntry of diaryEntries) {
         entries.push({
@@ -918,6 +927,23 @@ export function filterTimelineByAllowedSources(
  * For history-style appIds, the current feature's block has empty content because
  * the actual content is the history turns (wrapped by the assembler).
  */
+/** 该角色私聊会话的消息，过滤口径与时间线里那批 [私聊] 条目保持一致，
+ *  免得换成真实历史之后反而混进纯 UI 的提示消息。 */
+function loadDirectChatHistoryForPrompt(characterId: string): ChatMessage[] {
+    const session = loadChatSessions().find(s => !s.isGroup && s.contactId === characterId);
+    if (!session) return [];
+    return loadChatMessages(session.id).filter(msg => {
+        if (msg.isRetracted) return false;
+        if (isPromptHiddenChatMessage(msg)) return false;
+        if (msg.role === "system") {
+            if (msg.mediaType === "music_notify") return false;
+            if (msg.mediaType === "tool_notice") return false;
+            if (msg.mediaType === "memory_write_request") return false;
+        }
+        return true;
+    });
+}
+
 export function prepareShortTermContext(
     characterId: string,
     appId: string,
@@ -928,6 +954,10 @@ export function prepareShortTermContext(
         excludeOfflineSessionId?: string;
         includeNativeToolHistory?: boolean;
         includeDirectChatEntries?: boolean;
+        /** 把该角色的私聊会话当成真正的对话历史读入，让 user/char 的发言各自带上
+         *  user / assistant 角色，而不是压成 <shortTermMemory> 里的 [私聊] 文本流水。
+         *  一次性生成类（日记）用；同一批内容会从时间线事件里去掉，避免进两遍。 */
+        chatAsHistory?: boolean;
         timeAware?: boolean;
         promptTimestampOptions?: PromptTimestampOptions;
     },
@@ -953,10 +983,15 @@ export function prepareShortTermContext(
     const wbActivationContext = timeline.slice(-10).map(e => e.content).join("\n");
     const budget = memConfig.shortTermTokenBudget;
     const currentTag = getFeatureTag(appId);
-    const history = options?.history ?? [];
+    const history = options?.history?.length
+        ? options.history
+        : (options?.chatAsHistory ? loadDirectChatHistoryForPrompt(characterId) : []);
     const characterName = loadCharacters().find(c => c.id === characterId)?.name ?? "角色";
-    const wrapsCurrentHistory = appId === "chat" || appId === "group_chat" || appId === "story" || appId === "vn" || appId === "adventure";
-    const skipDirectChatEntries = appId === "chat" && !options?.includeDirectChatEntries;
+    // 拿到了私聊历史才切换表示方式：一条都没读到（没有会话、存储还没 hydrate）时保持
+    // 原样走时间线事件，否则会既跳过事件又没有历史可放，把聊天上下文整段弄丢。
+    const chatAsHistory = options?.chatAsHistory === true && history.length > 0;
+    const wrapsCurrentHistory = appId === "chat" || appId === "group_chat" || appId === "story" || appId === "vn" || appId === "adventure" || chatAsHistory;
+    const skipDirectChatEntries = (appId === "chat" || chatAsHistory) && !options?.includeDirectChatEntries;
 
     // ── Collect non-history entries per block ──
     const raw: { tag: string; order: number; entries: NativeTimelineEntry[] }[] = [];

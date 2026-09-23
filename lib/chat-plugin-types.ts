@@ -17,6 +17,7 @@
 
 import type { ChatMessage, ChatSession, ChatContact } from "./chat-storage";
 import type { Character } from "./character-types";
+import type { DiaryEntry, DiaryEntryBlock } from "./diary-entry-types";
 
 /** 反注册函数：撤销对应的注册动作 */
 export type Disposable = () => void;
@@ -272,6 +273,42 @@ export type ChatPluginContext = {
             temperature?: number;
             maxTokens?: number;
         }): Promise<string>;
+    };
+    
+    /**
+     * 手记 App「写日记」桥接：让插件生成日记走宿主自己的完整流程——角色人设 +
+     * 该角色在"手记"(diary) 这个 appId 下绑定的预设/世界书/正则/长短期记忆 + 对应
+     * API 配置，和原生"写日记"按钮、定时写日记完全一致，不是 ai.chat 那条裸通道。
+     * 落地存储就是原生日记本身，不占用插件私有数据、不随插件卸载丢失。
+     */
+    diary: {
+        /** 为该角色生成一篇日记草稿，不落库；未给「手记」绑定 API 配置等情况会 reject。*/
+        generate(characterId: string): Promise<{
+            title: string;
+            dateLabel: string;
+            mood: string;
+            weather: string;
+            tags: string[];
+            body: string;
+            blocks: DiaryEntryBlock[];
+        }>;
+        /** 读取原生日记；不传 characterId 则返回全部角色的。*/
+        list(characterId?: string): DiaryEntry[];
+        /** 把一篇日记写入原生存储，返回落库后的完整记录。*/
+        create(input: {
+            characterId: string;
+            characterName: string;
+            title: string;
+            dateLabel?: string;
+            mood?: string;
+            weather?: string;
+            tags?: string[];
+            body: string;
+            blocks: DiaryEntryBlock[];
+            trigger?: "manual" | "timer";
+        }): DiaryEntry;
+        /** 删除一篇原生日记。*/
+        remove(id: string): void;
     };
 
     /** 持久提示词片段：无需每次事件重设，聚合后注入 prompt.system 的 hint 初值 */

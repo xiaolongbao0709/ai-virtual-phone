@@ -1071,6 +1071,290 @@
   color: rgba(43, 38, 31, 0.42);
 }
 
+/* 我的日记：回应设置 + 手写表单，跟前面手记设置面板共用同一套纸感配色 */
+
+.diary-reply-rule-list {
+  display: grid;
+  gap: 9px;
+}
+
+.diary-reply-rule-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 1px solid rgba(67, 54, 35, 0.1);
+  background: rgba(67, 54, 35, 0.024);
+}
+
+.diary-reply-rule-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: calc(15px*var(--app-text-scale,1));
+  color: rgba(52, 39, 29, 0.8);
+}
+
+.diary-reply-rule-person img {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+
+.diary-reply-rule-person strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+
+.diary-entry-settings select,
+.diary-compose-field input,
+.diary-compose-field textarea,
+.diary-reply-rule-row input[type="number"] {
+  border: 1px solid rgba(71, 58, 37, 0.14);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.8);
+  color: #332c24;
+  font: inherit;
+  font-size: calc(14px*var(--app-text-scale,1));
+  padding: 7px 8px;
+  outline: none;
+}
+
+.diary-entry-settings select:focus,
+.diary-compose-field input:focus,
+.diary-compose-field textarea:focus,
+.diary-reply-rule-row input[type="number"]:focus {
+  border-color: rgba(52, 39, 29, 0.4);
+}
+
+.diary-reply-rule-row select {
+  min-width: 108px;
+}
+
+.diary-reply-rule-row input[type="number"] {
+  width: 60px;
+  text-align: center;
+}
+
+.diary-entry-note {
+  margin: 14px 0 0;
+  font-size: calc(12px*var(--app-text-scale,1));
+  line-height: 1.55;
+  color: rgba(52, 39, 29, 0.55);
+}
+
+.diary-compose-form {
+  display: grid;
+  gap: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 252, 239, 0.78)),
+    #fffdf4;
+}
+
+.diary-compose-form,
+.diary-compose-form * {
+  font-family: var(--diary-entry-font-family);
+}
+
+.diary-compose-field {
+  display: grid;
+  gap: 5px;
+  font-size: calc(13px*var(--app-text-scale,1));
+  color: rgba(52, 39, 29, 0.7);
+}
+
+.diary-compose-field input,
+.diary-compose-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 标题：不再是小方框里的一行，改成大字号、无边框的直接书写，呼应插件旧版的落笔感 */
+.diary-compose-title-field input {
+  border: 0;
+  background: transparent;
+  padding: 2px 0 8px;
+  font-size: calc(21px*var(--app-text-scale,1)*var(--diary-entry-font-scale,1));
+  color: #2d2b28;
+  border-bottom: 1px solid rgba(67, 54, 35, 0.16);
+}
+
+.diary-compose-title-field input:focus {
+  border-color: rgba(52, 39, 29, 0.4);
+}
+
+/* 心情/天气/标签/署名：改成暖色块+无边框，贴近日记纸张而不是设置弹窗里的白框输入框 */
+.diary-compose-tint-field input {
+  border: 0;
+  background: rgba(233, 213, 149, 0.22);
+  padding: 8px 9px;
+}
+
+.diary-compose-tint-field input:focus {
+  background: rgba(233, 213, 149, 0.34);
+}
+
+.diary-compose-body {
+  resize: vertical;
+  line-height: 1.65;
+  min-height: 160px;
+  border: 0;
+  border-radius: 0;
+  background: rgba(233, 213, 149, 0.22);
+  color: #332c24;
+  font: inherit;
+  font-size: calc(14px*var(--app-text-scale,1));
+  padding: 8px 9px;
+  outline: none;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.diary-compose-body:focus {
+  background: rgba(233, 213, 149, 0.34);
+}
+
+.diary-save-btn {
+  min-height: 44px;
+  border: 1px solid rgba(71, 58, 37, 0.12);
+  border-radius: 0;
+  background: #302d28;
+  color: #fff;
+  font: inherit;
+  font-size: calc(15px*var(--app-text-scale,1));
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(56, 45, 27, 0.16);
+}
+
+.diary-save-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.diary-compose-blocks {
+  display: grid;
+  gap: 10px;
+}
+
+.diary-compose-block {
+  border: 1px solid rgba(58, 49, 35, 0.14);
+  background: rgba(255, 255, 255, 0.4);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.diary-compose-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: calc(11px*var(--app-text-scale,1));
+  color: rgba(47, 42, 35, 0.5);
+  letter-spacing: 0.02em;
+}
+
+.diary-compose-block-head button {
+  border: 0;
+  background: transparent;
+  color: rgba(47, 42, 35, 0.4);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.diary-compose-correction {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.diary-compose-correction label {
+  display: grid;
+  gap: 4px;
+  font-size: calc(12px*var(--app-text-scale,1));
+  color: rgba(52, 39, 29, 0.62);
+}
+
+.diary-compose-todo {
+  display: grid;
+  gap: 8px;
+}
+
+.diary-compose-todo-items {
+  display: grid;
+  gap: 6px;
+}
+
+.diary-compose-todo-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.diary-compose-todo-item input[type="checkbox"] {
+  accent-color: #2b241c;
+}
+
+.diary-compose-todo-item button {
+  border: 0;
+  background: transparent;
+  color: rgba(47, 42, 35, 0.4);
+  cursor: pointer;
+  padding: 2px;
+}
+
+/* 板块内的裸文本框（涂改原句/改成、配图标题、待办标题/事项）统一套暖色块，
+   不然就是没样式的浏览器默认输入框，和旁边刚改过的字段风格对不上。 */
+.diary-compose-block input[type="text"] {
+  border: 0;
+  border-radius: 0;
+  background: rgba(233, 213, 149, 0.22);
+  color: #332c24;
+  font: inherit;
+  font-size: calc(14px*var(--app-text-scale,1));
+  padding: 7px 8px;
+  outline: none;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.diary-compose-block input[type="text"]:focus {
+  background: rgba(233, 213, 149, 0.34);
+}
+
+.diary-compose-add-todo-item {
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  color: rgba(47, 42, 35, 0.58);
+  font: inherit;
+  font-size: calc(12px*var(--app-text-scale,1));
+  cursor: pointer;
+}
+
+.diary-compose-add-block {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.diary-compose-add-block button {
+  border: 1px solid rgba(58, 49, 35, 0.14);
+  background: rgba(255, 255, 255, 0.5);
+  color: rgba(47, 42, 35, 0.68);
+  font: inherit;
+  font-size: calc(12px*var(--app-text-scale,1));
+  padding: 6px 9px;
+  cursor: pointer;
+}
+
 .diary-entry-confirm-btn {
   width: 100%;
   height: 40px;
@@ -1165,32 +1449,41 @@
 
 .diary-entry-detail-scroll > header {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.diary-entry-detail-topline {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 14px;
-  margin-bottom: 18px;
 }
 
-.diary-entry-detail-scroll > header > div:first-child {
+.diary-entry-detail-topline > span {
   min-width: 0;
-}
-
-.diary-entry-detail-scroll > header > div:first-child > span {
-  display: block;
-  margin-bottom: 18px;
   font-size: calc(13px*var(--app-text-scale,1));
   color: rgba(52, 46, 35, 0.5);
 }
 
 .diary-entry-detail-paper h2 {
   margin: 0;
+  min-width: 0;
   font-size: calc(25px*var(--app-text-scale,1)*var(--diary-entry-font-scale,1));
   line-height: 1.3;
   font-weight: 400;
   color: #2d2b28;
 }
 
-.diary-entry-detail-scroll > header button {
+.diary-entry-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 0 0 auto;
+}
+
+.diary-entry-detail-actions button {
   flex: 0 0 auto;
   border: 0;
   background: transparent;
@@ -1199,22 +1492,24 @@
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
+  padding: 0;
 }
 
-.diary-entry-detail-top {
+.diary-entry-detail-titleline {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 30px;
-  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
 }
 
 .diary-entry-detail-markers {
   max-width: 132px;
+  flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 4px 7px;
+  padding-top: 6px;
   font-size: calc(13px*var(--app-text-scale,1));
   line-height: 1.2;
   color: rgba(45, 40, 31, 0.78);

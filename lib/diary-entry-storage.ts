@@ -1,23 +1,54 @@
 import { kvGet, kvRemove, kvSet, registerKvMigration } from "./kv-db";
 import {
   DEFAULT_DIARY_ENTRY_TIMER_SETTINGS,
+  DEFAULT_DIARY_REPLY_RULES,
   type DiaryEntry,
+  type DiaryEntryAuthorType,
   type DiaryEntryBlock,
   type DiaryEntryInput,
+  type DiaryEntryPatch,
   type DiaryEntryTimerSettings,
   type DiaryEntryTodoItem,
   type DiaryEntryTrigger,
+  type DiaryReplyMode,
+  type DiaryReplyRules,
 } from "./diary-entry-types";
 
 const ENTRIES_KEY = "ai_phone_diary_entries_v1";
 const TIMER_KEY = "ai_phone_diary_entry_timer_settings_v1";
+const REPLY_RULES_KEY = "ai_phone_diary_reply_rules_v1";
+// "character" 字体沿用日记还没分裂成两本之前就有的老 key，老用户设置过的字体不会丢；
+// "user" 字体是新加的独立一份，跟角色那份互不影响。
 export const DIARY_ENTRY_FONT_ASSET_KEY = "ai_phone_diary_entry_font_asset_v1";
 export const DIARY_ENTRY_FONT_SCALE_KEY = "ai_phone_diary_entry_font_scale_v1";
+export const DIARY_ENTRY_USER_FONT_ASSET_KEY = "ai_phone_diary_entry_user_font_asset_v1";
+export const DIARY_ENTRY_USER_FONT_SCALE_KEY = "ai_phone_diary_entry_user_font_scale_v1";
 
 registerKvMigration(ENTRIES_KEY);
 registerKvMigration(TIMER_KEY);
+registerKvMigration(REPLY_RULES_KEY);
 registerKvMigration(DIARY_ENTRY_FONT_ASSET_KEY);
 registerKvMigration(DIARY_ENTRY_FONT_SCALE_KEY);
+registerKvMigration(DIARY_ENTRY_USER_FONT_ASSET_KEY);
+registerKvMigration(DIARY_ENTRY_USER_FONT_SCALE_KEY);
+
+function fontAssetKey(kind: DiaryEntryAuthorType): string {
+  return kind === "user" ? DIARY_ENTRY_USER_FONT_ASSET_KEY : DIARY_ENTRY_FONT_ASSET_KEY;
+}
+
+function fontScaleKey(kind: DiaryEntryAuthorType): string {
+  return kind === "user" ? DIARY_ENTRY_USER_FONT_SCALE_KEY : DIARY_ENTRY_FONT_SCALE_KEY;
+}
+
+const DIARY_REPLY_MODES: DiaryReplyMode[] = ["none", "immediate", "delay", "merge"];
+
+function normalizeAuthorType(value: unknown): DiaryEntryAuthorType {
+  return value === "user" ? "user" : "character";
+}
+
+function normalizeReplyMode(value: unknown, fallback: DiaryReplyMode = "none"): DiaryReplyMode {
+  return DIARY_REPLY_MODES.includes(value as DiaryReplyMode) ? (value as DiaryReplyMode) : fallback;
+}
 
 function generateId(prefix: string): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return `${prefix}_${crypto.randomUUID()}`;
@@ -134,34 +165,36 @@ function normalizeTrigger(value: unknown): DiaryEntryTrigger {
   return value === "timer" ? "timer" : "manual";
 }
 
-export function loadDiaryEntryFontAssetId(): string | null {
-  const raw = kvGet(DIARY_ENTRY_FONT_ASSET_KEY);
+export function loadDiaryEntryFontAssetId(kind: DiaryEntryAuthorType = "character"): string | null {
+  const raw = kvGet(fontAssetKey(kind));
   const id = typeof raw === "string" ? raw.trim() : "";
   return id || null;
 }
 
-export function saveDiaryEntryFontAssetId(assetId: string | null): void {
+export function saveDiaryEntryFontAssetId(assetId: string | null, kind: DiaryEntryAuthorType = "character"): void {
   const id = typeof assetId === "string" ? assetId.trim() : "";
+  const key = fontAssetKey(kind);
   if (id) {
-    kvSet(DIARY_ENTRY_FONT_ASSET_KEY, id);
+    kvSet(key, id);
   } else {
-    kvRemove(DIARY_ENTRY_FONT_ASSET_KEY);
+    kvRemove(key);
   }
 }
 
-export function loadDiaryEntryFontScale(): number {
-  const raw = Number(kvGet(DIARY_ENTRY_FONT_SCALE_KEY));
+export function loadDiaryEntryFontScale(kind: DiaryEntryAuthorType = "character"): number {
+  const raw = Number(kvGet(fontScaleKey(kind)));
   if (!Number.isFinite(raw)) return 1;
   return Math.min(1.25, Math.max(0.85, Number(raw.toFixed(2))));
 }
 
-export function saveDiaryEntryFontScale(scale: number): void {
+export function saveDiaryEntryFontScale(scale: number, kind: DiaryEntryAuthorType = "character"): void {
   const normalized = Math.min(1.25, Math.max(0.85, Number(scale.toFixed(2))));
+  const key = fontScaleKey(kind);
   if (Math.abs(normalized - 1) < 0.001) {
-    kvRemove(DIARY_ENTRY_FONT_SCALE_KEY);
+    kvRemove(key);
     return;
   }
-  kvSet(DIARY_ENTRY_FONT_SCALE_KEY, String(normalized));
+  kvSet(key, String(normalized));
 }
 
 export function normalizeDiaryEntry(raw: unknown): DiaryEntry | null {
@@ -184,11 +217,14 @@ export function normalizeDiaryEntry(raw: unknown): DiaryEntry | null {
     id,
     characterId,
     characterName: cleanText(record.characterName ?? record.character_name, 80) || "角色",
+    // 老数据没有这个字段：一律当成角色自己写的日记，跟以前行为一致。
+    authorType: normalizeAuthorType(record.authorType ?? record.author_type),
     title,
     dateLabel: cleanText(record.dateLabel ?? record.date_label, 40) || formatDateLabel(createdAt),
     mood: cleanText(record.mood, 60),
     weather: cleanText(record.weather, 60),
     tags: normalizeTags(record.tags ?? record.labels),
+    signature: cleanText(record.signature, 80),
     body: body || blocks.map(block => block.type === "paragraph" || block.type === "quote" ? block.text : "").filter(Boolean).join("\n\n"),
     blocks,
     trigger: normalizeTrigger(record.trigger),
@@ -234,11 +270,13 @@ export function createDiaryEntry(input: DiaryEntryInput): DiaryEntry {
     id: generateId("diary_entry"),
     characterId: cleanText(input.characterId, 120),
     characterName: cleanText(input.characterName, 80) || "角色",
+    authorType: normalizeAuthorType(input.authorType),
     title: cleanText(input.title, 80) || body.slice(0, 20) || "未命名日记",
     dateLabel: cleanText(input.dateLabel, 40) || formatDateLabel(now),
     mood: cleanText(input.mood, 60),
     weather: cleanText(input.weather, 60),
     tags: normalizeTags(input.tags),
+    signature: cleanText(input.signature, 80),
     body,
     blocks: normalizeBlocks(input.blocks, body),
     trigger: input.trigger ?? "manual",
@@ -249,9 +287,83 @@ export function createDiaryEntry(input: DiaryEntryInput): DiaryEntry {
   return entry;
 }
 
+/** 编辑一篇已存在的日记（角色日记订正、用户日记改稿都走这个）；找不到时返回 null。*/
+export function updateDiaryEntry(id: string, patch: DiaryEntryPatch): DiaryEntry | null {
+  if (!id) return null;
+  const entries = loadDiaryEntries();
+  const index = entries.findIndex(entry => entry.id === id);
+  if (index < 0) return null;
+  const current = entries[index];
+  const now = new Date().toISOString();
+  const body = patch.body !== undefined ? cleanMultilineText(patch.body, 6000) : current.body;
+  const blocks = patch.blocks !== undefined ? normalizeBlocks(patch.blocks, body) : current.blocks;
+  const updated: DiaryEntry = {
+    ...current,
+    title: patch.title !== undefined ? (cleanText(patch.title, 80) || body.slice(0, 20) || "未命名日记") : current.title,
+    dateLabel: patch.dateLabel !== undefined ? cleanText(patch.dateLabel, 40) || current.dateLabel : current.dateLabel,
+    mood: patch.mood !== undefined ? cleanText(patch.mood, 60) : current.mood,
+    weather: patch.weather !== undefined ? cleanText(patch.weather, 60) : current.weather,
+    tags: patch.tags !== undefined ? normalizeTags(patch.tags) : current.tags,
+    signature: patch.signature !== undefined ? cleanText(patch.signature, 80) : current.signature,
+    body,
+    blocks,
+    trigger: patch.trigger ?? current.trigger,
+    updatedAt: now,
+  };
+  entries[index] = updated;
+  saveDiaryEntries(entries);
+  return updated;
+}
+
 export function deleteDiaryEntry(id: string): void {
   if (!id) return;
   saveDiaryEntries(loadDiaryEntries().filter(entry => entry.id !== id));
+}
+
+export function loadDiaryReplyRules(): DiaryReplyRules {
+  if (typeof window === "undefined") return DEFAULT_DIARY_REPLY_RULES;
+  try {
+    const raw = kvGet(REPLY_RULES_KEY);
+    if (!raw) return DEFAULT_DIARY_REPLY_RULES;
+    const parsed = JSON.parse(raw) as Partial<DiaryReplyRules>;
+    const defaultRule = parsed.default && typeof parsed.default === "object" ? parsed.default : DEFAULT_DIARY_REPLY_RULES.default;
+    const characters: DiaryReplyRules["characters"] = {};
+    if (parsed.characters && typeof parsed.characters === "object") {
+      for (const [characterId, rule] of Object.entries(parsed.characters)) {
+        if (!rule || typeof rule !== "object") continue;
+        const mode = normalizeReplyMode((rule as Record<string, unknown>).mode, "none");
+        const isInherit = (rule as Record<string, unknown>).mode === "inherit";
+        characters[characterId] = {
+          mode: isInherit ? "inherit" : mode,
+          delayHours: Math.max(0.05, Math.min(720, Number((rule as Record<string, unknown>).delayHours) || 24)),
+        };
+      }
+    }
+    return {
+      default: {
+        mode: normalizeReplyMode(defaultRule.mode, "none"),
+        delayHours: Math.max(0.05, Math.min(720, Number(defaultRule.delayHours) || 24)),
+      },
+      characters,
+    };
+  } catch {
+    return DEFAULT_DIARY_REPLY_RULES;
+  }
+}
+
+export function saveDiaryReplyRules(rules: DiaryReplyRules): void {
+  if (typeof window === "undefined") return;
+  kvSet(REPLY_RULES_KEY, JSON.stringify(rules));
+}
+
+/** 按"跟随默认 → 角色自己设置"解析出某个角色实际生效的回应规则。*/
+export function resolveDiaryReplyRule(rules: DiaryReplyRules, characterId: string): { mode: DiaryReplyMode; delayHours: number } {
+  const own = rules.characters[characterId];
+  if (!own || own.mode === "inherit") return rules.default;
+  return {
+    mode: normalizeReplyMode(own.mode, rules.default.mode),
+    delayHours: Math.max(0.05, Math.min(720, Number(own.delayHours) || rules.default.delayHours)),
+  };
 }
 
 export function loadDiaryEntryTimerSettings(): DiaryEntryTimerSettings {

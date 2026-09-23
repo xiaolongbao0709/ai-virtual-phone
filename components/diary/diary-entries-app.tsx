@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from "react";
 import { Bot, ChevronLeft, Clock3, NotebookPen, Trash2, WandSparkles, X } from "lucide-react";
 import { DotsThree } from "@phosphor-icons/react";
 
@@ -19,17 +19,44 @@ import {
   loadDiaryEntryFontAssetId,
   loadDiaryEntryFontScale,
   loadDiaryEntryTimerSettings,
+  loadDiaryReplyRules,
+  resolveDiaryReplyRule,
   saveDiaryEntryFontAssetId,
   saveDiaryEntryFontScale,
   saveDiaryEntryTimerSettings,
+  saveDiaryReplyRules,
+  updateDiaryEntry,
 } from "@/lib/diary-entry-storage";
-import type { DiaryEntry, DiaryEntryBlock, DiaryEntryTimerSettings, DiaryEntryTrigger } from "@/lib/diary-entry-types";
+import type {
+  DiaryEntry,
+  DiaryEntryAuthorType,
+  DiaryEntryBlock,
+  DiaryEntryTimerSettings,
+  DiaryEntryTrigger,
+  DiaryReplyMode,
+  DiaryReplyRules,
+} from "@/lib/diary-entry-types";
+import { cancelDiaryReply, scheduleDiaryReply } from "@/lib/diary-reply-service";
 import { getThemeAssetDataUrl, saveThemeAssetFromBlob } from "@/lib/theme-storage";
 
-const DIARY_USER_FONT_FAMILY = "AIPhoneDiaryEntryUserFont";
-const DIARY_USER_FONT_STYLE_ID = "ai-phone-diary-entry-user-font-face";
+// TA的日记和我的日记各自独立一套字体，互不影响，跟以前双日记插件的行为一致。
+function diaryFontFamilyName(kind: DiaryEntryAuthorType): string {
+  return kind === "user" ? "AIPhoneDiaryEntryUserWriterFont" : "AIPhoneDiaryEntryCharacterFont";
+}
+function diaryFontStyleId(kind: DiaryEntryAuthorType): string {
+  return kind === "user" ? "ai-phone-diary-entry-user-writer-font-face" : "ai-phone-diary-entry-character-font-face";
+}
+
+const DIARY_REPLY_MODE_LABELS: Record<DiaryReplyMode, string> = {
+  none: "不回应",
+  immediate: "立即回应",
+  delay: "延时回应",
+  merge: "和下次互动合并",
+};
 
 type DiaryEntriesAppProps = {
+  /** "character" = TA的日记（角色自己写，AI 生成）；"user" = 我的日记（用户手写，给角色看） */
+  kind: DiaryEntryAuthorType;
   onBack: () => void;
   onNotice?: (message: string) => void;
 };
@@ -40,6 +67,10 @@ type DiaryBook = {
   avatar: string;
   entries: DiaryEntry[];
 };
+
+type ComposeTarget =
+  | { mode: "create"; characterId: string }
+  | { mode: "edit"; entry: DiaryEntry };
 
 type DiaryEntryDragState = {
   entry: DiaryEntry;
@@ -113,20 +144,24 @@ function DiaryWritingStatus({ label = "写入中" }: { label?: string }) {
   );
 }
 
-export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
+export function DiaryEntriesApp({ kind, onBack, onNotice }: DiaryEntriesAppProps) {
   const [entries, setEntries] = useState<DiaryEntry[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [settings, setSettings] = useState<DiaryEntryTimerSettings>(() => loadDiaryEntryTimerSettings());
+  const [replyRules, setReplyRules] = useState<DiaryReplyRules>(() => loadDiaryReplyRules());
   const [timerSettingsOpen, setTimerSettingsOpen] = useState(false);
+  const [replySettingsOpen, setReplySettingsOpen] = useState(false);
   const [writePanelOpen, setWritePanelOpen] = useState(false);
+  const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null);
+  const [composePickerOpen, setComposePickerOpen] = useState(false);
   const [fontPanelOpen, setFontPanelOpen] = useState(false);
   const [activeEntry, setActiveEntry] = useState<DiaryEntry | null>(null);
   const [deleteCandidateEntry, setDeleteCandidateEntry] = useState<DiaryEntry | null>(null);
   const [activeCharacterId, setActiveCharacterId] = useState<string | null>(null);
   const [localGeneratingIds, setGeneratingCharacterIds] = useState<string[]>([]);
-  const [diaryFontAssetId, setDiaryFontAssetId] = useState<string | null>(() => loadDiaryEntryFontAssetId());
+  const [diaryFontAssetId, setDiaryFontAssetId] = useState<string | null>(() => loadDiaryEntryFontAssetId(kind));
   const [diaryFontDataUrl, setDiaryFontDataUrl] = useState<string | null>(null);
-  const [diaryFontScale, setDiaryFontScale] = useState<number>(() => loadDiaryEntryFontScale());
+  const [diaryFontScale, setDiaryFontScale] = useState<number>(() => loadDiaryEntryFontScale(kind));
   // Merge in the module-level tracker so background generation (timer, or a
   // batch started before leaving the app) is visible again after re-entry.
   const trackedGeneratingIds = useDiaryGenerating();
@@ -164,7 +199,7 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
         setDiaryFontDataUrl(dataUrl);
         return;
       }
-      saveDiaryEntryFontAssetId(null);
+      saveDiaryEntryFontAssetId(null, kind);
       setDiaryFontAssetId(null);
       setDiaryFontDataUrl(null);
       notify("日记字体资源丢失，已恢复默认字体");
@@ -174,19 +209,20 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
       notify("日记字体加载失败，暂时使用默认字体");
     });
     return () => { cancelled = true; };
-  }, [diaryFontAssetId, notify]);
+  }, [diaryFontAssetId, kind, notify]);
 
   useEffect(() => {
-    let node = document.getElementById(DIARY_USER_FONT_STYLE_ID) as HTMLStyleElement | null;
+    const styleId = diaryFontStyleId(kind);
+    let node = document.getElementById(styleId) as HTMLStyleElement | null;
     if (!node) {
       node = document.createElement("style");
-      node.id = DIARY_USER_FONT_STYLE_ID;
+      node.id = styleId;
       document.head.append(node);
     }
     node.textContent = diaryFontDataUrl
-      ? `@font-face{font-family:"${DIARY_USER_FONT_FAMILY}";src:url("${diaryFontDataUrl}");font-display:swap;}`
+      ? `@font-face{font-family:"${diaryFontFamilyName(kind)}";src:url("${diaryFontDataUrl}");font-display:swap;}`
       : "";
-  }, [diaryFontDataUrl]);
+  }, [diaryFontDataUrl, kind]);
 
   const handleDiaryFontUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -199,45 +235,46 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
       if (!dataUrl) {
         throw new Error("字体资源没有保存成功");
       }
-      saveDiaryEntryFontAssetId(assetId);
+      saveDiaryEntryFontAssetId(assetId, kind);
       setDiaryFontAssetId(assetId);
       setDiaryFontDataUrl(dataUrl);
       notify(`日记字体已上传：${file.name}`);
     } catch (error) {
       notify("日记字体上传失败：" + String(error));
     }
-  }, [notify]);
+  }, [kind, notify]);
 
   const handleDiaryFontScaleChange = useCallback((scale: number) => {
     const normalized = Math.min(1.25, Math.max(0.85, scale));
     setDiaryFontScale(normalized);
-    saveDiaryEntryFontScale(normalized);
-  }, []);
+    saveDiaryEntryFontScale(normalized, kind);
+  }, [kind]);
 
   const handleDiaryFontReset = useCallback(() => {
-    saveDiaryEntryFontAssetId(null);
-    saveDiaryEntryFontScale(1);
+    saveDiaryEntryFontAssetId(null, kind);
+    saveDiaryEntryFontScale(1, kind);
     setDiaryFontAssetId(null);
     setDiaryFontDataUrl(null);
     setDiaryFontScale(1);
     notify("已恢复默认日记字体");
-  }, [notify]);
+  }, [kind, notify]);
 
   const diaryEntryStyle = useMemo(() => {
     return {
       ...(diaryFontDataUrl
-        ? { "--diary-entry-font-family": `"${DIARY_USER_FONT_FAMILY}", "NoteWall Ximai", var(--app-font-family)` }
+        ? { "--diary-entry-font-family": `"${diaryFontFamilyName(kind)}", "NoteWall Ximai", var(--app-font-family)` }
         : {}),
       "--diary-entry-font-scale": String(diaryFontScale),
     } as CSSProperties;
-  }, [diaryFontDataUrl, diaryFontScale]);
+  }, [diaryFontDataUrl, diaryFontScale, kind]);
 
   const deleteEntry = useCallback((entry: DiaryEntry) => {
     deleteDiaryEntry(entry.id);
+    cancelDiaryReply(entry.id);
     setActiveEntry(current => current?.id === entry.id ? null : current);
     setDeleteCandidateEntry(current => current?.id === entry.id ? null : current);
     refreshEntries();
-    notify(`已删除 ${entry.characterName} 的日记。`);
+    notify(`已删除${entry.authorType === "user" ? "" : ` ${entry.characterName}`}的日记。`);
   }, [notify, refreshEntries]);
 
   useEffect(() => {
@@ -249,6 +286,10 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
     saveDiaryEntryTimerSettings(settings);
     window.dispatchEvent(new CustomEvent(DIARY_ENTRY_TIMER_SETTINGS_UPDATED_EVENT));
   }, [settings]);
+
+  useEffect(() => {
+    saveDiaryReplyRules(replyRules);
+  }, [replyRules]);
 
   useEffect(() => {
     const handleEntriesUpdated = () => {
@@ -326,6 +367,54 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
       setGeneratingCharacterIds(prev => prev.filter(id => !targetIds.includes(id)));
     }
   }, [notify, refreshEntries, resolveTargets]);
+
+  const saveComposeEntry = useCallback((input: {
+    characterId: string;
+    title: string;
+    mood: string;
+    weather: string;
+    tags: string[];
+    signature: string;
+    blocks: DiaryEntryBlock[];
+  }, editingId?: string) => {
+    // body 是给"近期日记"这类只读纯文本上下文用的摊平版本；用 blockPlainText 而不是只拼
+    // paragraph/quote，这样 correction/todo/image 这些板块的内容也不会在摊平时丢掉。
+    const body = input.blocks.map(blockPlainText).filter(Boolean).join("\n\n");
+    if (!editingId) {
+      const character = resolveTargets([input.characterId])[0];
+      const created = createDiaryEntry({
+        characterId: input.characterId,
+        characterName: character?.name ?? "角色",
+        authorType: kind,
+        title: input.title,
+        mood: input.mood,
+        weather: input.weather,
+        tags: input.tags,
+        signature: input.signature,
+        body,
+        blocks: input.blocks,
+        trigger: "manual",
+      });
+      refreshEntries();
+      setComposeTarget(null);
+      if (created.authorType === "user") scheduleDiaryReply(created);
+      notify("日记已保存。");
+      return;
+    }
+    const updated = updateDiaryEntry(editingId, {
+      title: input.title,
+      mood: input.mood,
+      weather: input.weather,
+      tags: input.tags,
+      signature: input.signature,
+      body,
+      blocks: input.blocks,
+    });
+    refreshEntries();
+    setComposeTarget(null);
+    if (updated) setActiveEntry(current => (current && current.id === updated.id ? updated : current));
+    notify("日记已更新。");
+  }, [kind, notify, refreshEntries, resolveTargets]);
 
   const clearEntryDragTimer = useCallback(() => {
     const timer = entryDragRef.current?.timer;
@@ -569,9 +658,11 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
     entryDragRef.current = null;
   }, [clearEntryDragTimer]);
 
+  const kindEntries = useMemo(() => entries.filter(entry => entry.authorType === kind), [entries, kind]);
+
   const books = useMemo<DiaryBook[]>(() => {
     const map = new Map<string, DiaryEntry[]>();
-    for (const entry of entries) {
+    for (const entry of kindEntries) {
       const list = map.get(entry.characterId);
       if (list) list.push(entry);
       else map.set(entry.characterId, [entry]);
@@ -582,7 +673,7 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
       avatar: characters.find(character => character.id === characterId)?.avatar ?? "",
       entries: characterEntries,
     }));
-  }, [entries, characters]);
+  }, [kindEntries, characters]);
 
   const activeBook = useMemo(
     () => (activeCharacterId ? books.find(book => book.characterId === activeCharacterId) ?? null : null),
@@ -608,8 +699,8 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
           <ChevronLeft size={20} />
         </button>
         <div>
-          <h1>{activeBook ? `${activeBook.characterName} 的日记` : "日记"}</h1>
-          <p>{activeBook ? `共 ${activeBook.entries.length} 篇手写日常` : "每个角色一本，点开翻阅"}</p>
+          <h1>{activeBook ? (kind === "user" ? `写给 ${activeBook.characterName} 的日记` : `${activeBook.characterName} 的日记`) : (kind === "user" ? "我的日记" : "TA的日记")}</h1>
+          <p>{activeBook ? `共 ${activeBook.entries.length} 篇手写日常` : (kind === "user" ? "每个角色一本，写下只属于你们的纸页" : "每个角色一本，点开翻阅")}</p>
         </div>
         <input
           ref={fontFileRef}
@@ -628,19 +719,26 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
           >
             <span className="diary-font-upload-mark" aria-hidden="true">Aa</span>
           </button>
-          <button type="button" className="note-wall-menu-btn" onClick={() => setTimerSettingsOpen(true)} aria-label="日记设置">
+          <button
+            type="button"
+            className="note-wall-menu-btn"
+            onClick={() => (kind === "user" ? setReplySettingsOpen(true) : setTimerSettingsOpen(true))}
+            aria-label={kind === "user" ? "聊天回应设置" : "日记设置"}
+          >
             <DotsThree size={28} weight="bold" />
           </button>
         </span>
       </header>
 
       <main ref={entryMainRef} className="diary-entry-main">
-        {entries.length === 0 ? (
+        {kindEntries.length === 0 ? (
           <div className="diary-entry-empty">
             <NotebookPen size={34} strokeWidth={1.5} />
             <h2>还没有日记</h2>
-            <p>让角色先写一篇，纸面会从这里开始铺开。</p>
-            <button type="button" onClick={() => setWritePanelOpen(true)}>让TA写一篇</button>
+            <p>{kind === "user" ? "从你写下的第一句话开始。" : "让角色先写一篇，纸面会从这里开始铺开。"}</p>
+            <button type="button" onClick={() => (kind === "user" ? setComposePickerOpen(true) : setWritePanelOpen(true))}>
+              {kind === "user" ? "写下第一篇" : "让TA写一篇"}
+            </button>
           </div>
         ) : activeBook ? (
           <div className="diary-entry-list">
@@ -683,8 +781,24 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
         )}
       </main>
 
-      {entries.length > 0 ? (
-        activeBook ? (
+      {kindEntries.length > 0 ? (
+        kind === "user" ? (
+          activeBook ? (
+            <button
+              type="button"
+              className="diary-entry-write-btn"
+              onClick={() => setComposeTarget({ mode: "create", characterId: activeBook.characterId })}
+            >
+              <NotebookPen size={18} strokeWidth={1.7} />
+              <span>写日记</span>
+            </button>
+          ) : (
+            <button type="button" className="diary-entry-write-btn" onClick={() => setComposePickerOpen(true)}>
+              <NotebookPen size={18} strokeWidth={1.7} />
+              <span>写日记</span>
+            </button>
+          )
+        ) : activeBook ? (
           <button
             type="button"
             className="diary-entry-write-btn"
@@ -713,12 +827,41 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
         />
       ) : null}
 
+      {replySettingsOpen ? (
+        <DiaryReplySettingsPanel
+          characters={characters}
+          rules={replyRules}
+          onChange={setReplyRules}
+          onClose={() => setReplySettingsOpen(false)}
+        />
+      ) : null}
+
       {writePanelOpen ? (
         <DiaryEntryWritePanel
           characters={characters}
           generatingCharacterIds={generatingCharacterIds}
           onGenerateMany={generateForCharacters}
           onClose={() => setWritePanelOpen(false)}
+        />
+      ) : null}
+
+      {composePickerOpen ? (
+        <DiaryComposePickerPanel
+          characters={characters}
+          onPick={(characterId) => {
+            setComposePickerOpen(false);
+            setComposeTarget({ mode: "create", characterId });
+          }}
+          onClose={() => setComposePickerOpen(false)}
+        />
+      ) : null}
+
+      {composeTarget ? (
+        <DiaryEntryComposeForm
+          target={composeTarget}
+          characters={characters}
+          onSave={saveComposeEntry}
+          onClose={() => setComposeTarget(null)}
         />
       ) : null}
 
@@ -734,7 +877,11 @@ export function DiaryEntriesApp({ onBack, onNotice }: DiaryEntriesAppProps) {
       ) : null}
 
       {activeEntry ? (
-        <DiaryEntryDetail entry={activeEntry} onClose={() => setActiveEntry(null)} />
+        <DiaryEntryDetail
+          entry={activeEntry}
+          onClose={() => setActiveEntry(null)}
+          onEdit={() => { setComposeTarget({ mode: "edit", entry: activeEntry }); setActiveEntry(null); }}
+        />
       ) : null}
 
       {deleteCandidateEntry ? (
@@ -1012,6 +1159,406 @@ function DiaryEntryTimerSettingsPanel({ characters, settings, generatingCharacte
   );
 }
 
+const DIARY_REPLY_MODE_OPTIONS: DiaryReplyMode[] = ["none", "immediate", "delay", "merge"];
+
+function DiaryReplySettingsPanel({ characters, rules, onChange, onClose }: {
+  characters: Character[];
+  rules: DiaryReplyRules;
+  onChange: (rules: DiaryReplyRules) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <section className="diary-entry-settings" onClick={event => event.stopPropagation()}>
+        <header>
+          <div>
+            <h2>TA如何在聊天中回应</h2>
+            <p>写完日记后，TA 会从聊天 App 发普通消息回应；可统一设置，也可以为每个角色单独指定。</p>
+          </div>
+          <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="diary-entry-setting-grid">
+          <label
+            className="diary-entry-toggle-row"
+            style={rules.default.mode !== "delay" ? { gridColumn: "1 / -1" } : undefined}
+          >
+            <span>默认回应方式</span>
+            <select
+              value={rules.default.mode}
+              onChange={event => onChange({ ...rules, default: { ...rules.default, mode: event.target.value as DiaryReplyMode } })}
+            >
+              {DIARY_REPLY_MODE_OPTIONS.map(mode => (
+                <option key={mode} value={mode}>{DIARY_REPLY_MODE_LABELS[mode]}</option>
+              ))}
+            </select>
+          </label>
+          {rules.default.mode === "delay" ? (
+            <label className="diary-entry-number-field">
+              <span>延时小时</span>
+              <input
+                type="number"
+                min={0.05}
+                max={720}
+                step={0.25}
+                value={rules.default.delayHours}
+                onChange={event => onChange({ ...rules, default: { ...rules.default, delayHours: Math.max(0.05, Math.min(720, Number(event.target.value) || 24)) } })}
+              />
+            </label>
+          ) : null}
+        </div>
+
+        <section className="diary-entry-character-section">
+          <div className="diary-entry-section-title">
+            <strong>按角色单独设置</strong>
+          </div>
+          <div className="diary-reply-rule-list">
+            {characters.map(character => {
+              const own = rules.characters[character.id] ?? { mode: "inherit" as const, delayHours: rules.default.delayHours };
+              return (
+                <div key={character.id} className="diary-reply-rule-row">
+                  <span className="diary-reply-rule-person">
+                    {character.avatar ? <img src={character.avatar} alt="" /> : <Bot size={18} />}
+                    <strong>{character.name}</strong>
+                  </span>
+                  <select
+                    value={own.mode}
+                    onChange={event => {
+                      const mode = event.target.value as DiaryReplyMode | "inherit";
+                      const nextCharacters = { ...rules.characters, [character.id]: { mode, delayHours: own.delayHours } };
+                      onChange({ ...rules, characters: nextCharacters });
+                    }}
+                  >
+                    <option value="inherit">跟随默认</option>
+                    {DIARY_REPLY_MODE_OPTIONS.map(mode => (
+                      <option key={mode} value={mode}>{DIARY_REPLY_MODE_LABELS[mode]}</option>
+                    ))}
+                  </select>
+                  {own.mode === "delay" ? (
+                    <input
+                      type="number"
+                      min={0.05}
+                      max={720}
+                      step={0.25}
+                      value={own.delayHours}
+                      onChange={event => {
+                        const delayHours = Math.max(0.05, Math.min(720, Number(event.target.value) || rules.default.delayHours));
+                        onChange({ ...rules, characters: { ...rules.characters, [character.id]: { mode: own.mode, delayHours } } });
+                      }}
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+        <p className="diary-entry-note">「和下次互动合并」不会主动发起新对话，只在你们下次真的开口聊天时顺带带出这篇日记；默认设为「不回应」，避免未经确认产生 API 调用。</p>
+      </section>
+    </div>
+  );
+}
+
+function DiaryComposePickerPanel({ characters, onPick, onClose }: {
+  characters: Character[];
+  onPick: (characterId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <section className="diary-entry-settings" onClick={event => event.stopPropagation()}>
+        <header>
+          <div>
+            <h2>写给谁</h2>
+            <p>选择一位角色，写一篇给TA的日记。</p>
+          </div>
+          <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
+            <X size={18} />
+          </button>
+        </header>
+        <CharacterAvatarGrid
+          characters={characters}
+          selectedIds={[]}
+          busyIds={[]}
+          disabled={false}
+          onToggle={onPick}
+        />
+      </section>
+    </div>
+  );
+}
+
+type DraftBlock = { localId: string } & DiaryEntryBlock;
+
+function makeLocalId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `b_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function toDraftBlocks(blocks: DiaryEntryBlock[]): DraftBlock[] {
+  return blocks.map(block => ({ localId: makeLocalId(), ...block }));
+}
+
+function stripDraftBlocks(blocks: DraftBlock[]): DiaryEntryBlock[] {
+  return blocks.map(({ localId: _localId, ...block }) => block as DiaryEntryBlock);
+}
+
+function makeEmptyBlock(type: DiaryEntryBlock["type"]): DraftBlock {
+  const localId = makeLocalId();
+  if (type === "quote") return { localId, type, text: "" };
+  if (type === "correction") return { localId, type, text: "", replacement: "" };
+  if (type === "todo") return { localId, type, title: "", items: [] };
+  if (type === "image") return { localId, type, caption: "", description: "" };
+  return { localId, type: "paragraph", text: "" };
+}
+
+function draftBlockHasContent(block: DiaryEntryBlock): boolean {
+  if (block.type === "paragraph" || block.type === "quote") return block.text.trim().length > 0;
+  if (block.type === "correction") return block.text.trim().length > 0 || (block.replacement ?? "").trim().length > 0;
+  if (block.type === "image") return block.description.trim().length > 0;
+  if (block.type === "todo") return block.items.some(item => item.text.trim().length > 0);
+  return false;
+}
+
+const DIARY_BLOCK_TYPE_LABELS: Record<DiaryEntryBlock["type"], string> = {
+  paragraph: "段落",
+  quote: "引用",
+  correction: "涂改",
+  todo: "待办",
+  image: "配图",
+};
+
+function DiaryEntryComposeForm({ target, characters, onSave, onClose }: {
+  target: ComposeTarget;
+  characters: Character[];
+  onSave: (input: { characterId: string; title: string; mood: string; weather: string; tags: string[]; signature: string; blocks: DiaryEntryBlock[] }, editingId?: string) => void;
+  onClose: () => void;
+}) {
+  const editingEntry = target.mode === "edit" ? target.entry : null;
+  const characterId = target.mode === "edit" ? target.entry.characterId : target.characterId;
+  const character = characters.find(item => item.id === characterId);
+  const [title, setTitle] = useState(editingEntry?.title ?? "");
+  const [mood, setMood] = useState(editingEntry?.mood ?? "");
+  const [weather, setWeather] = useState(editingEntry?.weather ?? "");
+  const [tagsText, setTagsText] = useState(editingEntry?.tags.join("、") ?? "");
+  const [signature, setSignature] = useState(editingEntry?.signature ?? "");
+  // 编辑已有日记时直接从它原来的 blocks 起步——引用/涂改/待办/配图这些板块原样保留，
+  // 不会因为编辑就被压平成纯段落。
+  const [draftBlocks, setDraftBlocks] = useState<DraftBlock[]>(() =>
+    editingEntry && editingEntry.blocks.length > 0 ? toDraftBlocks(editingEntry.blocks) : [makeEmptyBlock("paragraph")]
+  );
+
+  const canSave = draftBlocks.some(draftBlockHasContent);
+
+  const updateBlock = useCallback((localId: string, patch: Partial<DiaryEntryBlock>) => {
+    setDraftBlocks(blocks => blocks.map(block => (block.localId === localId ? { ...block, ...patch } as DraftBlock : block)));
+  }, []);
+
+  const removeBlock = useCallback((localId: string) => {
+    setDraftBlocks(blocks => (blocks.length > 1 ? blocks.filter(block => block.localId !== localId) : blocks));
+  }, []);
+
+  const addBlock = useCallback((type: DiaryEntryBlock["type"]) => {
+    setDraftBlocks(blocks => [...blocks, makeEmptyBlock(type)]);
+  }, []);
+
+  const updateTodoItem = useCallback((localId: string, index: number, patch: Partial<{ text: string; done: boolean }>) => {
+    setDraftBlocks(blocks => blocks.map(block => {
+      if (block.localId !== localId || block.type !== "todo") return block;
+      return { ...block, items: block.items.map((item, i) => (i === index ? { ...item, ...patch } : item)) };
+    }));
+  }, []);
+
+  const addTodoItem = useCallback((localId: string) => {
+    setDraftBlocks(blocks => blocks.map(block => (
+      block.localId === localId && block.type === "todo"
+        ? { ...block, items: [...block.items, { text: "", done: false }] }
+        : block
+    )));
+  }, []);
+
+  const removeTodoItem = useCallback((localId: string, index: number) => {
+    setDraftBlocks(blocks => blocks.map(block => (
+      block.localId === localId && block.type === "todo"
+        ? { ...block, items: block.items.filter((_, i) => i !== index) }
+        : block
+    )));
+  }, []);
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canSave) return;
+    const tags = tagsText.split(/[,，、\s]+/).map(tag => tag.trim()).filter(Boolean);
+    const blocks = stripDraftBlocks(draftBlocks.filter(draftBlockHasContent));
+    onSave({ characterId, title: title.trim(), mood: mood.trim(), weather: weather.trim(), tags, signature: signature.trim(), blocks }, editingEntry?.id);
+  };
+
+  return (
+    <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <form className="diary-entry-settings diary-compose-form" onClick={event => event.stopPropagation()} onSubmit={handleSubmit}>
+        <header>
+          <div>
+            <h2>{editingEntry ? "编辑日记" : `写给 ${character?.name ?? "TA"} 的日记`}</h2>
+            <p>{editingEntry?.authorType === "character" ? "改动会覆盖这篇日记的原文。" : "写完后会按你设置的回应方式，让TA看到这篇日记。"}</p>
+          </div>
+          <button type="button" className="diary-icon-btn" onClick={onClose} aria-label="关闭">
+            <X size={18} />
+          </button>
+        </header>
+
+        <label className="diary-compose-field diary-compose-title-field">
+          <input type="text" value={title} onChange={event => setTitle(event.target.value)} placeholder="给今天起个标题（留空自动取正文开头）" />
+        </label>
+        <div className="diary-entry-setting-grid">
+          <label className="diary-compose-field diary-compose-tint-field">
+            <span>心情</span>
+            <input type="text" value={mood} onChange={event => setMood(event.target.value)} placeholder="例如：平静" />
+          </label>
+          <label className="diary-compose-field diary-compose-tint-field">
+            <span>天气</span>
+            <input type="text" value={weather} onChange={event => setWeather(event.target.value)} placeholder="例如：晴" />
+          </label>
+        </div>
+        <label className="diary-compose-field diary-compose-tint-field">
+          <span>标签（用顿号或逗号分隔）</span>
+          <input type="text" value={tagsText} onChange={event => setTagsText(event.target.value)} placeholder="例如：日常、碎碎念" />
+        </label>
+
+        <div className="diary-compose-blocks">
+          {draftBlocks.map(block => (
+            <DiaryBlockEditor
+              key={block.localId}
+              block={block}
+              canRemove={draftBlocks.length > 1}
+              onChange={patch => updateBlock(block.localId, patch)}
+              onRemove={() => removeBlock(block.localId)}
+              onAddTodoItem={() => addTodoItem(block.localId)}
+              onUpdateTodoItem={(index, patch) => updateTodoItem(block.localId, index, patch)}
+              onRemoveTodoItem={index => removeTodoItem(block.localId, index)}
+            />
+          ))}
+        </div>
+
+        <div className="diary-compose-add-block">
+          {(["paragraph", "quote", "correction", "todo", "image"] as const).map(type => (
+            <button key={type} type="button" onClick={() => addBlock(type)}>
+              + {DIARY_BLOCK_TYPE_LABELS[type]}
+            </button>
+          ))}
+        </div>
+
+        {!editingEntry || editingEntry.authorType === "user" ? (
+          <label className="diary-compose-field diary-compose-tint-field">
+            <span>署名（可选）</span>
+            <input type="text" value={signature} onChange={event => setSignature(event.target.value)} placeholder="写在日记末尾的署名" />
+          </label>
+        ) : null}
+
+        <button type="submit" className="diary-save-btn" disabled={!canSave}>
+          {editingEntry ? "保存修改" : "保存日记"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function DiaryBlockEditor({ block, canRemove, onChange, onRemove, onAddTodoItem, onUpdateTodoItem, onRemoveTodoItem }: {
+  block: DraftBlock;
+  canRemove: boolean;
+  onChange: (patch: Partial<DiaryEntryBlock>) => void;
+  onRemove: () => void;
+  onAddTodoItem: () => void;
+  onUpdateTodoItem: (index: number, patch: Partial<{ text: string; done: boolean }>) => void;
+  onRemoveTodoItem: (index: number) => void;
+}) {
+  return (
+    <div className="diary-compose-block">
+      <div className="diary-compose-block-head">
+        <span>{DIARY_BLOCK_TYPE_LABELS[block.type]}</span>
+        {canRemove ? (
+          <button type="button" onClick={onRemove} aria-label="删除这个板块">
+            <X size={14} />
+          </button>
+        ) : null}
+      </div>
+
+      {block.type === "paragraph" || block.type === "quote" ? (
+        <textarea
+          className="diary-compose-body"
+          value={block.text}
+          onChange={event => onChange({ text: event.target.value })}
+          placeholder={block.type === "quote" ? "摘一句当天听到或想到的话……" : "写下今天想对TA说的话……"}
+          rows={block.type === "quote" ? 3 : 6}
+        />
+      ) : null}
+
+      {block.type === "correction" ? (
+        <div className="diary-compose-correction">
+          <label>
+            <span>原句</span>
+            <input type="text" value={block.text} onChange={event => onChange({ text: event.target.value })} placeholder="原来写的" />
+          </label>
+          <label>
+            <span>改成</span>
+            <input type="text" value={block.replacement ?? ""} onChange={event => onChange({ replacement: event.target.value })} placeholder="改成这样" />
+          </label>
+        </div>
+      ) : null}
+
+      {block.type === "image" ? (
+        <>
+          <input
+            type="text"
+            value={block.caption ?? ""}
+            onChange={event => onChange({ caption: event.target.value })}
+            placeholder="配图标题（可选）"
+          />
+          <textarea
+            className="diary-compose-body"
+            value={block.description}
+            onChange={event => onChange({ description: event.target.value })}
+            placeholder="描述一下这张想象中的插图……"
+            rows={3}
+          />
+        </>
+      ) : null}
+
+      {block.type === "todo" ? (
+        <div className="diary-compose-todo">
+          <input
+            type="text"
+            value={block.title ?? ""}
+            onChange={event => onChange({ title: event.target.value })}
+            placeholder="清单标题（可选）"
+          />
+          <div className="diary-compose-todo-items">
+            {block.items.map((item, index) => (
+              <div key={index} className="diary-compose-todo-item">
+                <input
+                  type="checkbox"
+                  checked={item.done}
+                  onChange={event => onUpdateTodoItem(index, { done: event.target.checked })}
+                />
+                <input
+                  type="text"
+                  value={item.text}
+                  onChange={event => onUpdateTodoItem(index, { text: event.target.value })}
+                  placeholder="待办事项"
+                />
+                <button type="button" onClick={() => onRemoveTodoItem(index)} aria-label="删除这一项">
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button type="button" className="diary-compose-add-todo-item" onClick={onAddTodoItem}>+ 加一项</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function DiaryEntryWritePanel({ characters, generatingCharacterIds, onGenerateMany, onClose }: {
   characters: Character[];
   generatingCharacterIds: string[];
@@ -1113,7 +1660,7 @@ function CharacterAvatarGrid({ characters, selectedIds, busyIds, disabled, onTog
   );
 }
 
-function DiaryEntryDetail({ entry, onClose }: { entry: DiaryEntry; onClose: () => void }) {
+function DiaryEntryDetail({ entry, onClose, onEdit }: { entry: DiaryEntry; onClose: () => void; onEdit: () => void }) {
   const markers = getEntryMarkers(entry);
   return (
     <div className="nw-modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
@@ -1123,12 +1670,15 @@ function DiaryEntryDetail({ entry, onClose }: { entry: DiaryEntry; onClose: () =
         </span>
         <div className="diary-entry-detail-scroll">
           <header>
-            <div>
+            <div className="diary-entry-detail-topline">
               <span>日记详情</span>
-              <h2>{entry.title}</h2>
+              <div className="diary-entry-detail-actions">
+                <button type="button" onClick={onEdit}>编辑</button>
+                <button type="button" onClick={onClose}>关闭</button>
+              </div>
             </div>
-            <div className="diary-entry-detail-top">
-              <button type="button" onClick={onClose}>关闭</button>
+            <div className="diary-entry-detail-titleline">
+              <h2>{entry.title}</h2>
               {markers.length > 0 ? (
                 <span className="diary-entry-detail-markers">
                   {markers.map(marker => <span key={marker} className="diary-entry-marker">{marker}</span>)}
@@ -1142,7 +1692,7 @@ function DiaryEntryDetail({ entry, onClose }: { entry: DiaryEntry; onClose: () =
             ))}
           </div>
           <footer className="diary-entry-detail-signature">
-            <span>{entry.characterName}</span>
+            <span>{entry.authorType === "user" ? (entry.signature || "我") : entry.characterName}</span>
             <time>{formatEntryTime(entry.createdAt)}</time>
           </footer>
         </div>

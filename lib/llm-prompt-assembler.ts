@@ -1127,6 +1127,22 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
     return finalPayload;
 }
 
+/**
+ * 一次性生成（日记、便签墙这类 history 为空的场景）补一轮 user 收尾。
+ *
+ * 这些场景的预设条目清一色是 system，彼此相邻，最终会被上面的合并步骤并成
+ * 一条 system；整个请求里没有任何 user 角色，供应商适配层的
+ * ensureProviderHasUserMessage() 就会把这唯一一条整体改写成 user——人设、世界书、
+ * 规则全部以「用户在说」的身份发出去，提示词查看器里也只剩一条 USER。
+ *
+ * 补在引擎里而不是做成预设条目：预设属于用户数据，克隆过或导入过预设的人
+ * 永远拿不到预设侧的修复。已经自带 user 条目的预设则原样放过，不重复追加。
+ */
+export function ensureTrailingUserTurn(messages: LLMMessage[], text: string): void {
+    if (messages.some(message => message.role === "user")) return;
+    messages.push({ role: "user", content: text });
+}
+
 
 // ── Rich Media History Formatting ──────────────────────────
 

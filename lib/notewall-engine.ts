@@ -1,7 +1,7 @@
 import { loadCharacters } from "./character-storage";
 import type { Character } from "./character-types";
 import { previewMessagesForApi, sendLLMRequest, ChatEngineError } from "./chat-engine";
-import { assemblePromptPayload, type LLMMessage } from "./llm-prompt-assembler";
+import { assemblePromptPayload, ensureTrailingUserTurn, type LLMMessage } from "./llm-prompt-assembler";
 import { loadBindingConfig, loadApiConfigs, loadPresets, loadWorldBooks, loadRegexes, resolveBinding, resolveUserIdentity } from "./settings-storage";
 import type { ApiConfig, PresetConfig, RegexConfig, WorldBookConfig } from "./settings-types";
 import { loadMemoryConfig } from "./memory-storage";
@@ -155,6 +155,11 @@ async function resolveNoteWallGeneration(
     unifiedRecentItems: prepared.unifiedRecentItems,
     noteWallContext,
   });
+
+  ensureTrailingUserTurn(messages, appTags.includes("notewall_reply")
+    ? "请按以上设定和规则，选择便签并回复。"
+    : "请按以上设定和规则，写一张便签。");
+
   return { character, apiConfig, preset, regexes, messages, userName };
 }
 

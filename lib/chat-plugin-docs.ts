@@ -128,6 +128,15 @@ opts.timeoutMs 覆盖该 transform 的超时（默认 8000ms）。在 transform 
 \`await ctx.ai.chat({ prompt, system?, temperature?, maxTokens? })\` → 回复文本。
 直连用户配置的模型 API：不挂角色、不进聊天记录、不写记忆。
 
+## ctx.diary —— 手记 App 桥接
+
+想让角色写日记，不要自己拼提示词走 \`ctx.ai.chat\`——那条通道没有预设/世界书/正则/记忆，口吻会跟原生日记对不上。用这组桥接方法，走的是宿主自己的完整生成流程（角色人设 + 该角色在"手记"这个 appId 下绑定的预设/世界书/正则/长短期记忆 + 对应 API 配置），落地存储也是原生日记本身：
+
+\`await ctx.diary.generate(characterId)\` → \`{ title, dateLabel, mood, weather, tags, body, blocks }\`，只生成草稿，不落库
+\`ctx.diary.list(characterId?)\` → 原生日记数组；不传 characterId 返回全部角色的
+\`ctx.diary.create({ characterId, characterName, title, dateLabel?, mood?, weather?, tags?, body, blocks, trigger? })\` → 落库，返回完整记录
+\`ctx.diary.remove(id)\` → 删除一篇原生日记
+
 ## ctx.prompts —— 持久提示词片段
 
 \`ctx.prompts.set(text, { sessionId? })\`：设置一段持续注入系统提示词的文本（不传 sessionId 为全局，传则只对该会话生效）；text 传空串或 \`ctx.prompts.clear()\` 清除。与 prompt.system transform 的区别：这个是持久的、无需每次拦截。
