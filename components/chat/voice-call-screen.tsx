@@ -1,5 +1,6 @@
 "use client";
 
+import { stripTtsMarkup } from "@/lib/tts-markup";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, getLatestCharacterStateValues } from "@/lib/chat-storage";
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
@@ -372,8 +373,9 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
             // 4. Process response
             const { cleanParts } = processAIResponse(aiResponseText);
-            const displayText = cleanParts.join("\n");
+            let displayText = cleanParts.join("\n");
             const speechText = stripBilingualForSpeech(displayText);
+            displayText = stripTtsMarkup(displayText); // 字幕里不显示〔语气〕标记，合成时保留
 
             if (!displayText) {
                 setCallState("IDLE");
