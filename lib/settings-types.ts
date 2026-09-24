@@ -167,6 +167,8 @@ export type VoiceApiConfig = {
     sttModel?: string;
     defaultVoice: string;
     languageBoost?: string;
+    /** Fish Audio 朗读语种（ISO 代码如 zh/en/ja）。Fish 会跟随文字本身的语言朗读，这里用于试听文本和按语种筛选音色库。 */
+    fishLanguage?: string;
     /** Minimax voice_setting.speed. Missing values keep the legacy 1.0x behavior. */
     speechSpeed?: number;
     /** Minimax voice_setting.pitch（半音，±12）。缺省保持旧行为（0，原声）。 */
