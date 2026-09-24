@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useContext, useCallback, useMemo } from "react";
-import { Plus, Upload, Download, Trash2, RotateCcw, ChevronLeft, ChevronDown, GripVertical, MessageSquare, AlertCircle, Maximize2, Copy, Replace, CheckSquare, Check, Filter, MoreHorizontal } from "lucide-react";
+import { Plus, Upload, Download, Trash2, RotateCcw, ChevronLeft, ChevronDown, GripVertical, MessageSquare, AlertCircle, Maximize2, Copy, Replace, CheckSquare, Check, Filter, MoreHorizontal, FolderInput } from "lucide-react";
 import {
     loadPresets,
     savePresets,
@@ -31,6 +31,7 @@ import { BottomSheet, ConfirmDialog, TextExpandModal } from "@/components/ui/mod
 import { SwipeActionRow, useSwipeActions } from "@/components/ui/swipe-actions";
 import { notifyMascotPageContext } from "@/lib/mascot-events";
 import { useTouchSort } from "@/lib/use-touch-sort";
+import { estimateTokens } from "@/lib/token-counter";
 
 // ── Tag helpers for backward compat (tags[] > featureTag + followUpOnly) ──
 function getPromptTags(p: Prompt): string[] {
@@ -66,6 +67,14 @@ function getPromptTagsLabel(p: Prompt, tagProfiles = flattenTagGroups(CONTENT_SC
 function getPromptTagsInlineLabel(p: Prompt): string {
     const tags = getPromptTags(p);
     return tags.length > 0 ? tags.map(resolveContentTagLabel).join(" · ") : "通用";
+}
+
+function estimatePromptTokens(prompt: Prompt): number {
+    return estimateTokens(prompt.content || "");
+}
+
+function estimatePresetTokens(preset: PresetConfig): number {
+    return (preset.prompts || []).reduce((total, prompt) => total + estimatePromptTokens(prompt), 0);
 }
 
 function setPromptTags(tags: string[]): Partial<Prompt> {
@@ -300,6 +309,8 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [selectionPresetId, setSelectionPresetId] = useState<string | null>(null);
     const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
+    const [crossPresetPromptId, setCrossPresetPromptId] = useState<string | null>(null);
+    const [crossPresetTargetId, setCrossPresetTargetId] = useState<string | null>(null);
 
     // ── 按 App 筛选（高亮/仅显示/仅折叠/同类折叠） ──
     const [appFilterOpen, setAppFilterOpen] = useState(false);
@@ -777,8 +788,8 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
         getPromptDragIndices,
     );
 
-    // ── 条目左滑操作（微信式：左滑露出「新增/删除」） ──
-    const swipe = useSwipeActions();
+    // ── 条目左滑操作（微信式：左滑露出「新增/转移/删除」，与世界书一致；三键宽 186） ──
+    const swipe = useSwipeActions(186);
 
     // ── 多选模式：右滑选中 / 批量操作 / 多选拖拽 ──
     const enterSelectMode = useCallback(() => {
@@ -892,7 +903,46 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
         }, 80);
     };
 
-    // ── 条目级导入/导出（左滑「替换/导出」+ 底部「添加条目」菜单） ──
+    const closeCrossPresetSheet = () => {
+        setCrossPresetPromptId(null);
+        setCrossPresetTargetId(null);
+    };
+
+    const copyPromptToPreset = (prompt: Prompt, targetPresetId: string) => {
+        const target = presets.find(item => item.id === targetPresetId);
+        if (!target || targetPresetId === editingId) return;
+        const used = new Set(target.prompts.map(item => item.identifier));
+        let identifier = prompt.identifier;
+        let suffix = 1;
+        while (used.has(identifier)) identifier = `${prompt.identifier}_${suffix++}`;
+        const copied = { ...prompt, identifier };
+        const prompts = [...target.prompts, copied];
+        const promptOrder = [...(target.prompt_order || buildDisplayedPrompts(target).map(item => ({ identifier: item.identifier, enabled: item.enabled }))), { identifier, enabled: copied.enabled }];
+        updatePreset(target.id, { prompts, prompt_order: promptOrder });
+        closeCrossPresetSheet();
+    };
+
+    const movePromptToPreset = (prompt: Prompt, targetPresetId: string) => {
+        const source = presets.find(item => item.id === editingId);
+        const target = presets.find(item => item.id === targetPresetId);
+        if (!source || !target || targetPresetId === source.id) return;
+        const used = new Set(target.prompts.map(item => item.identifier));
+        let identifier = prompt.identifier;
+        let suffix = 1;
+        while (used.has(identifier)) identifier = `${prompt.identifier}_${suffix++}`;
+        const moved = { ...prompt, identifier };
+        const nextPresets = presets.map(item => {
+            if (item.id === source.id) return { ...item, prompts: item.prompts.filter(entry => entry.identifier !== prompt.identifier), prompt_order: (item.prompt_order || []).filter(entry => entry.identifier !== prompt.identifier), updatedAt: Date.now() };
+            if (item.id === target.id) return { ...item, prompts: [...item.prompts, moved], prompt_order: [...(item.prompt_order || buildDisplayedPrompts(item).map(entry => ({ identifier: entry.identifier, enabled: entry.enabled }))), { identifier, enabled: moved.enabled }], updatedAt: Date.now() };
+            return item;
+        });
+        persist(nextPresets);
+        if (editingPromptId === prompt.identifier) setEditingPromptId(null);
+        closeCrossPresetSheet();
+    };
+
+    const activeCrossPrompt = activePreset?.prompts.find(prompt => prompt.identifier === crossPresetPromptId);
+    const otherPresets = presets.filter(preset => preset.id !== editingId);
     const [addEntryMenuOpen, setAddEntryMenuOpen] = useState(false);
     const entryFileInputRef = useRef<HTMLInputElement>(null);
     const entryImportModeRef = useRef<{ mode: "append" } | { mode: "replace"; identifier: string } | null>(null);
@@ -1180,7 +1230,12 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                         </>
                                     )}
                                 </div>
-                                <h2 className="mx-2 mb-0 mt-2 ts-20 font-bold leading-none text-black">Preset Info</h2>
+                                <div className="mx-2 mb-0 mt-2 flex items-center justify-between gap-2">
+                                    <h2 className="ts-20 font-bold leading-none text-black">Preset Info</h2>
+                                    <span className="menu-desc !mt-0 shrink-0 ts-12">
+                                        总计 {estimatePresetTokens(preset).toLocaleString()} tk
+                                    </span>
+                                </div>
                                 <div className="ui-entry-card" style={{ cursor: "default" }}>
                                         <div className="flex flex-col gap-2">
                                             <div className="flex justify-between items-center">
@@ -1453,21 +1508,26 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                         )}
                                     </div>
 
-                                    {selectMode && (
+                                    {selectMode && (() => {
+                                        const allVisibleSelected = visiblePromptIds.size > 0 && [...visiblePromptIds].every(id => actionableSelectedIds.has(id));
+                                        const selectedPrompts = preset.prompts.filter(p => actionableSelectedIds.has(p.identifier));
+                                        const allEnabled = selectedPrompts.length > 0 && selectedPrompts.every(p => preset.prompt_order
+                                            ? (preset.prompt_order.find(e => e.identifier === p.identifier)?.enabled ?? p.enabled)
+                                            : p.enabled);
+                                        return (
                                         <div className="multi-select-float-bar">
                                             <div className="msfb-main">
                                                 <span className="msfb-count">已选 {actionableSelectedIds.size} 项</span>
-                                                <button type="button" className="msfb-btn" onClick={selectAllPrompts}>
+                                                <button type="button" className="msfb-btn" onClick={() => {
+                                                    if (allVisibleSelected) setSelectedIds(new Set());
+                                                    else selectAllPrompts();
+                                                }}>
                                                     <CheckSquare size={15} strokeWidth={1.8} />
-                                                    <span>全选可见</span>
+                                                    <span>{allVisibleSelected ? "取消全选" : "全选可见"}</span>
                                                 </button>
-                                                <button type="button" className="msfb-btn" onClick={() => bulkSetEnabled(true)} disabled={actionableSelectedIds.size === 0}>
-                                                    <Check size={15} strokeWidth={2} />
-                                                    <span>启用</span>
-                                                </button>
-                                                <button type="button" className="msfb-btn" onClick={() => bulkSetEnabled(false)} disabled={actionableSelectedIds.size === 0}>
-                                                    <RotateCcw size={15} strokeWidth={1.8} />
-                                                    <span>禁用</span>
+                                                <button type="button" className="msfb-btn" onClick={() => bulkSetEnabled(!allEnabled)} disabled={actionableSelectedIds.size === 0}>
+                                                    {allEnabled ? <RotateCcw size={15} strokeWidth={1.8} /> : <Check size={15} strokeWidth={2} />}
+                                                    <span>{allEnabled ? "禁用" : "启用"}</span>
                                                 </button>
                                                 <button type="button" className="msfb-btn" onClick={() => bulkExportSelected()} disabled={actionableSelectedIds.size === 0}>
                                                     <Download size={15} strokeWidth={1.8} />
@@ -1485,7 +1545,8 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                 </button>
                                             </div>
                                         </div>
-                                    )}
+                                        );
+                                    })()}
 
                                     <div ref={promptListRef} className="flex flex-col gap-2"
                                         onTouchMove={onPromptTouchMove}
@@ -1568,27 +1629,15 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                             <button
                                                                 type="button"
                                                                 className="ui-swipe-action"
-                                                                data-variant="replace"
+                                                                data-variant="transfer"
                                                                 onClick={() => {
-                                                                    entryImportModeRef.current = { mode: "replace", identifier: prompt.identifier };
-                                                                    entryFileInputRef.current?.click();
+                                                                    setCrossPresetPromptId(prompt.identifier);
+                                                                    setCrossPresetTargetId(null);
                                                                     swipe.close();
                                                                 }}
                                                             >
-                                                                <Replace size={18} strokeWidth={2} />
-                                                                <span>替换</span>
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                className="ui-swipe-action"
-                                                                data-variant="export"
-                                                                onClick={() => {
-                                                                    exportPrompt(prompt);
-                                                                    swipe.close();
-                                                                }}
-                                                            >
-                                                                <Download size={18} strokeWidth={2} />
-                                                                <span>导出</span>
+                                                                <FolderInput size={18} strokeWidth={2} />
+                                                                <span>转移</span>
                                                             </button>
                                                             <button
                                                                 type="button"
@@ -1899,9 +1948,35 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                                                                     }} />
                                                                     Marker
                                                                 </label>
-                                                                <span className="menu-desc ts-11 whitespace-nowrap">
-                                                                    实际标签：{getPromptTagsInlineLabel(prompt)}
-                                                                </span>
+                                                                <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                                                                    <span className="menu-desc !mt-0 ts-11 whitespace-nowrap">
+                                                                        实际标签：{getPromptTagsInlineLabel(prompt)}
+                                                                    </span>
+                                                                    <span className="ui-status-tag shrink-0" data-variant="muted" title="按提示词内容估算">
+                                                                        {estimatePromptTokens(prompt).toLocaleString()} tk
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex flex-wrap gap-2">
+                                                                <button
+                                                                    type="button"
+                                                                    className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-[16px] border border-black/10 bg-white px-3 text-xs font-bold text-gray-800 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
+                                                                    onClick={() => {
+                                                                        entryImportModeRef.current = { mode: "replace", identifier: prompt.identifier };
+                                                                        entryFileInputRef.current?.click();
+                                                                    }}
+                                                                >
+                                                                    <Replace size={14} strokeWidth={2} />
+                                                                    替换 JSON
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-[16px] border border-black/10 bg-white px-3 text-xs font-bold text-gray-800 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
+                                                                    onClick={() => exportPrompt(prompt)}
+                                                                >
+                                                                    <Download size={14} strokeWidth={2} />
+                                                                    导出 JSON
+                                                                </button>
                                                             </div>
                                                         </div>
                                                     )}
@@ -2112,6 +2187,37 @@ export function PresetManager({ isActive = true }: { isActive?: boolean } = {}) 
                         placeholder="在此输入提示词内容..."
                         onClose={() => setExpandTarget(null)}
                     />
+                );
+            })()}
+
+            {crossPresetPromptId && activeCrossPrompt && (() => {
+                const targetPreset = crossPresetTargetId ? presets.find(item => item.id === crossPresetTargetId) : null;
+                return (
+                    <BottomSheet title={targetPreset ? "复制 / 转移" : "选择目标预设"} onClose={closeCrossPresetSheet}>
+                        <div className="flex flex-col gap-2">
+                            <p className="menu-desc !mt-0 text-center px-1">
+                                将「{activeCrossPrompt.name || activeCrossPrompt.identifier}」复制 / 转移到其他预设
+                            </p>
+                            {targetPreset ? (
+                                <>
+                                    <button type="button" className="ui-btn ui-btn-primary w-full" onClick={() => copyPromptToPreset(activeCrossPrompt, targetPreset.id)}>复制到该预设</button>
+                                    <button type="button" className="ui-btn ui-btn-outline w-full" onClick={() => movePromptToPreset(activeCrossPrompt, targetPreset.id)}>转移到该预设</button>
+                                    <button type="button" className="ui-btn ui-btn-ghost w-full" onClick={() => setCrossPresetTargetId(null)}>返回预设列表</button>
+                                </>
+                            ) : (
+                                <>
+                                    {otherPresets.length === 0 ? <p className="menu-desc text-center py-4">暂无其他预设</p> : otherPresets.map(item => (
+                                        <button key={item.id} type="button" className="ui-btn ui-btn-outline w-full justify-start gap-2" onClick={() => setCrossPresetTargetId(item.id)}>
+                                            <MessageSquare size={16} className="shrink-0" />
+                                            <span className="truncate flex-1 text-left">{item.name || "未命名预设"}</span>
+                                            <span className="menu-desc !mt-0 shrink-0">{item.prompts?.length || 0} 条</span>
+                                        </button>
+                                    ))}
+                                    <button type="button" className="ui-btn ui-btn-ghost w-full" onClick={closeCrossPresetSheet}>取消</button>
+                                </>
+                            )}
+                        </div>
+                    </BottomSheet>
                 );
             })()}
 

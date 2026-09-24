@@ -4182,6 +4182,7 @@
   -webkit-tap-highlight-color: transparent;
 }
 .ui-swipe-action[data-variant="insert"] { background: var(--c-icon-active); }
+.ui-swipe-action[data-variant="transfer"] { background: var(--c-warning); }
 .ui-swipe-action[data-variant="replace"] { background: var(--c-warning); }
 .ui-swipe-action[data-variant="export"] { background: var(--c-icon); }
 .ui-swipe-action[data-variant="delete"] { background: var(--c-danger); }
