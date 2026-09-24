@@ -83,7 +83,7 @@ const POLAROID_RATIOS = [
   { label: "9:16", className: "ratio-9-16" },
 ] as const;
 
-const POLAROID_SIZE_WIDTHS = { small: 110, medium: 130, large: 150 } as const;
+const POLAROID_SIZE_WIDTHS = { small: 110, medium: 140, large: 170 } as const;
 
 function clampCharacterImageValue(value: number, min: number, max: number, fallback: number): number {
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
@@ -97,14 +97,36 @@ function getCharacterImagePositionLimit(
   previewHeight: number,
 ): { x: number; y: number } {
   if (!naturalWidth || !naturalHeight || !previewWidth || !previewHeight) {
-    return { x: 0, y: 0 };
+    return { x: 50, y: 50 };
   }
-  const coverScale = Math.max(previewWidth / naturalWidth, previewHeight / naturalHeight) * zoom;
-  const renderedWidth = naturalWidth * coverScale;
-  const renderedHeight = naturalHeight * coverScale;
+  const coverScale = Math.max(previewWidth / naturalWidth, previewHeight / naturalHeight);
+  const renderedWidth = naturalWidth * coverScale * zoom;
+  const renderedHeight = naturalHeight * coverScale * zoom;
   return {
     x: Math.max(0, ((renderedWidth - previewWidth) / 2 / previewWidth) * 100),
     y: Math.max(0, ((renderedHeight - previewHeight) / 2 / previewHeight) * 100),
+  };
+}
+
+function getPolaroidImageStyle(
+  x: number = 50,
+  y: number = 50,
+  zoom: number = 1
+): React.CSSProperties {
+  const safeX = clampCharacterImageValue(x, 0, 100, 50);
+  const safeY = clampCharacterImageValue(y, 0, 100, 50);
+  const safeZoom = clampCharacterImageValue(zoom, 1, 3, 1);
+  const zoomPanFactor = safeZoom > 1 ? (safeZoom - 1) / safeZoom : 0;
+  const panX = (safeX - 50) * zoomPanFactor;
+  const panY = (safeY - 50) * zoomPanFactor;
+  return {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    objectPosition: `${100 - safeX}% ${100 - safeY}%`,
+    transform: `scale(${safeZoom}) translate(${panX}%, ${panY}%)`,
+    transformOrigin: "center center",
+    display: "block",
   };
 }
 
@@ -294,7 +316,7 @@ export function PhoneCharacterApp({ onClose, onNotice }: PhoneCharacterAppProps)
 
         {view.type === "detail" && (
           <CharArchiveView
-            char={view.id ? (characters.find((c) => c.id === view.id) ?? createCharacter({ name: "", persona: "", avatar: null })) : createCharacter({ name: "", persona: "", avatar: null })}
+            char={view.id ? (characters.find((c) => c.id === view.id) ?? createCharacter({ name: "", persona: "", avatar: null })) : createCharacter({ name: "", persona: "", avatar: null, polaroidStyle: pendingPolaroidStyle })}
             isEditing={view.isEditing}
             isExisting={Boolean(view.id)}
             onBack={handleBackFromDetail}
@@ -323,8 +345,10 @@ export function PhoneCharacterApp({ onClose, onNotice }: PhoneCharacterAppProps)
                   ? `已备份旧卡，当前为 V${nextVersion}`
                   : `已覆盖旧版本，当前为 V${nextVersion}`);
               } else {
-                const newChar = createCharacter(data);
-                newChar.polaroidStyle = pendingPolaroidStyle;
+                const newChar = createCharacter({
+                  ...data,
+                  polaroidStyle: data.polaroidStyle ?? pendingPolaroidStyle,
+                });
                 setPendingPlacementChar(newChar);
                 setView({ type: "list", id: null, isEditing: false });
                 onNotice("点击画布放置角色");
@@ -1236,10 +1260,7 @@ function CharListView({
                       alt={char.name}
                       className="char-polaroid-img"
                       draggable={false}
-                      style={{
-                        objectPosition: `${100 - (char.polaroidImageX ?? 50)}% ${100 - (char.polaroidImageY ?? 50)}%`,
-                        transform: `scale(${char.polaroidImageZoom ?? 1})`,
-                      }}
+                      style={getPolaroidImageStyle(char.polaroidImageX, char.polaroidImageY, char.polaroidImageZoom)}
                     /> : <CharAvatarFallback name={char.name} size="100%" />}
                     <button
                       className="char-polaroid-menu-btn absolute top-1 right-1 w-6 h-6 bg-black/20 text-white rounded-full flex items-center justify-center cursor-pointer hover:bg-black/40 transition-colors z-10"
@@ -2189,15 +2210,19 @@ function CharArchiveView({
       const dx = e.clientX - previous.x;
       const dy = e.clientY - previous.y;
       const previewRect = previewRef.current?.getBoundingClientRect();
-      const limit = getCharacterImagePositionLimit(
-        previewImageState.current.zoom,
-        previewImageNaturalSize.width,
-        previewImageNaturalSize.height,
-        previewRect?.width || 0,
-        previewRect?.height || 0,
-      );
-      const x = clampCharacterImageValue(previewImageState.current.x + (dx / rect.width) * 100, 50 - limit.x, 50 + limit.x, 50);
-      const y = clampCharacterImageValue(previewImageState.current.y + (dy / rect.height) * 100, 50 - limit.y, 50 + limit.y, 50);
+      const img = previewImageRef.current;
+      const pw = previewRect?.width || rect.width || 1;
+      const ph = previewRect?.height || rect.height || 1;
+      const nw = previewImageNaturalSize.width || img?.naturalWidth || pw;
+      const nh = previewImageNaturalSize.height || img?.naturalHeight || ph;
+      const baseScale = Math.max(pw / nw, ph / nh);
+      const rw = nw * baseScale * previewImageState.current.zoom;
+      const rh = nh * baseScale * previewImageState.current.zoom;
+      // 物理 1:1 指尖跟随：按实际富余行程换算百分比，短边与长边平移速度完全一致，绝无迟滞与滞涩感
+      const travelX = Math.max(16, rw - pw);
+      const travelY = Math.max(16, rh - ph);
+      const x = clampCharacterImageValue(previewImageState.current.x + (dx / travelX) * 100, 0, 100, 50);
+      const y = clampCharacterImageValue(previewImageState.current.y + (dy / travelY) * 100, 0, 100, 50);
       previewImageState.current.x = x;
       previewImageState.current.y = y;
       setPolaroidImageX(x);
@@ -2440,12 +2465,9 @@ function CharArchiveView({
                     });
                   }}
                   style={{
-                    position: "static",
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    objectPosition: `${100 - polaroidImageX}% ${100 - polaroidImageY}%`,
-                    transform: `scale(${polaroidImageZoom})`,
+                    ...getPolaroidImageStyle(polaroidImageX, polaroidImageY, polaroidImageZoom),
+                    pointerEvents: "none",
+                    userSelect: "none",
                   }}
                 />
               ) : (
