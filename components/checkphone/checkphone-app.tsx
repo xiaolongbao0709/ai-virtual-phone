@@ -39,6 +39,7 @@ import {
   History
 } from "lucide-react";
 import { PageShell } from "@/components/ui/page-shell";
+import { sendBrowserNotification } from "@/lib/browser-notification";
 import { ConfirmDialog, Toggle } from "@/components/ui";
 import { CheckPhoneDebugErrorCard } from "@/components/checkphone/checkphone-debug-error-card";
 import { CheckPhoneAssetsPage } from "@/components/checkphone/checkphone-assets-page";
@@ -72,13 +73,40 @@ import {
   type CheckPhoneAppId,
   type CheckPhoneManifest,
 } from "@/lib/checkphone-config";
-import { generateCheckPhoneManifest } from "@/lib/checkphone-engine";
+import {
+  generateCheckPhoneManifest,
+  generateCheckPhoneAssets,
+  generateCheckPhoneBilibili,
+  generateCheckPhoneBrowser,
+  generateCheckPhoneChat,
+  generateCheckPhoneDouban,
+  generateCheckPhoneDouyin,
+  generateCheckPhoneEmail,
+  generateCheckPhoneInstagram,
+  generateCheckPhoneMessages,
+  generateCheckPhoneMusic,
+  generateCheckPhoneNotes,
+  generateCheckPhonePhone,
+  generateCheckPhonePhotos,
+  generateCheckPhoneReading,
+  generateCheckPhoneReddit,
+  generateCheckPhoneShopping,
+  generateCheckPhoneSteam,
+  generateCheckPhoneTakeout,
+  generateCheckPhoneTelegram,
+  generateCheckPhoneWeibo,
+  generateCheckPhoneX,
+  generateCheckPhoneXiaohongshu,
+  generateCheckPhoneYoutube,
+} from "@/lib/checkphone-engine";
 import {
   clearPhoneManifest,
   loadPhoneManifest,
   savePhoneManifest,
   hydrateCheckPhoneStorage,
   readPhoneManifestCache,
+  readPhoneSnapshotCache,
+  savePhoneSnapshot,
   loadCheckPhoneProjectionEntries,
   removeCheckPhoneProjectionEntry,
   clearCheckPhoneProjectionEntries,
@@ -132,6 +160,62 @@ const CHECKPHONE_EMBEDDED_APP_IDS = [
 function sanitizeCheckPhoneAppIds(value: unknown): CheckPhoneAppId[] {
   if (!Array.isArray(value)) return [];
   return value.filter((appId): appId is CheckPhoneAppId => typeof appId === "string" && isCheckPhoneAppId(appId));
+}
+
+// ── 一键生成全部App：appId → 生成器映射 ──
+type CheckPhoneGen = (
+  characterId: string,
+  prevPayload?: unknown | null,
+  prevUpdatedAt?: string,
+) => Promise<{ payload: unknown | null; summary: string; error?: string }>;
+
+const CHECKPHONE_GENERATORS = {
+  phone: generateCheckPhonePhone,
+  messages: generateCheckPhoneMessages,
+  browser: generateCheckPhoneBrowser,
+  photos: generateCheckPhonePhotos,
+  chat: generateCheckPhoneChat,
+  shopping: generateCheckPhoneShopping,
+  assets: generateCheckPhoneAssets,
+  notes: generateCheckPhoneNotes,
+  reading: generateCheckPhoneReading,
+  xiaohongshu: generateCheckPhoneXiaohongshu,
+  takeout: generateCheckPhoneTakeout,
+  weibo: generateCheckPhoneWeibo,
+  douyin: generateCheckPhoneDouyin,
+  email: generateCheckPhoneEmail,
+  music: generateCheckPhoneMusic,
+  x: generateCheckPhoneX,
+  reddit: generateCheckPhoneReddit,
+  youtube: generateCheckPhoneYoutube,
+  bilibili: generateCheckPhoneBilibili,
+  instagram: generateCheckPhoneInstagram,
+  telegram: generateCheckPhoneTelegram,
+  steam: generateCheckPhoneSteam,
+  douban: generateCheckPhoneDouban,
+} as unknown as Record<CheckPhoneAppId, CheckPhoneGen>;
+
+// 记忆上次勾选：仅记录"被取消"的 App，默认（无历史记录）即全部勾选
+const CHECKPHONE_GEN_ALL_UNCHECKED_KEY = "checkphone-generate-all-unchecked";
+
+function loadGenUnchecked(): Set<CheckPhoneAppId> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(CHECKPHONE_GEN_ALL_UNCHECKED_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as unknown[];
+    return new Set(arr.filter((v): v is CheckPhoneAppId => typeof v === "string" && isCheckPhoneAppId(v)));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveGenUnchecked(unchecked: Set<CheckPhoneAppId>): void {
+  try {
+    window.localStorage.setItem(CHECKPHONE_GEN_ALL_UNCHECKED_KEY, JSON.stringify([...unchecked]));
+  } catch {
+    /* ignore */
+  }
 }
 
 const IconSolidChat = ({ size = 32 }: { size?: number | string }) => (
@@ -354,6 +438,16 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
   });
   const settingsPanelRef = useRef<HTMLDivElement | null>(null);
 
+  // ── 一键生成全部App 状态 ──
+  const [genDialogOpen, setGenDialogOpen] = useState(false);
+  const [genUnchecked, setGenUnchecked] = useState<Set<CheckPhoneAppId>>(new Set());
+  const [genRunning, setGenRunning] = useState(false);
+  const [genTotal, setGenTotal] = useState(0);
+  const [genDone, setGenDone] = useState(0);
+  const [genCurrent, setGenCurrent] = useState<string | null>(null);
+  const [genFailed, setGenFailed] = useState<string[]>([]);
+  const genStopRef = useRef(false);
+
   useEffect(() => {
     const all = loadCharacters();
     setCharacters(all);
@@ -422,12 +516,92 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
   );
   const activeState = activeCharId ? states[activeCharId] : undefined;
   const manifest = activeState?.manifest ?? null;
+  // 桌面实际安装/显示的 App（top 12 + dock 4）。一键生成只针对桌面上的 App，避免对未上桌面的 App 做冗余生成。
+  const desktopApps = sanitizeCheckPhoneAppIds(manifest?.allAppIds);
   const isEmbeddedAppOpen =
     !!activeCharacter &&
     !!selectedAppId &&
     CHECKPHONE_EMBEDDED_APP_IDS.includes(selectedAppId as (typeof CHECKPHONE_EMBEDDED_APP_IDS)[number]);
 
   const closeSelectedApp = () => setSelectedAppId(null);
+
+  // ── 一键生成全部App ──
+  function openGenerateAll() {
+    if (!activeCharId) return;
+    setGenUnchecked(loadGenUnchecked());
+    setGenFailed([]);
+    setGenRunning(false);
+    setGenDialogOpen(true);
+  }
+
+  function toggleGenApp(appId: CheckPhoneAppId) {
+    setGenUnchecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(appId)) next.delete(appId);
+      else next.add(appId);
+      return next;
+    });
+  }
+
+  function setAllGenApps(checked: boolean) {
+    setGenUnchecked(checked ? new Set(desktopApps) : new Set());
+  }
+
+  async function startGenerateAll() {
+    if (!activeCharId || genRunning) return;
+    const selected = desktopApps.filter((id) => !genUnchecked.has(id));
+    if (selected.length === 0) {
+      setGenFailed(["未选择任何 App"]);
+      return;
+    }
+    saveGenUnchecked(genUnchecked);
+    setGenFailed([]);
+    setGenTotal(selected.length);
+    setGenDone(0);
+    setGenCurrent(CHECKPHONE_APP_SPECS[selected[0]].label);
+    setGenRunning(true);
+    setGenDialogOpen(false);
+
+    let doneCount = 0;
+    for (const appId of selected) {
+      if (genStopRef.current) break;
+      setGenCurrent(CHECKPHONE_APP_SPECS[appId].label);
+      const prev = readPhoneSnapshotCache<unknown>(activeCharId, appId);
+      try {
+        const gen = CHECKPHONE_GENERATORS[appId];
+        const { payload, error } = await gen(activeCharId, prev?.payload ?? null, prev?.updatedAt);
+        if (payload) {
+          const now = new Date().toISOString();
+          await savePhoneSnapshot({
+            id: `${activeCharId}:${appId}`,
+            characterId: activeCharId,
+            appId,
+            generatedAt: prev?.generatedAt ?? now,
+            updatedAt: now,
+            summary: "",
+            payload,
+          });
+        } else if (error) {
+          setGenFailed((f) => [...f, `${CHECKPHONE_APP_SPECS[appId].label}：${error}`]);
+        }
+      } catch (e) {
+        setGenFailed((f) => [...f, `${CHECKPHONE_APP_SPECS[appId].label}：${e instanceof Error ? e.message : "生成失败"}`]);
+      }
+      doneCount += 1;
+      setGenDone(doneCount);
+    }
+
+    genStopRef.current = false;
+    setGenRunning(false);
+    setGenCurrent(null);
+    sendBrowserNotification("查手机 · 一键生成完成", {
+      body: `已生成 ${doneCount} / ${selected.length} 个 App 内容`,
+    });
+  }
+
+  function cancelGenerateAll() {
+    genStopRef.current = true;
+  }
 
   function updateCheckPhoneSettings(patch: Partial<CheckPhoneSettings>) {
     const next = { ...checkPhoneSettings, ...patch };
@@ -635,6 +809,9 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
               </div>
 
               <div className="cp-floating-actions">
+                <button className="cp-float-refresh" onClick={openGenerateAll} aria-label="一键生成全部App" disabled={!!activeState?.loading}>
+                  <Sparkles size={18} strokeWidth={2.5} />
+                </button>
                 <button className="cp-float-refresh" onClick={handleGenerate} aria-label="Refresh Signal" disabled={!!activeState?.loading}>
                   <RefreshCw size={18} strokeWidth={2.5} className={activeState?.loading ? "cp-spin" : undefined} />
                 </button>
@@ -952,6 +1129,84 @@ export function CheckPhoneApp({ onClose }: CheckPhoneAppProps) {
                 </button>
                 <button type="button" onClick={saveCheckPhonePromptDraft} disabled={!!activeState?.loading}>
                   保存
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {genRunning && (
+          <div className="cp-gen-progress cp-refresh-indicator--floating" role="status" aria-live="polite" style={{ position: "fixed", top: "auto", bottom: 96 }} >
+            <span className="cp-refresh-indicator-text">正在生成 {genCurrent ?? "…"} · {genDone}/{genTotal}</span>
+            <button className="cp-gen-cancel" onClick={cancelGenerateAll} type="button">
+              停止
+            </button>
+          </div>
+        )}
+
+        {genDialogOpen && (
+          <div
+            className="cp-gen-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="一键生成全部App"
+            onClick={() => { if (!genRunning) setGenDialogOpen(false); }}
+          >
+            <div className="cp-gen-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="cp-gen-head">
+                <div>
+                  <h3>一键生成全部 App</h3>
+                  <p>为当前角色桌面上的 App 一次性生成内容（在后台依次执行）</p>
+                </div>
+                <button type="button" className="cp-gen-close" aria-label="关闭" onClick={() => setGenDialogOpen(false)}>
+                  <X size={16} strokeWidth={2} />
+                </button>
+              </div>
+              {desktopApps.length === 0 ? (
+                <div className="cp-gen-empty">该角色还没有桌面清单，请先点击刷新生成桌面。</div>
+              ) : (
+              <>
+              <div className="cp-gen-toolbar">
+                <button type="button" onClick={() => setAllGenApps(true)}>全选</button>
+                <button type="button" onClick={() => setAllGenApps(false)}>全不选</button>
+                <span className="cp-gen-count">
+                  已选 {desktopApps.filter((id) => !genUnchecked.has(id)).length} / {desktopApps.length}
+                </span>
+              </div>
+              <div className="cp-gen-list">
+                {desktopApps.map((appId) => {
+                  const spec = CHECKPHONE_APP_SPECS[appId];
+                  const checked = !genUnchecked.has(appId);
+                  return (
+                    <button
+                      key={appId}
+                      type="button"
+                      className={`cp-gen-item ${checked ? "is-checked" : ""}`}
+                      onClick={() => toggleGenApp(appId)}
+                    >
+                      <span className="cp-gen-check">{checked ? "✓" : ""}</span>
+                      <span className="cp-gen-icon"><AppGlyph appId={appId} size={15} /></span>
+                      <span className="cp-gen-label">{spec.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              </>
+              )}
+              {genFailed.length > 0 && (
+                <div className="cp-gen-errors">
+                  {genFailed.map((msg, index) => <div key={index}>{msg}</div>)}
+                </div>
+              )}
+              <div className="cp-gen-foot">
+                <button type="button" className="ui-btn" onClick={() => setGenDialogOpen(false)}>取消</button>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-primary"
+                  disabled={desktopApps.length === 0 || desktopApps.filter((id) => !genUnchecked.has(id)).length === 0}
+                  onClick={startGenerateAll}
+                >
+                  一键生成
                 </button>
               </div>
             </div>

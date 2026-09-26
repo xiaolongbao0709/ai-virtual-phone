@@ -1864,6 +1864,169 @@
   }
 }
 
+/* ----------------- 一键生成全部App ----------------- */
+.cp-gen-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 13px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 10px 26px rgba(17, 17, 17, 0.1);
+  color: #424248;
+  font-size: calc(10px*var(--app-text-scale,1));
+  letter-spacing: 0.06em;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  pointer-events: auto;
+}
+.cp-gen-cancel {
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 12px;
+  background: #111;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cp-gen-cancel:hover { opacity: 0.86; }
+
+.cp-gen-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  background: rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.cp-gen-modal {
+  width: min(520px, 92vw);
+  max-height: min(78vh, 620px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  border-radius: 20px;
+  background: rgba(248, 248, 250, 0.97);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+  color: #111;
+}
+.cp-gen-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.cp-gen-head h3 {
+  margin: 0;
+  color: #111;
+  font-size: calc(16px*var(--app-text-scale,1));
+  font-weight: 760;
+  line-height: 1.2;
+}
+.cp-gen-head p {
+  margin: 5px 0 0;
+  color: rgba(17, 17, 17, 0.56);
+  font-size: calc(12px*var(--app-text-scale,1));
+  line-height: 1.35;
+}
+.cp-gen-close {
+  flex: 0 0 auto;
+  width: 30px; height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(17, 17, 17, 0.12);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.7);
+  color: #424248;
+  cursor: pointer;
+}
+.cp-gen-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cp-gen-toolbar button {
+  border: 1px solid rgba(17, 17, 17, 0.12);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.82);
+  color: #171717;
+  cursor: pointer;
+}
+.cp-gen-toolbar button:hover { border-color: rgba(17, 17, 17, 0.3); }
+.cp-gen-count { margin-left: auto; font-size: 11px; color: rgba(17, 17, 17, 0.5); }
+
+.cp-gen-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 2px;
+}
+.cp-gen-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(17, 17, 17, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #171717;
+  cursor: pointer;
+  font-size: calc(12px*var(--app-text-scale,1));
+  text-align: left;
+}
+.cp-gen-item:hover { border-color: rgba(17, 17, 17, 0.28); }
+.cp-gen-item.is-checked { border-color: rgba(0, 82, 204, 0.5); background: rgba(0, 82, 204, 0.06); }
+.cp-gen-check {
+  flex: 0 0 18px; width: 18px; height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(17, 17, 17, 0.24);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 12px;
+  background: transparent;
+}
+.cp-gen-item.is-checked .cp-gen-check { background: #0052cc; border-color: #0052cc; }
+.cp-gen-icon { display: inline-flex; color: #333; }
+.cp-gen-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cp-gen-errors {
+  max-height: 90px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #b3261e;
+  font-size: 11px;
+}
+.cp-gen-empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: rgba(17, 17, 17, 0.55);
+  font-size: calc(12.5px*var(--app-text-scale,1));
+}
+.cp-gen-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 /* ----------------- NOTES SUB-APP ----------------- */
 .cp-notes-module {
   flex: 1;
