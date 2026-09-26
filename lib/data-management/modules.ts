@@ -65,6 +65,13 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
           "chat-offline-mode:",
           "chat-theater-mode:",
           "chat_plugin_data_v1:",
+          "chat_active_offline_invite_",
+          "chat_offline_invite_active_session_",
+          "chat_offline_invite_active_theme_",
+          "offline_invite_active_session_",
+          "chat_offline_invite_declined_",
+          "chat_offline_invite_decline_count_",
+          "chat_offline_lock_",
         ],
       },
       {

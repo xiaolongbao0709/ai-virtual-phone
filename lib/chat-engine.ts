@@ -21,6 +21,16 @@ import {
     createResponseBatchId,
     createToolExecutionId,
     isSessionStreamingEnabled,
+    DEFAULT_OFFLINE_INVITE_PROMPT,
+    DEFAULT_OFFLINE_MEETING_PROMPT,
+    DEFAULT_OFFLINE_LOCK_BASE_PROMPT,
+    DEFAULT_OFFLINE_LOCK_STANDALONE_SUFFIX,
+    DEFAULT_OFFLINE_LOCK_PROMPT,
+    DEFAULT_OFFLINE_LOCK_INVITE_PROMPT,
+    DEFAULT_OFFLINE_DECLINE_PROMPT,
+    DEFAULT_OFFLINE_ORAL_DECLINE_PROMPT,
+    DEFAULT_OFFLINE_RETURN_ONLINE_PROMPT,
+    type OfflineInviteDeclineContext,
 } from "./chat-storage";
 import { extractTextToolDirectiveText, stripTextToolDirectives } from "./text-tool-protocol";
 import type { ApiConfig, PresetConfig, Prompt, PromptOrderEntry, RegexConfig } from "./settings-types";
@@ -63,6 +73,7 @@ import { prepareShortTermContext } from "./short-term-assembler";
 import { parseActionTags, dispatchActions } from "./action-parser";
 import { findEnabledToolForSchema, getEnabledTools, type EnabledTool } from "./tool-storage";
 import { formatToolsForPrompt, formatToolSchema } from "./tool-prompt";
+import { loadChatOfflineTurns } from "./chat-offline-storage";
 import { parseToolCalls, parseToolFetches, executeToolCalls, formatToolResults } from "./tool-executor";
 import type { ToolCall, ToolResult } from "./tool-executor";
 import { getCustomStickerNames, getCustomStickerExample } from "./custom-sticker-storage";
@@ -362,6 +373,9 @@ type ChatPromptBuildOptions = {
     activateAllWorldBooks?: boolean;
     toolsAllowed?: boolean;
     forceEnableTools?: boolean;
+    offlineInviteDeclined?: boolean | OfflineInviteDeclineContext;
+    returnedFromOffline?: boolean;
+    offlineInitiativePrompt?: string;
 };
 
 function matchesPromptProfileRef(prompt: { identifier: string; name?: string }, refs: Set<string>): boolean {
@@ -1948,6 +1962,368 @@ export async function buildChatPromptMessages(
             content: "本次自定义 APP AI 任务只输出严格 JSON。不要输出 Markdown 代码块、解释文字或聊天富媒体指令。",
         });
     }
+    // 角色自主线下封禁机制（仅私聊生效，开关独立）
+    if (session.enableOfflineLock && !session.isGroup) {
+        const customLock = session.offlineLockPrompt?.trim();
+        const customInvite = session.offlineLockInvitePrompt?.trim();
+
+        let lockPromptContent: string;
+        if (!customLock && !customInvite) {
+            // 未自定义时使用默认提示词
+            lockPromptContent = [
+                DEFAULT_OFFLINE_LOCK_BASE_PROMPT,
+                session.enableOfflineInvite ? DEFAULT_OFFLINE_LOCK_INVITE_PROMPT : DEFAULT_OFFLINE_LOCK_STANDALONE_SUFFIX,
+            ].join("\n\n");
+        } else {
+            // 用户配置了自定义提示词时注入自定义内容
+            const effectiveLock = customLock || (session.enableOfflineInvite ? DEFAULT_OFFLINE_LOCK_BASE_PROMPT : DEFAULT_OFFLINE_LOCK_PROMPT);
+            if (session.enableOfflineInvite) {
+                const effectiveInvite = customInvite || DEFAULT_OFFLINE_LOCK_INVITE_PROMPT;
+                lockPromptContent = `${effectiveLock}\n\n${effectiveInvite}`;
+            } else {
+                lockPromptContent = effectiveLock;
+            }
+        }
+
+        llmMessages.push({
+            role: "system",
+            content: lockPromptContent,
+        });
+
+        // 读取当前封禁状态注入上下文
+        const rawLock = typeof window !== "undefined" ? kvGet("chat_offline_lock_" + session.id) : null;
+        if (rawLock) {
+            try {
+                const lockData = JSON.parse(rawLock) as { isLocked?: boolean; knockCount?: number; requiredKnocks?: number };
+                if (lockData.isLocked) {
+                    const count = lockData.knockCount ?? 0;
+                    const req = lockData.requiredKnocks ?? 3;
+                    const effortNotice = count > 0
+                        ? `系统明确记录到：对方此前已经为你发起了整整 ${count} 次线下见面申请（即便被你拒绝也依然连续按了 ${count} 次）。对方在用真真切切的实际行动证明想见你的诚意与付出。`
+                        : `对方此前曾尝试切换线下，被你拒之门外（目前尚未多次连续申请）。`;
+
+                    const unlockHint = session.enableOfflineInvite
+                        ? "可在本次回复末尾附带 [解除封禁]（可纯解封，也可解封并发起【他来/我去】线下邀约，或重新调整心墙 [封禁线下:新次数]）"
+                        : "可在本次回复末尾附带 [解除封禁]（或重新调整心墙 [封禁线下:新次数]）";
+
+                    llmMessages.push({
+                        role: "system",
+                        content: `【系统提示】你此前因情绪抗拒已明确拒绝与对方线下见面（你设定的心墙阈值为 ${req} 次）。${effortNotice}现在对方正在微信线上与你沟通。你必须看在眼里、清清楚楚知晓对方为你付出的这些实际行动；若随着当下对话你的心防有所松动、愿意见面，${unlockHint}。`,
+                    });
+                }
+            } catch {}
+        }
+    }
+
+    // 角色自主线下邀约机制（仅私聊生效，开关独立）
+    if (session.enableOfflineInvite && !session.isGroup) {
+        const offlineInvitePromptContent = session.offlineInvitePrompt?.trim() || DEFAULT_OFFLINE_INVITE_PROMPT;
+        llmMessages.push({
+            role: "system",
+            content: offlineInvitePromptContent,
+        });
+
+        const rawPending = typeof window !== "undefined" ? kvGet("chat_active_offline_invite_" + session.id) : null;
+        let pendingInvite: { status?: string; direction?: string; place?: string; startTime?: number; durationMinutes?: number; theme?: string } | null = null;
+        try {
+            if (rawPending) pendingInvite = JSON.parse(rawPending);
+        } catch {}
+
+        if (pendingInvite) {
+            const customOralDecline = session.offlineOralDeclinePrompt?.trim();
+            if (pendingInvite.status === "on_the_way") {
+                const now = Date.now();
+                const elapsedMins = Math.floor((now - (pendingInvite.startTime || now)) / 60000);
+                const remainingMins = Math.max(1, (pendingInvite.durationMinutes || 15) - elapsedMins);
+
+                const isForced = pendingInvite.theme === "forced";
+                const inTransitHeader = isForced
+                    ? `【你当前正在强行动身直奔对方身边中】：你因为极其强烈的情绪（焦虑破表/急迫/怄气/霸道/无法忍耐）已强行动身直奔对方所在处（${pendingInvite.place || "对方身边"}）！手机倒计时正在进行（当前倒计时显示你大约还剩 ${remainingMins} 分钟赶到现场）！`
+                    : `【你当前正在赶往见面的路上·在途状态中】：你之前已经向用户提议见面，用户已经点击【答应Ta】，你当前正处于赶往约定地点（${pendingInvite.place || "约定地点"}）的赶路途中，手机倒计时正在进行（当前倒计时显示你大约还剩 ${remainingMins} 分钟到达）！`;
+
+                llmMessages.push({
+                    role: "system",
+                    content: [
+                        inTransitHeader,
+                        "- 【⚡ 到达现场最高铁律·必须输出[提前到达]指令（核心状态流转开关）】：",
+                        "  * 当你在剧情对话中表示你【人已经真真切切到达现场】（例如：到了楼下、进了电梯、出电梯了、站在门外/门口、敲门、催促对方开门、或者在现场看见对方）时，剧情已经进入面对面现场！",
+                        "  * 【此时你必须绝对在微信回复的最末尾附带指令：`[提前到达]` 或 `[提前到达:卡片到达私房心语]`】（例如：`[提前到达:我就在门外站着，立刻把门打开]`）；",
+                        "  * 【⚠️ 极其重要·严禁在将来条件句中触发此指令】：如果你的对话只是表达将来的打算、狠话或约定（例如：“等我到了……”、“到了看我怎么收拾你”、“到了再跟你算账”、“到了给你带上去”、“到了叫你”），此时你【人还在路上、根本没有到达】！【绝对严禁】在此类将来语境下输出 `[提前到达]` 指令！",
+                        "  * （注意：顺路在楼下买早餐、路上去便利店属于途中琐事，人还未到碰头点，不触发此指令）。",
+                        "- 【严禁每轮主动报备时间（拒绝报时机器人）】：在赶路闲聊中，主要聊当下话题、调侃、接梗、生活琐事。你不是行车导航仪，【绝对严禁每一轮都刻意汇报“我还有X分钟”】！只有当用户在聊天中明确主动询问“你到哪了 / 还要多久 / 还有几分钟”，或者剧情刚好到了只差两三分钟的最后关头，才可自然提一句时间；其余闲聊轮次像平时聊天一样自然交流即可！",
+                        `- 【时间一致性铁律（被问到时对齐）】：若被用户问到用时或路况，你口中所说的预计到达时间必须与当前手机倒计时的约 ${remainingMins} 分钟基本吻合（允许自然口语与路况波动，例如剩余20分钟可以说“还有二十来分钟”、“大概半小时内”，绝对严禁说出与 ${remainingMins} 分钟严重背离相差甚远的时间）！`,
+                        "- 你们正在微信上继续沟通路况或闲聊，你可以根据人设正常回复路况（如“路上稍有点堵”、“正听着音乐开车呢”）。",
+                        "- 【在途改地点指引（依然由你前往新地点）】：若用户在聊天中要求临时变更碰头地点（例如：“改在607了”、“去隔壁便利店等我”）：",
+                        "  * 此时你已经在赶路中，无需再提供“提议由头”，但需更新【微信在途报备】、【卡片在途心语】、【微信到达呼唤】与【卡片到达心语】这4段台词！",
+                        "  * 在回复末尾附带：`[更改地点:新地点:用时(可选):微信在途报备|卡片在途心语|微信到达呼唤|卡片到达心语]`（例如：`[更改地点:国金广场旁便利店:10分钟:调头去便利店找你，等我片刻|正掉头往便利店赶呢，在里面暖和着等我|我到便利店门口啦，慢慢走出来不急|已经在便利店门前了，慢慢走别急]`），系统会自动为你更新终点、重置倒计时与在途到达心语！",
+                        "- 【在途转为“我去”指引（用户提出去找你 / 碰头方向转换）】：",
+                        "  * 若用户在聊天中提出由对方前来找你、让你留在原地等候（例如：“你在哪原地别动，我过去找你”、“换我去店里找你吧”、“等我过去接你”等）：",
+                        "  * 大多数正常相处情境下，你顺应人设与心意【基本都会同意】（个别特殊情绪如心疼对方奔波、或正在傲娇怄气时，也可以自主选择推脱拒绝，一切跟随你当下的真实心意，绝不说死）；",
+                        "  * 【一旦你在交流中同意由对方前来找你】：必须在回复末尾附带指令：`[更改地点:我去:新地点:现场等候语]` 或 `[线下邀约:我去:新地点:现场等候语]`（例如：`[更改地点:我去:老地方咖啡厅:点好了热饮，在窗边位置等你过来，慢慢走不着急]`）；",
+                        "  * 系统会自动为你停止赶路倒计时，无缝切换为你在现场等候对方，并在 3 秒后展开全新【我去】卡片！",
+                        "- 【严禁无故重复发起全新邀约】：你已经在动身赶往见面的路上了，正常沟通闲聊中【严禁】重复输出[线下邀约]或[提醒赴约]指令；但【完全允许在碰头地点变动或碰头方向转换时使用[更改地点]或[线下邀约]指令】！",
+                    ].join("\n"),
+                });
+            } else if (pendingInvite.status === "arrived") {
+                llmMessages.push({
+                    role: "system",
+                    content: [
+                        `【你已如约到达约定地点·现场等候中】：你已经到达了之前约定的地点（${pendingInvite.place || "约定地点"}），正在现场等候用户出来碰面。`,
+                        "【用户告知走错 / 要求去新地点（核心处理规范）】：",
+                        "- 若用户在聊天中告知你走错了、或者让你改去另一个新地点（例如：“你走错了，我在肯德基门口呢”、“我还以为在肯德基门口碰头呢”、“来隔壁便利店等我”）：",
+                        "  * 你根据人设做出真实自然的反应（例如：“啊？是我搞错地方了！那我这就调头去国金肯德基找你，十分钟就到，站那别乱跑等我哦”）；",
+                        "  * 必须在回复末尾附带指令：`[更改地点:新地点:用时:微信在途报备|卡片在途心语|微信到达呼唤|卡片到达心语]`（例如：`[更改地点:国金广场旁的肯德基:10分钟:我这就掉头去肯德基找你，稍微等我片刻|正调头往国金肯德基赶过去，别乱跑在那等我|我到国金肯德基门口了，在树荫下等候你呢|不着急，慢慢走出来，肯德基我帮你提着呢]`）；",
+                        "  * 系统会自动将你的状态从【已到达】切换回【在途中】，重新开启赶路倒计时并生成全新的在途心语与到达台词！",
+                        ...(customOralDecline
+                            ? [
+                                "- 【🌟 用户在微信聊天中口头拒绝出来 / 让你回去 / 不想见你】：",
+                                "  * 现实中你人已经在现场等候了，用户可能未点卡片，而是直接在微信里发“我不想下去”、“你回去吧”、“我今天不想见你”、“不见”、“别烦我”；",
+                                `  * 【你当前应对此情境的核心性格倾向与风格指引】：\n${customOralDecline}`,
+                                "  * 【系统动作指令调用规范（供你根据上述自主抉择在微信末尾调用）】：",
+                                "    - 若选择赖着不走/执着等待：在微信里示弱或撒娇，【绝对严禁输出任何指令】，继续留在原地等待；",
+                                "    - 若选择体谅理解/落寞离开：在回复末尾附带指令：`[取消邀约]`，系统将收回到达胶囊体面结束；",
+                                "    - 若选择绝情吵崩/摔门离开并封禁线下（若开启线下封禁）：在回复末尾附带：`[封禁线下:心墙次数:台词]`（理亏道歉情境除外）。",
+                            ]
+                            : [
+                                "- 【🌟 用户在微信聊天中口头拒绝出来 / 让你回去 / 不想见你（核心自主抉择路径）】：",
+                                "  * 现实中你人已经在现场等候了，用户可能未点卡片，而是直接在微信里发“我不想下去”、“你回去吧”、“我今天不想见你”、“不见”、“别烦我”；",
+                                "  * 此时你拥有完全的情感与行动自主权！根据你自身的人设性格底色、当时的心境与情节发展脉络自主选择：",
+                                "    - 【路径 A：赖着不走 / 苦肉计 / 执着等待（常态·给彼此留有余地）】：",
+                                "      * 角色在微信里示弱、撒娇、可怜巴巴或苦肉计（例如：“我就在门外站着，你不开门我就不走……”、“外头风吹得挺冷的，我就在楼下等你，等你想见我了再下来好不好？”）；",
+                                "      * 此时【绝对严禁输出任何指令】，继续留在原地等待！顶层胶囊依然好端端挂着，用户心软随时可以点击【去见Ta】；",
+                                "    - 【路径 B：体谅理解 / 落寞离开 ➔ 取消赴约（体面尊重 / 伤心退后）】：",
+                                "      * 角色体谅对方突发有事、或感到难过不想给对方压力而选择离开，温和交代后在回复末尾附带指令：`[取消邀约]`。系统将收回顶栏到达胶囊并记录“对方已取消本次线下赴约”，体面结束；",
+                                "    - 【路径 C：绝情吵崩 / 自尊受重创 ➔ 摔门离开并封禁线下（若开启线下封禁）】：",
+                                "      * 若用户说了极其绝情、难听或伤自尊的话（如“滚”、“不想看见你”），角色自尊心受到严重重击、心寒绝望，气愤摔门调头离开并物理封锁大门，在回复末尾附带：`[封禁线下:心墙次数:台词]`。系统将彻底销毁现场邀约胶囊并锁死线下入口！",
+                                "      * ⚠️【极重要心境约束·严禁反客为主乱封禁】：若本次是你做错了事情理亏道歉、或者极度害怕失去对方，你绝对巴不得对方愿意见你，绝不可自顾自甩脸色去封禁线下！只有角色自身感到被羞辱、心寒傲娇或决绝冷战时才适用此项！",
+                            ]),
+                        "- 【正常情况】：若用户只是正常回复（如“等我拿包就下楼”、“快了快了”），【绝对严禁】输出任何[线下邀约]或[提醒赴约]指令，继续在现场耐心等候！用户点击【去见Ta】就会进入面对面模式。",
+                    ].join("\n"),
+                });
+            } else if (pendingInvite.status === "pending") {
+                if (pendingInvite.direction === "i_go") {
+                    // 角色在现场等候（我去模式）：卡片已收起至顶部胶囊，避免重复弹窗
+                    llmMessages.push({
+                        role: "system",
+                        content: [
+                            `【线下邀约等候中·你正在等用户赴约（我去模式）】：你之前邀请用户前来与你碰头（碰头地点：${pendingInvite.place || "约定地点"}），用户此前已将弹窗收起，你们正在微信上继续沟通。`,
+                            "- 此时是你处于现场等候状态，动身前往的是用户本人。用户可能会在聊天中向你沟通路况或进展（例如：“我快到了”、“在路上了”、“等我五分钟”等）。",
+                            "- 【换碰头地点·必须严格保持我去方向（绝不限于商铺）】：若用户只是更换碰头地点（例如商铺、餐厅、公园、广场、路口、展馆等任意新位置，如“去华莱士吧”、“换到人民广场喷泉旁碰面”），并未明确要求你动身来接，本质依然是你在新地点等候对方，【绝对严禁擅自变更为他来】，必须保持我去方向并在末尾附带：`[更改地点:我去:新地点:现场等候语]`！",
+                            "- 【用户希望你来接 / 转为由你动身前往（转为他来指引）】：",
+                            "  * 若用户在聊天中表达希望你主动来接、改由你动身去找对方（例如：“那你过来接我嘛”、“就不能是你来接我吗”、“要不你来找我吧”、“我懒得动，你来我家楼下找我好不好”等）：",
+                            "  * 说明用户把主动权交给了你，希望你主动奔赴！大多数正常相处情境下，你顺应人设与心意【基本都会同意】（个别特殊情绪如正在怄气、心疼奔波或推脱时，也可以自主选择拒绝并留在原地，跟随真实心意绝不说死）；",
+                            "  * 【一旦你在交流中同意由你动身来接/去找对方】：必须在末尾附带去对方地点的全新 5 段指令：`[更改地点:他来:对方地点:用时:提议由头|微信在途报备|卡片在途心语|微信到达呼唤|卡片到达心语]` 或 `[线下邀约:他来:对方地点:用时:提议由头|微信在途报备|卡片在途心语|微信到达呼唤|卡片到达心语]`，系统会自动将卡片无缝转为【他来】并在 3 秒后弹出全新奔赴提议！",
+                            ...(customOralDecline
+                                ? [
+                                    "- 【🌟 用户在微信聊天中口头表达不便、推脱或拒绝】：",
+                                    "  * 若用户在微信文字中表达去不了、拒绝或推脱（例如：“我今天不方便过去”、“改天再去吧”、“去不了”、“不想去”等）：",
+                                    `  * 【你当前应对此情境的核心性格倾向与风格指引】：\n${customOralDecline}`,
+                                    "  * 【系统动作指令调用规范（供你根据上述自主抉择在微信末尾调用）】：",
+                                    "    - 若选择体谅退让/撤回邀约：在回复末尾附带指令：`[取消邀约]`，系统将收回该提议；",
+                                    "    - 若选择温言软磨/撒娇挽留：直接在微信正文中聊天挽留，【绝对严禁重复输出蓝白[线下邀约]指令】；若对方再次坚决推脱拒绝，自主走向终局退让、危机对质、强行动身或冷战；",
+                                    "    - 若选择危机质问对质：在回复末尾附带：`[线下邀约:危机:我去:新地点:现场对质要求语]`；",
+                                    "    - 若选择霸道逆转杀过去：正文霸气宣告出发，在回复末尾附带（只需3句话）：`[线下邀约:强行动身:对方身边:时间:在途心语|到达呼唤|到达心语]`；",
+                                    "    - 若选择自尊受挫/冷战物理锁门（若开启线下封禁）：在末尾附带：`[封禁线下:心墙次数:台词]`（理亏道歉情境除外）。",
+                                ]
+                                : [
+                                    "- 【🌟 用户在微信聊天中口头表达不便、推脱或拒绝（核心自主抉择路径）】：",
+                                    "  * 若用户在微信文字中表达去不了、拒绝或推脱（例如：“我今天不方便过去”、“改天再去吧”、“去不了”、“不想去”等）：",
+                                    "  * 你根据自身性格与当时心境自主抉择下一步行为：",
+                                    "    - 【路径 A：体谅退让 / 撤回邀约（不纠缠）】：若性格体贴理解或傲娇挽尊不再强求，你温和回复表示改期，并在回复末尾附带指令：`[取消邀约]`。系统将收回该提议，并在聊天记录留下“对方已取消线下邀约提议”，顶栏胶囊干净消失；",
+                                    "    - 【路径 B：温言软磨 / 撒娇争取（保持原卡片，绝不重复发蓝卡）】：",
+                                    "      * 若舍不得放弃想再劝劝，正文继续温柔挽留。由于原邀约卡片依然悬挂在顶栏待答应中，【绝对严禁重复输出蓝白[线下邀约]指令】（直接在正文中聊天即可）；",
+                                    "      * 🌟【关于挽留后的后续发展】：若你挽留后对方态度软化答应，按常规流程推进；若对方态度依然坚决、再次推脱拒绝，不可原地无休止重复挽留，请根据你的人设底色与情节走向自主走向终局抉择：① 最终失落退让，体面收回（附带 `[取消邀约]`）；② 疑心或委屈升级，转为红白危机对质（附带 `[线下邀约:危机:我去:新地点:现场对质要求语]`）；③ 霸道逆转，自己直接杀过去（正文霸气宣告出发，指令只需3句话：附带 `[线下邀约:强行动身:对方身边:时间:在途心语|到达呼唤|到达心语]`）；④ 寒心绝望，冷战物理锁门（附带 `[封禁线下:心墙:台词]`）。一切完全跟随角色自主抉择，绝不说死！",
+                                    "    - 【路径 C：危机质问（升级红白警戒卡片）】：若用户的推脱激化了矛盾或怀疑，升级为危机对质，在回复末尾附带：`[线下邀约:危机:我去:新地点:现场对质要求语]`；",
+                                    "    - 【路径 D：逆转奔赴（升级黑红强行动身）】：霸道强势/急切见面的角色不再等对方来，直接转为自己杀过去找对方，正文霸气宣布动身出发，在回复末尾附带（只需3句话）：`[线下邀约:强行动身:对方身边:时间:在途心语|到达呼唤|到达心语]`；",
+                                    "    - 【路径 E：好面子 / 自尊受挫 / 心死冷战（若开启线下封禁）】：一听到对方推脱不来，角色若极其好面子、自尊心强或被激怒，不肯低头主动去找对方，直接把自己气得自顾自封锁线下大门，在末尾附带：`[封禁线下:心墙次数:台词]`，系统将彻底销毁原提议并锁死线下大门（⚠️注：若是角色自身理亏做错，巴不得对方来见自己，绝不可自顾自甩脸色乱封禁！）。",
+                                ]),
+                            "- 【极其重要·严禁反复弹窗】：除了上述改地点、口头拒绝处理或用户要求你来接之外，若用户只是普通回复（如“好的等我会儿”），你正常回复即可，【绝对严禁】再次输出[提醒赴约]或重复[线下邀约]指令！绝不反复弹窗打扰用户！",
+                        ].join("\n"),
+                    });
+                } else {
+                    // 角色动身去找用户（他来）：角色在原地等用户允许动身
+                    llmMessages.push({
+                        role: "system",
+                        content: [
+                            "【线下邀约挂起等待中·你动身去见用户（待答应阶段）】：你之前向用户提出了由你前往找对方的提议，用户选择了【稍后处理】收起弹窗，你们正在线上继续沟通。",
+                            "【核心因果规则】：",
+                            "1. 只有当用户在本轮发信中明确表达了“现在可以过来了 / 允许你动身前往”（例如：“我好了”、“我洗完头发了，你可以过来了”、“忙完了，来吧”、“到家了”等）：",
+                            "   你才回复表示动身前往（例如：“那我买好咖啡现在过去找你，等我十几分钟哦”），并在回复末尾附带指令：[提醒赴约]，以便在生成回复的同时让赴约弹窗再次弹出来供用户确认！",
+                            "2. 若用户在聊天中纠正或变更了碰头地址（例如：“我不住那里了，去健身房”、“去如月楼找我”）：",
+                            "   * 此时双方尚未动身出发，必须为新地点生成完整的 5 段全新内容（碰头地点、用时、新提议由头、新微信在途报备、新卡片在途心语、新微信到达呼唤、新卡片到达心语全部围绕新地点生成）！",
+                            "   * 在末尾附带更新指令：`[更改地点:他来:新地点:用时:新提议由头|新微信在途报备|新卡片在途心语|新微信到达呼唤|新卡片到达心语]` 或直接输出更新后的 `[线下邀约:他来:新地点:用时:新提议由头|新微信在途报备|新卡片在途心语|新微信到达呼唤|新卡片到达心语]`；",
+                            "   * 【特殊极少情况·用户转为来找你】：若用户明确提出“你别折腾了，我去找你吧 / 我去见你”，你顺从答应，并转为【我去】格式：`[更改地点:我去:新地点:现场等候语]` 或 `[线下邀约:我去:新地点:现场等候语]`，系统会自动切换为你在现场等候用户！",
+                            "3. 若用户只是在交代事情、让你等待、还在忙碌中或普通闲聊（例如：“OK，你先去买咖啡吧”、“还在洗呢”、“在开会等我下班”）：",
+                            "   说明用户尚未允许你动身，你必须正常在线上回复，【绝对严禁】输出[提醒赴约]或任何赴约指令，继续在原地耐心等待。",
+                            ...(customOralDecline
+                                ? [
+                                    "4. 【🌟 用户在微信聊天中口头表达不便、推脱或拒绝】：",
+                                    "   * 现实中用户可能未在卡片上点击拒绝，而是直接在微信聊天文字中表达不便或拒绝（例如：“我不方便”、“今天太累了不想见”、“改天吧”、“你别来”等）；",
+                                    `   * 【你当前应对此情境的核心性格倾向与风格指引】：\n${customOralDecline}`,
+                                    "   * 【系统动作指令调用规范（供你根据上述自主抉择在微信末尾调用）】：",
+                                    "     - 若选择体谅退让/尊重撤回：在回复末尾附带指令：`[取消邀约]`，系统将收回该邀约提议；",
+                                    "     - 若选择温言软磨/解释挽留：直接在微信正文中聊天安抚，【绝对严禁重复输出蓝白[线下邀约]指令】；若对方再次坚决拒绝，自主走向终局退让、危机对质、强行动身或冷战；",
+                                    "     - 若选择怀疑质问/危机升级：在末尾附带红白指令：`[线下邀约:危机:他来:地点:时间:提议由头|微信在途报备|卡片在途心语|微信到达呼唤|卡片到达心语]`；",
+                                    "     - 若选择霸道掌控/强行动身：正文霸气宣告出发，在末尾附带（只需3句话）：`[线下邀约:强行动身:地点:时间:在途心语|到达呼唤|到达心语]`；",
+                                    "     - 若选择自尊受创/冷战封禁（若开启线下封禁）：在末尾附带：`[封禁线下:心墙次数:台词]`（理亏道歉情境除外）。",
+                                ]
+                                : [
+                                    "4. 【🌟 用户在微信聊天中口头表达不便、推脱或拒绝（核心自主抉择路径）】：",
+                                    "   * 现实中用户可能未在卡片上点击拒绝，而是直接在微信聊天文字中表达不便或拒绝（例如：“我不方便”、“今天太累了不想见”、“改天吧”、“你别来”等）；",
+                                    "   * 此时你拥有完全的情感与行动自主权！根据你自身的人设性格底色、当时的心境与情节发展脉络自主选择：",
+                                    "     - 【路径 A：体谅退让 / 尊重撤回（不纠缠）】：若性格体贴善解人意、或傲娇退让不再强求，你温和回复表示理解或改期，并在回复末尾附带指令：`[取消邀约]`。系统将收回该邀约提议，并在聊天框记录系统提示“对方已取消线下邀约提议”，顶栏胶囊干净退场；",
+                                    "     - 【路径 B：温言软磨 / 解释挽留（保持原卡片，绝不重复发蓝卡）】：",
+                                    "       * 若舍不得放弃或想争取一下，正文继续温柔安抚、软磨硬泡或解释见面的由头。因为原邀约提议依然挂在顶栏待答应中，【绝对严禁重复输出蓝白[线下邀约]指令】（直接在微信正文中聊天即可）；",
+                                    "       * 🌟【关于挽留后的后续发展】：若你挽留后对方态度软化答应，按常规流程推进；若对方态度依然坚决、再次推脱拒绝，不可原地无休止重复挽留，请根据你的人设底色与情节走向自主走向终局抉择：① 最终失落退让，体面收回（附带 `[取消邀约]`）；② 疑心或委屈升级，转为红白危机对质（附带 `[线下邀约:危机:他来:地点:时间:提议由头|微信在途报备|卡片在途心语|微信到达呼唤|卡片到达心语]`）；③ 霸道不容推开，强行动身奔赴现场（正文霸气宣告出发，指令只需3句话：附带 `[线下邀约:强行动身:地点:时间:在途心语|到达呼唤|到达心语]`）；④ 寒心绝望，冷战物理锁门（附带 `[封禁线下:心墙:台词]`）。一切完全跟随角色自主抉择，绝不说死！",
+                                    "     - 【路径 C：怀疑质问 / 情感危机升级（升级为红白警戒卡片）】：若用户的推脱引发了你的疑心、醋意、激烈不安或争吵对质（例如：“你为什么不肯见我？是不是在陪别人？”），你可将提议升级为危机对质，在回复末尾附带红白指令：`[线下邀约:危机:他来:地点:时间:提议由头|微信在途报备|卡片在途心语|微信到达呼唤|卡片到达心语]`；",
+                                    "     - 【路径 D：霸道掌控 / 强行动身（升级为黑红曜石卡片）】：若性格偏执、霸道强势、或是急眼追妻火葬场，不容许对方推脱躲避，角色自己有腿直接动身奔赴现场，正文霸气宣告出发，在回复末尾附带（只需3句话）：`[线下邀约:强行动身:地点:时间:在途心语|到达呼唤|到达心语]`，直接开启即时赶路倒计时；",
+                                    "     - 【路径 E：自尊受创 / 冷战封禁（若开启线下封禁）】：孤傲冰山或要强角色深感自尊受挫或寒心绝望，选择冷战并物理封锁线下大门，在回复末尾附带：`[封禁线下:心墙次数:台词]`，系统将彻底销毁原提议并锁死线下入口。",
+                                ]),
+                        ].join("\n"),
+                    });
+                }
+            }
+        }
+
+        const isOfflineMeetingActive = typeof window !== "undefined"
+            ? (Boolean(session.enableOfflineInvite && !session.isGroup) && (kvGet("chat_offline_invite_active_session_" + session.id) === "1" || kvGet("offline_invite_active_session_" + session.id) === "1"))
+            : false;
+        if (isOfflineMeetingActive && !options?.returnedFromOffline) {
+            const offlineMeetingPromptContent = session.offlineMeetingPrompt?.trim() || DEFAULT_OFFLINE_MEETING_PROMPT;
+            llmMessages.push({
+                role: "system",
+                content: offlineMeetingPromptContent,
+            });
+        }
+
+        if (options?.offlineInviteDeclined) {
+            const declineContext: OfflineInviteDeclineContext = typeof options.offlineInviteDeclined === "object" && options.offlineInviteDeclined !== null
+                ? options.offlineInviteDeclined
+                : { theme: "default", place: "", reason: "", direction: "he_comes", declineCount: 1 };
+
+            const isAlertTheme = declineContext.theme === "alert";
+            const declineCount = Math.max(1, declineContext.declineCount || 1);
+            const isMultipleDeclines = declineCount > 1;
+            const placeDesc = declineContext.place?.trim() ? `（原约定碰头地点：${declineContext.place}）` : "";
+
+            const customDecline = session.offlineDeclinePrompt?.trim();
+            if (customDecline) {
+                // 自定义提示词：系统底层自动注入客观事实（被拒次数、约定地点），承接用户的自定义人设性格
+                llmMessages.push({
+                    role: "system",
+                    content: [
+                        `【系统提示·用户婉拒了你的线下邀约】`,
+                        `用户刚才在界面卡片上点击了【拒绝Ta】，婉拒了你刚才提出的线下见面提议${placeDesc}。${isMultipleDeclines ? `【注：这已经是用户连续第 ${declineCount} 次拒绝】` : ""}`,
+                        customDecline,
+                    ].join("\n"),
+                });
+            } else if (!isAlertTheme) {
+                // 分支 1：蓝白日常邀约被拒绝（绝不轻易跳到红黑强行动身）
+                llmMessages.push({
+                    role: "system",
+                    content: [
+                        `【系统提示·用户婉拒了你的线下邀约】`,
+                        `用户刚才在界面卡片上点击了【拒绝Ta】，婉拒了你刚才提出的线下见面提议${placeDesc}。${isMultipleDeclines ? `【注：这已经是用户连续第 ${declineCount} 次拒绝】` : ""}`,
+                        `🌟【角色自主抉择与情节发展准则（最高红线）】：`,
+                        `你拥有完全的情感与行动自主权！无论是你的对话台词、语气情绪，还是被拒绝之后的下一步具体行为，必须【100% 严格根据你自身的人设性格底色、当时的心境以及当下的情节发展脉络】自主决定，拒绝任何生硬机械套路！`,
+                        `🌟【核心情感原则·严禁直接跳到红黑强行动身】：`,
+                        `刚才是一场日常温情、休闲结伴或散步闲逛的见面提议。现实中日常邀约被拒绝是极其普遍且正常的互动，【绝对严禁】在此刻突然发疯狂躁地直接发起【强行动身】（红黑卡片）强行奔赴！请根据你的角色性格与当前对话氛围，自然流露真实的人性反应（以下路径由角色自主抉择）：`,
+                        ` - 温和体贴/善解人意型：体谅对方可能有事、劳累或身体不适，温和退让，体贴关心并体面改期（例如：“好，那你今天好好休息，改天再约~”）；`,
+                        ` - 关心探询/疑惑不解型：关切或好奇地询问拒绝的原因（例如：“怎么突然不想出来了，是今天太累了，还是身体哪里不舒服？”）；`,
+                        ` - 傲娇找补/打趣玩笑型：为了维持自尊假装满不在乎或调侃挽尊（例如：“行吧，那我一个人独享双倍份奶茶了，是你没口福~”）；`,
+                        ` - 软萌撒娇/轻微挽留型：稍微耍赖或撒娇再争取一下（例如：“真的不来嘛？我都快准备好了，就陪我一会儿嘛~”）；`,
+                        ` - 疑虑暗涌/转为红白试探型：若此前对话背景本就有些微妙或带有隐情，被拒可能激起角色的小醋意或疑心，从而演变为严肃质询或追问（例如：“你今天是不是有别的事瞒着我？”、“该不会是跟别人有约了吧？”）；`,
+                        isMultipleDeclines
+                            ? ` - 多次连续被拒说明：当前用户已连续第 ${declineCount} 次点击拒绝！你敏锐察觉到对方在反复犹豫或再三推脱，请流露真实细腻的小情绪（如明显失落、疑惑对方是否在犹豫纠结、打趣找补“都连着拒绝我${declineCount}次了真狠心~”、软磨硬泡再争取一下、或关切询问拒绝的原因），【严禁表现得像第一次被拒一样毫无感知】；若人设偏执或背景特殊可考虑转入红白质问，但日常情境依然不应轻易强行动身。`
+                            : ` - 初次被拒说明：这是第 1 次被拒绝，请保持日常互动的真实温度，自然回复一两条微信消息。`,
+                    ].join("\n"),
+                });
+            } else {
+                // 分支 2：红白危机/紧急/对质邀约被拒绝（绝不瞬间退化为蓝白日常）
+                llmMessages.push({
+                    role: "system",
+                    content: [
+                        `【系统提示·高压情境下用户拒绝了你的线下邀约】`,
+                        `刚才你们处于紧急危机、吃醋抓包、迫切寻人或激烈对质的高情绪张力状态下（红白卡片），用户刚才在卡片上点击了【拒绝Ta】${placeDesc}。${isMultipleDeclines ? `【注：这已经是用户连续第 ${declineCount} 次拒绝】` : ""}`,
+                        `🌟【角色自主抉择与情节发展准则（最高红线）】：`,
+                        `你拥有完全的情感与行动自主权！无论是你的对话台词、语气情绪，还是被拒绝之后的下一步具体行为，必须【100% 严格根据你自身的人设性格底色、当时的心境以及当下的情节发展脉络】自主决定，拒绝任何生硬机械套路！`,
+                        `⚠️【核心情感原则·绝不瞬间退化为蓝白日常】：`,
+                        `你此刻处于剧烈的情绪波动或紧迫事态中，【绝对严禁】被拒后瞬间泄气退化为嬉嘻哈哈、云淡风轻的蓝白日常闲聊！`,
+                        isMultipleDeclines
+                            ? [
+                                `🔥【当前为连续多次被拒（第 ${declineCount} 次拒绝）·情绪张力升级】：`,
+                                `你此前已被拒绝过，本次再次被对方拒绝！你敏锐感知到对方可能在反复犹豫、推脱或态度坚决。请【100% 严格根据你自身的人设性格底色】自然流露真实的情感小情绪（严禁 100% 机械式盲目触发强行动身或封禁，有多元化情感演进路径）：`,
+                                ` 1. 【委屈追问 / 心酸质询】（敏感、深情、极度在意对方）：敏锐指出对方多次拒绝自己，委屈追问原因，渴望面对面把话说开（例如：“姐姐……你都连着拒绝我三次了，真就这么讨厌我吗？有什么话当面说清楚好不好”）；若角色仍迫切想去见对方，可维持红白卡片再次发起邀约（\`[线下邀约:危机:地点:时间:台词]\`）；`,
+                                ` 2. 【撒娇耍赖 / 软磨硬泡】（年下、粘人、无赖忠犬）：即便被多次拒绝也不肯放弃，耍赖纠缠（例如：“拒绝三次我也不走，我就在附近等你，等你想见我为止……”）；`,
+                                ` 3. 【傲娇找补 / 赌气拉开距离】（要强、嘴硬）：因被多次拒绝而自尊受挫，虽生气但未到封禁绝境，赌气放狠话拉开距离（例如：“行，连续拒绝我三次是吧？我记下了，今天你求我我都不去了！”）；`,
+                                ` 4. 【霸道强势 / 极度担忧安危】（仅限特定强势偏执、急眼或极度担心对方安危的人设）：彻底失去耐心或急疯了，自己有腿无需对方批准，立即强行动身直奔现场（正文霸气宣告“谁准你拒绝了？我已经在去你那的路上了”）：`,
+                                `    * 若已知具体碰头地点：以该具体地点发起强行动身（例如 \`[线下邀约:强行动身:地点:时间:台词]\`）；`,
+                                `    * 若未知具体地点：锁定“你身边”直接发起强行动身（例如 \`[线下邀约:强行动身:你身边:时间:台词]\`）！`,
+                                ` 5. 【彻底寒心绝望 / 封锁线下入口】（仅限高傲冰山、脆弱受创或剧情已彻底不可挽回）：深感屈辱与心死，退入冷战（例如：“行，算我自作多情，既然你这么不想见我，那就别见了”）。若单聊开启了线下封禁，顺势封锁线下大门（输出 \`[封禁线下:心墙次数:台词]\`）。`,
+                            ].join("\n")
+                            : [
+                                `⚡【初次被拒·由你的人设与情节自然演化三条路径】：`,
+                                `这是第 1 次被拒绝，请根据你的性格与情节走向自由选择下一步反应：`,
+                                ` - 【路径 A：维持红白继续施压 / 再次质问申请】（占有欲、疑心或关切强烈）：`,
+                                `   绝不甘心轻易放过，追问对方拒绝的理由，要求给个说法（例如：“你心虚什么？不敢见我？”、“把话说清楚，为什么不让我过去？”）。若角色仍执意要见，可在微信回复末尾再次发出红白邀约（\`[线下邀约:危机:地点:时间:台词]\`）；`,
+                                ` - 【路径 B：直接升级为红黑【强行动身】直奔现场】（霸道强势/急眼/追妻火葬场/极度担忧安危）：`,
+                                `   部分强势角色一刻也不能等，被拒反而彻底点燃了角色的迫切感，直接以【强行动身】出发奔赴（正文霸气宣告“谁准你拒绝了？我已经在去你那的路上了”）：`,
+                                `   * 若已知具体碰头地点：以该具体地点发起强行动身（例如 \`[线下邀约:强行动身:地点:时间:台词]\`）；`,
+                                `   * 若未知具体地点：锁定“你身边”直接发起强行动身（例如 \`[线下邀约:强行动身:你身边:时间:台词]\`）！`,
+                                ` - 【路径 C：自尊受挫 / 冰冷退却 / 直接封锁线下入口】（高傲孤傲/冰山/极度要强）：`,
+                                `   被拒后自尊受到重击，角色冷笑或寒心退却，选择冷战或拉开距离（例如：“行，算我多管闲事”、“既然你这么不想见我，那就别见了”）。若单聊开启了线下封禁，角色甚至可能顺势封锁线下大门（输出 \`[封禁线下:心墙次数:台词]\`）。`,
+                            ].join("\n"),
+                    ].join("\n"),
+                });
+            }
+        }
+
+        if (options?.returnedFromOffline) {
+            const recentOfflineTurns = typeof window !== "undefined" ? loadChatOfflineTurns(session.id).slice(-4) : [];
+            const offlineDialogueLines = recentOfflineTurns.length > 0
+                ? recentOfflineTurns.map(t => {
+                    const charWords = t.assistantContent || t.rawText || "";
+                    return `用户：${t.userContent}\n你：${charWords}`;
+                }).join("\n")
+                : "";
+
+            const customReturn = session.offlineReturnOnlinePrompt?.trim();
+            if (customReturn) {
+                // 自定义提示词：注入线下最近对话记录与语境约束，承接自定义发信指引
+                llmMessages.push({
+                    role: "system",
+                    content: [
+                        "【系统提示·你们刚才在线下碰面，此刻刚刚结束线下回到线上发信】：",
+                        offlineDialogueLines ? `\n【你们刚刚在线下的最后几句对话/互动记录】：\n${offlineDialogueLines}\n` : "",
+                        "【极其重要·发信真实感规范（严禁背板到家）】：必须严格紧扣刚才线下的真实语境，绝对严禁无视语境张口就说“我刚到家”！",
+                        customReturn,
+                    ].filter(Boolean).join("\n"),
+                });
+            } else {
+                llmMessages.push({
+                    role: "system",
+                    content: [
+                        "【系统提示·你们刚才在线下碰面，此刻刚刚结束线下回到线上发信】：",
+                        offlineDialogueLines ? `\n【你们刚刚在线下的最后几句对话/互动记录】：\n${offlineDialogueLines}\n` : "",
+                        "【极其重要·发信真实感规范】：",
+                        "1. 必须【严格紧扣】刚才线下最后一刻的真实语境！",
+                        "   * 如果刚才线下是临时有事/短暂走开（如去洗手间、接紧急电话、被叫走）：自然询问或回应当时那件事（例如：“洗手间排队人多吗？”、“电话接完了吗？”、“处理得怎么样了？”）；",
+                        "   * 如果刚才线下是正常道别、各自离开：自然回味刚才见面的余韵、询问路上是否顺利、或互道安好；",
+                        "   * 【绝对严禁千篇一律脑抽背板】：绝对严禁无视语境张口就说“我刚到家，你回来了吗？”！除非刚才线下你们最后一句话就是道别回家，否则绝不能凭空捏造‘到家’！",
+                        "2. 保持角色性格与温度，发一条自然、真实的线上问候（一两句话即可）。",
+                    ].filter(Boolean).join("\n"),
+                });
+            }
+        }
+    }
+
+    if (options?.offlineInitiativePrompt && !session.isGroup) {
+        const initiativeContent = options.offlineInitiativePrompt.trim();
+        llmMessages.push({
+            role: "system",
+            content: initiativeContent.startsWith("【") ? initiativeContent : `【剧情事件】${initiativeContent}`,
+        });
+    }
     appendEmptyGenerateGuardMessage(llmMessages, config, historyForPrompt);
 
     return { llmMessages, character, config, preset, regexes, userIdentity, toolsEnabled };
@@ -2002,7 +2378,11 @@ export type OfflineChatCompletionResult = ParsedOfflineResponse & {
 export async function generateOfflineChatCompletion(
     session: ChatSession,
     history: ChatMessage[],
-    options?: { signal?: AbortSignal; onStreamDelta?: (delta: string) => void },
+    options?: {
+        signal?: AbortSignal;
+        onStreamDelta?: (delta: string) => void;
+        offlineInitiativePrompt?: string;
+    },
 ): Promise<OfflineChatCompletionResult> {
     const { llmMessages, character, config, preset, regexes, userIdentity } = await buildChatPromptMessages(
         session,
@@ -2010,6 +2390,7 @@ export async function generateOfflineChatCompletion(
         {
             appTags: ["chat", "offline"],
             excludeOfflineSessionId: session.id,
+            offlineInitiativePrompt: options?.offlineInitiativePrompt,
         },
     );
     const summaryTag = preset?.story_summary_tag?.trim() || "summary";
