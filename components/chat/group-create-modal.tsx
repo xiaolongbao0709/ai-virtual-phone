@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { loadChatContacts } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
@@ -18,13 +18,21 @@ export function GroupCreateModal({ onClose, onCreate }: GroupCreateModalProps) {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [groupName, setGroupName] = useState("");
     const [isSpectator, setIsSpectator] = useState(false);
+    const [memberFilter, setMemberFilter] = useState("");
 
-    const contacts = loadChatContacts();
+    // 建群成员来自整个角色库（含 NPC/配角），不再要求先加为好友。
+    // 拉进群只写 participantIds（见 createGroupSession），不会建立联系人关系。
     const chars = loadCharacters();
 
-    const enriched = contacts
-        .map(c => ({ ...c, char: chars.find(ch => ch.id === c.characterId) }))
-        .filter(c => c.char) as (typeof contacts[number] & { char: Character })[];
+    const contactIdSet = useMemo(
+        () => new Set(loadChatContacts().map(c => c.characterId)),
+        [],
+    );
+
+    const keyword = memberFilter.trim().toLowerCase();
+    const enriched = chars
+        .filter(char => !keyword || (char.name || "").toLowerCase().includes(keyword))
+        .map(char => ({ characterId: char.id, char }));
 
     const toggle = (id: string) => {
         setSelectedIds(prev => {
@@ -49,12 +57,23 @@ export function GroupCreateModal({ onClose, onCreate }: GroupCreateModalProps) {
                 {step === "pick" ? (
                     <>
                         <span className="modal-header-title">选择群成员</span>
-                        {enriched.length === 0 ? (
-                            <span className="menu-desc">暂无联系人，请先添加好友</span>
+                        <div className="w-full">
+                            <Input
+                                value={memberFilter}
+                                onChange={e => setMemberFilter(e.target.value)}
+                                placeholder="搜索角色…"
+                                className="ui-input w-full"
+                            />
+                        </div>
+                        {chars.length === 0 ? (
+                            <span className="menu-desc">角色库为空，请先创建角色</span>
+                        ) : enriched.length === 0 ? (
+                            <span className="menu-desc">没有匹配的角色</span>
                         ) : (
                             <div className="chat-contact-list">
                                 {enriched.map(c => {
                                     const isSelected = selectedIds.has(c.characterId);
+                                    const isContact = contactIdSet.has(c.characterId);
                                     return (
                                         <div
                                             key={c.characterId}
@@ -69,6 +88,9 @@ export function GroupCreateModal({ onClose, onCreate }: GroupCreateModalProps) {
                                                 )}
                                             </div>
                                             <span className="chat-contact-name">{c.char.name}</span>
+                                            {!isContact && (
+                                                <span className="ts-10 text-[var(--c-icon)]">非好友</span>
+                                            )}
                                         </div>
                                     );
                                 })}
