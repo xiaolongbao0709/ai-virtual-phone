@@ -21,7 +21,7 @@ import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkBreaks from "remark-breaks";
 import { createPortal } from "react-dom";
-import { Blocks, Maximize2, ReceiptText } from "lucide-react";
+import { Blocks, ArrowUpToLine, Maximize2, ReceiptText } from "lucide-react";
 import { retryChatGeneratedImage } from "@/lib/generated-image-retry";
 import { hasCharacterReferenceImage } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
@@ -45,6 +45,7 @@ interface MessageBubbleProps {
     onActionSelect?: (text: string) => void;
     displayContent?: string;
     defaultTranslationExpanded?: boolean;
+    onJumpToMessage?: (messageId: string) => void;
 }
 
 /** 聊天插件自定义消息气泡：把裸 DOM 容器交给注册了该 kind 的插件渲染 */
@@ -88,7 +89,7 @@ function PluginKindBubble({ msg, kind }: { msg: ChatMessage; kind: string }) {
  * Renders a message bubble based on its mediaType.
  * Falls back to ReactMarkdown for plain text messages.
  */
-export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charName, userName, onSystemMessage, groupSize, onShowDetail, characterId, onMusicPlay, onActionSelect, displayContent, defaultTranslationExpanded = false }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charName, userName, onSystemMessage, groupSize, onShowDetail, characterId, onMusicPlay, onActionSelect, displayContent, defaultTranslationExpanded = false, onJumpToMessage }: MessageBubbleProps) {
     switch (msg.mediaType) {
         case "red_packet":
             return <RedPacketBubble msg={msg} charName={charName} userName={userName} groupSize={groupSize} onShowDetail={onShowDetail} />;
@@ -113,7 +114,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         case "dice":
             return <DiceBubble msg={msg} />;
         case "quote":
-            return <QuoteBubble msg={msg} displayContent={displayContent} defaultTranslationExpanded={defaultTranslationExpanded} />;
+            return <QuoteBubble msg={msg} displayContent={displayContent} defaultTranslationExpanded={defaultTranslationExpanded} onJumpToMessage={onJumpToMessage} />;
         case "music_share":
             return <MusicShareBubble msg={msg} onPlay={onMusicPlay} />;
         case "media_file":
@@ -1595,13 +1596,22 @@ function StickerBubble({ msg, characterId }: { msg: ChatMessage; characterId?: s
 
 // ── Quote ─────────────────────────────
 
-function QuoteBubble({ msg, displayContent, defaultTranslationExpanded = false }: { msg: ChatMessage; displayContent?: string; defaultTranslationExpanded?: boolean }) {
+function QuoteBubble({ msg, displayContent, defaultTranslationExpanded = false, onJumpToMessage }: { msg: ChatMessage; displayContent?: string; defaultTranslationExpanded?: boolean; onJumpToMessage?: (messageId: string) => void }) {
     const d = msg.mediaData;
+    const canJump = Boolean(d?.quoteMessageId && onJumpToMessage);
     return (
         <div className="chat-quote-message max-w-full">
             {d?.quotePreview && (
-                <div className="chat-quote-preview bg-black/[0.06] border-l-[3px] border-l-black/15 px-2.5 py-1.5 ts-12 text-[var(--c-icon)] mb-1.5 rounded-r-[6px] truncate max-w-full">
-                    {d.quotePreview}
+                <div
+                    onClick={canJump ? (e) => {
+                        e.stopPropagation();
+                        onJumpToMessage?.(d!.quoteMessageId!);
+                    } : undefined}
+                    className={`chat-quote-preview bg-black/[0.06] border-l-[3px] border-l-black/15 px-2.5 py-1.5 ts-12 text-[var(--c-icon)] mb-1.5 rounded-r-[6px] max-w-full flex items-center justify-between gap-1.5 ${canJump ? "cursor-pointer active:opacity-70 hover:bg-black/[0.09] transition-colors" : ""}`}
+                    title={canJump ? "点击定位到原文" : undefined}
+                >
+                    <span className="truncate flex-1">{d.quotePreview}</span>
+                    {canJump && <ArrowUpToLine size={13} strokeWidth={2.2} className="shrink-0 ml-1 text-inherit opacity-85" />}
                 </div>
             )}
             {msg.content && <TextBubble content={displayContent ?? msg.content} defaultTranslationExpanded={defaultTranslationExpanded} />}

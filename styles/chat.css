@@ -1238,9 +1238,25 @@
 .chat-msg-wrapper[data-role="system"],
 .chat-msg-wrapper[data-role="poke"] { justify-content: center; }
 .chat-msg-wrapper[data-active] { z-index: 45; }
-.chat-msg-wrapper[data-highlight] {
-  outline: 2px solid var(--c-icon-active);
-  outline-offset: 4px;
+.chat-msg-wrapper::before {
+  content: "";
+  position: absolute;
+  inset: -4px -8px;
+  border-radius: 10px;
+  background-color: color-mix(in srgb, var(--c-action-blue, #246bfd) 10%, #ffffff);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 0;
+  transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.chat-msg-wrapper[data-highlight]::before {
+  opacity: 0.85;
+  transition: none;
+}
+.chat-msg-wrapper > * {
+  position: relative;
+  z-index: 1;
 }
 .chat-msg-wrapper[data-multi-select] {
   padding-left: 36px;

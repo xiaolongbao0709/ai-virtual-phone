@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, Fragment, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled, getChatMessageQuoteSummary, getChatInputQuoteBarText } from "@/lib/chat-storage";
 import { cleanStreamText, splitStreamPreviewSegments, stripLiteralTexts, stripXmlTagBlocks } from "@/lib/stream-preview";
 import type { StateValue } from "@/lib/chat-storage";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
@@ -52,7 +52,7 @@ import { useKeyboardDismissAutoSend } from "@/components/chat/use-keyboard-dismi
 import { cancelBailoutKey } from "@/lib/push-bailout-client";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import type { UserIdentity } from "@/components/settings/user-identity";
-import { AlertCircle, Blocks, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, Languages, Loader2, MoreHorizontal, X } from "lucide-react";
+import { AlertCircle, Blocks, Check, Trash2, User, ChevronLeft, ChevronRight, ChevronsDown, Clapperboard, Clock, Gift, Languages, Loader2, MoreHorizontal, X } from "lucide-react";
 import { setDebugChatState } from "@/lib/debug-store";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { setChatActive } from "@/lib/music-action-queue";
@@ -628,8 +628,10 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onStopGeneration: () => void;
     onTriggerAIResponse: () => void;
 	onSendSticker: (name: string, url?: string) => void;
+    userName?: string;
 }>(function ChatTextInputBar({
     characterName,
+    userName,
     characterId,
     stickerCharacterIds,
     isGroup,
@@ -760,7 +762,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
             {quotingMessage && (
                 <div className="chat-quote-bar">
                     <div className="flex-1 ts-12 text-[var(--c-icon)] overflow-hidden text-ellipsis whitespace-nowrap">
-                        引用 {quotingMessage.role === "user" ? "你" : characterName}: {quotingMessage.content.slice(0, 40)}
+                        {getChatInputQuoteBarText(quotingMessage, quotingMessage.role === "user" ? (userName || "User") : (quotingMessage.senderName || characterName)).slice(0, 50)}
                     </div>
                     <button onClick={onClearQuote} className="ui-bare-btn text-[var(--c-icon)] ts-16 leading-none p-[2px]">✕</button>
                 </div>
@@ -1331,6 +1333,63 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const longPressTriggeredRef = useRef(false);
 
     const scrollRef = useRef<HTMLDivElement>(null);
+    const [showScrollBottom, setShowScrollBottom] = useState(false);
+    const showScrollBottomRef = useRef(false);
+    const lastScrollTopRef = useRef(0);
+    const scrollUpAnchorRef = useRef<number | null>(null);
+
+    const handleChatScroll = useCallback(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        const currentTop = el.scrollTop;
+        const distanceFromBottom = el.scrollHeight - currentTop - el.clientHeight;
+
+        if (distanceFromBottom <= 120) {
+            scrollUpAnchorRef.current = null;
+            if (showScrollBottomRef.current) {
+                showScrollBottomRef.current = false;
+                setShowScrollBottom(false);
+            }
+            lastScrollTopRef.current = currentTop;
+            return;
+        }
+
+        const lastTop = lastScrollTopRef.current;
+        if (currentTop < lastTop) {
+            scrollUpAnchorRef.current = currentTop;
+            if (showScrollBottomRef.current) {
+                showScrollBottomRef.current = false;
+                setShowScrollBottom(false);
+            }
+        } else if (currentTop > lastTop) {
+            const anchor = scrollUpAnchorRef.current ?? lastTop;
+            if (distanceFromBottom > 200 && currentTop - anchor > 15) {
+                if (!showScrollBottomRef.current) {
+                    showScrollBottomRef.current = true;
+                    setShowScrollBottom(true);
+                }
+            }
+        }
+
+        lastScrollTopRef.current = currentTop;
+    }, []);
+
+    const scrollToBottomInstant = useCallback(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+        scrollUpAnchorRef.current = null;
+        if (showScrollBottomRef.current) {
+            showScrollBottomRef.current = false;
+            setShowScrollBottom(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        setShowScrollBottom(false);
+        showScrollBottomRef.current = false;
+        scrollUpAnchorRef.current = null;
+    }, [session.id]);
     const mountedRef = useRef(true);
     const isGeneratingRef = useRef(false);
     const visibleMessagesRef = useRef<ChatMessage[]>([]);
@@ -1985,7 +2044,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             const target = targetId ? document.getElementById(`message-${targetId}`) as HTMLElement | null : null;
             if (targetId && target) {
                 pendingSearchJumpRef.current = null;
-                scrollElementWithinContainer(el, target, { behavior: "smooth", block: "center" });
+                const containerRect = el.getBoundingClientRect();
+                const targetRect = target.getBoundingClientRect();
+                const verticalDistance = Math.abs(targetRect.top - containerRect.top);
+                const behavior: ScrollBehavior = verticalDistance > 2500 ? "auto" : "smooth";
+                scrollElementWithinContainer(el, target, { behavior, block: "center" });
                 flashMessageHighlight(targetId);
             } else {
                 pendingSearchJumpRef.current = null;
@@ -3951,9 +4014,20 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
         // If quoting a message, send as quote type
         const isQuoting = !!quotingMessage;
+        let quotePreviewText = "";
+        if (quotingMessage) {
+            const summary = getChatMessageQuoteSummary(quotingMessage);
+            const resolvedUserName = userIdentity?.name?.trim() || "User";
+            const senderName = quotingMessage.role === "user"
+                ? resolvedUserName
+                : (session.isGroup
+                    ? (quotingMessage.senderName || (quotingMessage.senderCharacterId ? groupCharacters.find(c => c.id === quotingMessage.senderCharacterId)?.name : null) || character?.name || "群成员")
+                    : (character?.name || "对方"));
+            quotePreviewText = `${senderName}：${summary}`.slice(0, 60);
+        }
         const quoteData = quotingMessage ? {
             quoteMessageId: quotingMessage.id,
-            quotePreview: quotingMessage.content.slice(0, 50),
+            quotePreview: quotePreviewText,
             quoteRole: quotingMessage.role,
         } : undefined;
         setQuotingMessage(null);
@@ -4911,6 +4985,17 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     {m.mediaType === "audio" && m.mediaData?.label && (
                         <button onClick={() => { setVoiceTextIds(prev => { const next = new Set(prev); if (next.has(m.id)) next.delete(m.id); else next.add(m.id); return next; }); setActiveMessageId(null); }} className="ctx-menu-btn">转文字</button>
                     )}
+                    {m.mediaType === "quote" && m.mediaData?.quoteMessageId && (
+                        <button
+                            onClick={() => {
+                                jumpToStoredMessage(m.mediaData!.quoteMessageId!);
+                                setActiveMessageId(null);
+                            }}
+                            className="ctx-menu-btn"
+                        >
+                            定位到原文
+                        </button>
+                    )}
                     {m.role === "user" && (
                         <button onClick={() => handleRetractMessage(storedMessageId)} className="ctx-menu-btn">撤回消息</button>
                     )}
@@ -5453,6 +5538,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 ref={scrollRef}
                 className="page-body chat-room-main-pane flex flex-col gap-4 chat-scroll-anchored"
                 onScroll={(e) => {
+                    handleChatScroll();
                     if (activeMessageId || activeOfflineTarget) closeContextMenu();
                 }}
                 onPointerDown={(e) => {
@@ -6034,6 +6120,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                 onMusicPlay={handleMusicCardPlay}
                                                 onActionSelect={(text) => chatTextInputRef.current?.appendText(text)}
                                                 defaultTranslationExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                                                onJumpToMessage={jumpToStoredMessage}
                                             />
                                         </div>
                                         </div>}
@@ -6226,6 +6313,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             <ChatTextInputBar
                 ref={chatTextInputRef}
                 characterName={character?.name || "对方"}
+                userName={userIdentity?.name?.trim() || "User"}
                 characterId={session.contactId}
 	                stickerCharacterIds={session.isGroup ? session.participantIds : undefined}
 	                isGroup={!!session.isGroup}
@@ -6257,6 +6345,24 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 onSendSticker={(name, url) => { setShowStickerPanel(false); sendRichMessage("sticker", { label: name, stickerUrl: url }); }}
             />
             ))}
+
+            {/* 回到底部悬浮按钮（QQ同款传送带双折角图标，蹦地瞬间触底） */}
+            <button
+                type="button"
+                onClick={scrollToBottomInstant}
+                aria-label="回到底部"
+                title="回到底部"
+                className={`chat-scroll-bottom-btn chat-room-main-pane absolute right-3.5 z-20 flex items-center justify-center w-[36px] h-[36px] rounded-full shadow-[0_4px_14px_rgba(0,0,0,0.12)] border border-[var(--c-border,rgba(0,0,0,0.08))] bg-[var(--c-card,#fff)]/92 backdrop-blur-md text-[var(--c-icon,#4b5563)] active:scale-90 hover:bg-[var(--c-card,#fff)] transition-all duration-200 ${
+                    showScrollBottom && !isMultiSelectMode && !showSettings
+                        ? "opacity-100 translate-y-0 pointer-events-auto"
+                        : "opacity-0 translate-y-2 pointer-events-none"
+                }`}
+                style={{
+                    bottom: `calc(var(--chat-bottom-reserve, 120px) + 12px)`,
+                }}
+            >
+                <ChevronsDown size={19} strokeWidth={2.4} className="text-[var(--c-icon,#4b5563)]" />
+            </button>
 
             {showConfirmMultiDelete && (
                 <ConfirmDialog
