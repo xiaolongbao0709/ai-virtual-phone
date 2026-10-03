@@ -162,6 +162,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const [notifChecking, setNotifChecking] = useState(false);
     const [showPushSettings, setShowPushSettings] = useState(false);
     const [enterToSendEnabled, setEnterToSendEnabled] = useState(false);
+    const [offlineEnterToSendEnabled, setOfflineEnterToSendEnabled] = useState(false);
     const [callVibrationEnabled, setCallVibrationEnabled] = useState(true);
     const [userStats, setUserStats] = useState({ chats: 0, moments: 0, visitors: 1234 });
     const [walletSummary, setWalletSummary] = useState(() => {
@@ -178,6 +179,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
         const browserGranted = isBrowserNotificationGranted();
         setNotifEnabled(settings.browserNotificationsEnabled === true && browserGranted);
         setEnterToSendEnabled(settings.enterToSendEnabled === true);
+        setOfflineEnterToSendEnabled(settings.offlineEnterToSendEnabled === true);
         setCallVibrationEnabled(settings.callVibrationEnabled !== false);
         if (settings.browserNotificationsEnabled === true && !browserGranted) {
             setNotifHint(readBrowserNotificationPermissionHint());
@@ -244,6 +246,11 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const handleEnterToSendToggle = (enabled: boolean) => {
         setEnterToSendEnabled(enabled);
         saveChatAppSettings({ ...loadChatAppSettings(), enterToSendEnabled: enabled });
+    };
+
+    const handleOfflineEnterToSendToggle = (enabled: boolean) => {
+        setOfflineEnterToSendEnabled(enabled);
+        saveChatAppSettings({ ...loadChatAppSettings(), offlineEnterToSendEnabled: enabled });
     };
 
     const handleCallVibrationToggle = (enabled: boolean) => {
@@ -432,10 +439,19 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                         <div className="flex items-center gap-3 py-3 w-full border-b border-[color-mix(in_srgb,var(--c-card-border)_20%,transparent)]">
                             <Keyboard size={18} className="text-[var(--c-icon)] opacity-70" strokeWidth={1.25}/>
                             <div className="flex flex-col flex-1 text-left gap-0.5">
-                                <span className="ts-14 font-semibold text-[var(--c-text-title)]">回车发送</span>
+                                <span className="ts-14 font-semibold text-[var(--c-text-title)]">回车发送 · 线上</span>
                                 <span className="ts-11 text-[var(--c-text)] opacity-70">开启后 Enter 发送，Shift+Enter 换行</span>
                             </div>
                             <Toggle checked={enterToSendEnabled} onChange={handleEnterToSendToggle} />
+                        </div>
+
+                        <div className="flex items-center gap-3 py-3 w-full border-b border-[color-mix(in_srgb,var(--c-card-border)_20%,transparent)]">
+                            <Keyboard size={18} className="text-[var(--c-icon)] opacity-70" strokeWidth={1.25}/>
+                            <div className="flex flex-col flex-1 text-left gap-0.5">
+                                <span className="ts-14 font-semibold text-[var(--c-text-title)]">回车发送 · 线下</span>
+                                <span className="ts-11 text-[var(--c-text)] opacity-70">关闭后 Enter 换行，方便撰写长篇或多段回复</span>
+                            </div>
+                            <Toggle checked={offlineEnterToSendEnabled} onChange={handleOfflineEnterToSendToggle} />
                         </div>
 
                         <div className="flex items-center gap-3 py-3 w-full border-b border-[color-mix(in_srgb,var(--c-card-border)_20%,transparent)]">

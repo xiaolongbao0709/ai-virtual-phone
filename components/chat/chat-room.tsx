@@ -1128,6 +1128,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [callInitiatorName, setCallInitiatorName] = useState<string>("");
     const [userIdentity, setUserIdentity] = useState<UserIdentity | null>(null);
     const [enterToSendEnabled, setEnterToSendEnabled] = useState(() => loadChatAppSettings().enterToSendEnabled === true);
+    // Online and offline chat can use different Enter-to-send preferences.
+    const [offlineEnterToSendEnabled, setOfflineEnterToSendEnabled] = useState(() => loadChatAppSettings().offlineEnterToSendEnabled === true);
 
     // Rich media input modals
     const [richModal, setRichModal] = useState<RichModalKind | null>(null);
@@ -1144,7 +1146,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
     useEffect(() => {
         const syncEnterToSend = () => {
-            setEnterToSendEnabled(loadChatAppSettings().enterToSendEnabled === true);
+            const settings = loadChatAppSettings();
+            setEnterToSendEnabled(settings.enterToSendEnabled === true);
+            setOfflineEnterToSendEnabled(settings.offlineEnterToSendEnabled === true);
         };
         window.addEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, syncEnterToSend);
         return () => window.removeEventListener(CHAT_APP_SETTINGS_UPDATED_EVENT, syncEnterToSend);
@@ -6215,7 +6219,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     isOfflineGenerating={isOfflineGenerating}
                     isSpectator={!!session.isGroup && !!session.isSpectator}
                     showEmojiPanel={showEmojiPanel}
-                    enterToSendEnabled={enterToSendEnabled}
+                    enterToSendEnabled={offlineEnterToSendEnabled}
                     onToggleOfflineMode={toggleOfflineMode}
                     onCloseEmojiPanel={() => setShowEmojiPanel(false)}
                     onToggleEmojiPanel={() => { setShowEmojiPanel(!showEmojiPanel); setShowStickerPanel(false); setShowPlusMenu(false); }}

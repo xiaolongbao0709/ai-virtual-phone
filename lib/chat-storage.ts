@@ -267,6 +267,7 @@ export type ChatAppSettings = {
     quickActionEnabled?: boolean; // When true, show the floating quick action entry
     browserNotificationsEnabled?: boolean; // When true, send browser Notification API alerts when page is hidden
     enterToSendEnabled?: boolean; // When true, Enter sends chat input and Shift+Enter inserts a newline
+    offlineEnterToSendEnabled?: boolean; // Independent Enter-to-send preference for offline chat
     callVibrationEnabled?: boolean; // 语音/视频来电等待接听时循环振动（默认开；iOS 网页不支持振动则无效果）
     maxToolRounds?: number; // 单条消息的工具循环轮数上限（默认 5；每轮=一次模型请求，轮内调用条数不限）
     floatingDockEnabled?: boolean; // 悬浮球贴边半隐藏收拢模式（默认关）
@@ -551,6 +552,7 @@ const DEFAULT_CHAT_APP_SETTINGS: ChatAppSettings = {
     promptViewerEnabled: false,
     quickActionEnabled: false,
     enterToSendEnabled: false,
+    offlineEnterToSendEnabled: false,
     floatingDockEnabled: false,
 };
 
@@ -1683,7 +1685,15 @@ export function loadChatAppSettings(): ChatAppSettings {
     if (typeof window === "undefined") return DEFAULT_CHAT_APP_SETTINGS;
     try {
         const raw = kvGet(SETTINGS_KEY);
-        return raw ? { ...DEFAULT_CHAT_APP_SETTINGS, ...JSON.parse(raw) } : DEFAULT_CHAT_APP_SETTINGS;
+        if (!raw) return DEFAULT_CHAT_APP_SETTINGS;
+        const saved = JSON.parse(raw);
+        const settings = { ...DEFAULT_CHAT_APP_SETTINGS, ...saved };
+        // Existing users keep their previous offline input behavior until they
+        // explicitly change it; an explicitly saved false must remain false.
+        settings.offlineEnterToSendEnabled = typeof saved?.offlineEnterToSendEnabled === "boolean"
+            ? saved.offlineEnterToSendEnabled
+            : settings.enterToSendEnabled === true;
+        return settings;
     } catch {
         return DEFAULT_CHAT_APP_SETTINGS;
     }
