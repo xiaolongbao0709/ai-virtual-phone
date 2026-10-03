@@ -85,10 +85,22 @@ export function saveChatOfflineTurns(sessionId: string, turns: ChatOfflineTurn[]
         .filter((turn): turn is ChatOfflineTurn => Boolean(turn))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     kvSet(storageKey(sessionId), JSON.stringify(normalized));
+    dispatchOfflineTurnsChanged(sessionId);
 }
 
 export function clearChatOfflineTurns(sessionId: string): void {
     kvRemove(storageKey(sessionId));
+    dispatchOfflineTurnsChanged(sessionId);
+}
+
+/** 线下记录发生变化（新增/编辑/删除/清空）。所有写入口都会经过
+ *  saveChatOfflineTurns 或 clearChatOfflineTurns，在这里统一发事件，
+ *  未读红标（lib/chat-unread.ts）不必关心是谁写的。 */
+export const CHAT_OFFLINE_TURNS_CHANGED_EVENT = "ai-chat-offline-turns-changed";
+
+function dispatchOfflineTurnsChanged(sessionId: string): void {
+    if (typeof window === "undefined" || !sessionId) return;
+    window.dispatchEvent(new CustomEvent(CHAT_OFFLINE_TURNS_CHANGED_EVENT, { detail: { sessionId } }));
 }
 
 export function appendChatOfflineTurn(input: {

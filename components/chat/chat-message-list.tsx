@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useSyncExternalStore } from "react";
 import { ChevronLeft } from "lucide-react";
 import { loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, createGroupSession, pushChatMessage, addChatContact, loadChatMessages, getLastVisibleSessionMessage, getChatMessagePreview } from "@/lib/chat-storage";
+import { CHAT_UNREAD_CHANGED_EVENT, getChatUnreadBreakdownBySession, type ChatUnreadBreakdown } from "@/lib/chat-unread";
+import { CHAT_OFFLINE_TURNS_CHANGED_EVENT } from "@/lib/chat-offline-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { Character } from "@/lib/character-types";
 import { resolveUserIdentity } from "@/lib/settings-storage";
@@ -88,6 +90,8 @@ type ChatMessageListProps = {
 
 export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, onSelectMascot }: ChatMessageListProps) {
     const [sessions, setSessions] = useState<ChatSession[]>([]);
+    // 每条会话的未读构成（线上/线下各几条）：数字用于红标，构成用于决定底色
+    const [unreadBySession, setUnreadBySession] = useState<Record<string, ChatUnreadBreakdown>>({});
     const [listFilter, setListFilter] = useState("");
     const [listTab, setListTab] = useState<"all" | "private" | "group">("all");
     const [showPlusMenu, setShowPlusMenu] = useState(false);
@@ -150,6 +154,25 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
         return () => {
             window.removeEventListener("weixin-messages-updated", refreshSessions);
             window.removeEventListener("chat-messages-updated", refreshSessions);
+        };
+    }, []);
+
+    // 每条会话右侧的未读红标：与桌面图标同一份统计（lib/chat-unread.ts），
+    // 这样列表里的数字和图标上的总数永远对得上；底色也共用同一套语义
+    // （只有线下未读时用琥珀色，见 styles/chat.css）。
+    useEffect(() => {
+        const refreshUnread = () => setUnreadBySession(getChatUnreadBreakdownBySession());
+        refreshUnread();
+        window.addEventListener(CHAT_UNREAD_CHANGED_EVENT, refreshUnread);
+        window.addEventListener("chat-messages-updated", refreshUnread);
+        window.addEventListener("weixin-messages-updated", refreshUnread);
+        // 线下记录不走 chat-storage，靠这个事件刷新（未读统计已含线下）
+        window.addEventListener(CHAT_OFFLINE_TURNS_CHANGED_EVENT, refreshUnread);
+        return () => {
+            window.removeEventListener(CHAT_UNREAD_CHANGED_EVENT, refreshUnread);
+            window.removeEventListener("chat-messages-updated", refreshUnread);
+            window.removeEventListener("weixin-messages-updated", refreshUnread);
+            window.removeEventListener(CHAT_OFFLINE_TURNS_CHANGED_EVENT, refreshUnread);
         };
     }, []);
 
@@ -305,7 +328,12 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                             })
                             .map(s => (
                                 <div key={s.id}>
-                                    <SessionItem session={s} onSelect={() => onSelectSession(s)} isPinned={!!s.isPinned} />
+                                    <SessionItem
+                                        session={s}
+                                        onSelect={() => onSelectSession(s)}
+                                        isPinned={!!s.isPinned}
+                                        unreadParts={unreadBySession[s.id]}
+                                    />
                                 </div>
                             ));
                             if (!showMascot && regularItems.length === 0) {
@@ -747,7 +775,13 @@ function ContactPicker({ onClose, onSelect }: { onClose: () => void; onSelect: (
     );
 }
 
-function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, onSelect: () => void, isPinned?: boolean }) {
+function SessionItem({ session, onSelect, isPinned, unreadParts }: { session: ChatSession, onSelect: () => void, isPinned?: boolean, unreadParts?: ChatUnreadBreakdown }) {
+    // 有未读时名字加粗，与微信的观感一致（红标数字见下方 chat-session-unread-badge）
+    const unreadCount = (unreadParts?.online ?? 0) + (unreadParts?.offline ?? 0);
+    // 底色语义与桌面角标一致：只有线下未读时才换琥珀色；线上线下都有、
+    // 或纯线上，都用默认红——混着的时候红标本身说不清是哪一侧。
+    const unreadScope: "online" | "offline" =
+        (unreadParts?.offline ?? 0) > 0 && (unreadParts?.online ?? 0) === 0 ? "offline" : "online";
     const chars = loadCharacters();
     const character = chars.find(c => c.id === session.contactId);
     const lastVisibleMessage = getLastVisibleSessionMessage(session.id);
@@ -804,7 +838,7 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
             )}
             <div className="flex-1 overflow-hidden h-[48px] flex flex-col justify-center gap-1">
                 <div className="flex justify-between items-center">
-                    <span className="ts-16 font-medium text-[var(--c-text-title)] truncate">
+                    <span className={`ts-16 text-[var(--c-text-title)] truncate ${unreadCount > 0 ? "chat-session-name-unread" : "font-medium"}`}>
                         {isGroup ? (session.groupName || "群聊") : (session.alias || character?.name || `User_${session.contactId.slice(-4)}`)}
                     </span>
                     <span className="ts-12 text-[var(--c-icon)] font-medium">
@@ -815,6 +849,15 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
                     <span className="ts-13 text-[var(--c-text)] opacity-80 truncate font-normal">
                         {preview || getLastNonEmptyPreview(session.id)}
                     </span>
+                    {unreadCount > 0 && (
+                        <span
+                            className="chat-session-unread-badge"
+                            aria-label={`${unreadCount} 条未读`}
+                            data-scope={unreadScope}
+                        >
+                            {unreadCount > 99 ? "99+" : unreadCount}
+                        </span>
+                    )}
                 </div>
             </div>
         </div>

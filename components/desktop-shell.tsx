@@ -127,6 +127,8 @@ import type { DIYWidgetTemplate } from "@/lib/widget-types";
 import { DebugPromptPanel } from "@/components/debug-prompt-panel";
 import { QuickActionFloat } from "@/components/quick-action-float";
 import { CHAT_MESSAGE_PUSHED_EVENT, CHAT_REQUEST_REPLY_EVENT, hydrateChatStorage, loadChatSessions, loadChatMessages, pushChatMessage, type ChatMessage, type ChatSession } from "@/lib/chat-storage";
+import { CHAT_UNREAD_CHANGED_EVENT, ensureChatUnreadBaseline, getChatUnreadBreakdownBySession, getTotalChatUnreadCount, markSessionChatRead, pruneChatReadState } from "@/lib/chat-unread";
+import { CHAT_OFFLINE_TURNS_CHANGED_EVENT } from "@/lib/chat-offline-storage";
 import { ensureGlobalBindingDefaults, resolveUserIdentity } from "@/lib/settings-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { generateChatCompletion, flattenCompletionResult } from "@/lib/chat-engine";
@@ -1073,6 +1075,19 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   const customAppUpdateCheckingRef = useRef<Set<string>>(new Set());
   const activeAppRef = useRef<DesktopIconId | null>(null);
   const [customAppBadges, setCustomAppBadges] = useState<Record<string, number>>({});
+  // 内置「聊天」图标的未读总数（红标）。与自定义 APP 的角标分开：聊天数据在
+  // chat-storage，得自己算，见 lib/chat-unread.ts。
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
+  // 未读构成（线上/线下各几条）：只有线下未读时角标换底色，让用户一眼知道
+  // 「这是线下模式产生的未读」。两者都有/只有线上时用默认红。
+  const [chatUnreadParts, setChatUnreadParts] = useState<{ online: number; offline: number }>({ online: 0, offline: 0 });
+  // 角标底色：只有线下未读（线上 0、线下 >0）时用线下色；纯线上或两者都有，都用默认红。
+  const chatUnreadScope: "online" | "offline" =
+    chatUnreadParts.offline > 0 && chatUnreadParts.online === 0 ? "offline" : "online";
+  // 当前正在看的会话（由聊天 App 上报，供已读标记使用）
+  const activeChatSessionRef = useRef<ChatSession | null>(null);
+  // 标记已读会派发未读变更事件，而重算函数就挂着那个监听——用它挡住自我递归
+  const unreadClearingRef = useRef(false);
   const [customAppBackgroundRuns, setCustomAppBackgroundRuns] = useState<CustomAppBackgroundEventRun[]>([]);
   const [customAppBackgroundToolRuns, setCustomAppBackgroundToolRuns] = useState<CustomAppBackgroundToolRun[]>([]);
   const backgroundRunSeqRef = useRef(0);
@@ -1102,6 +1117,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     avatar: string | null;
     isGroup?: boolean;
   } | null>(null);
+
   const chatMessageNoticeTimerRef = useRef<number | null>(null);
   // Swipe-up-to-dismiss state for the chat message notice banner.
   const [noticeDragY, setNoticeDragY] = useState(0);
@@ -1581,6 +1597,79 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     refreshHostState();
     window.addEventListener(CUSTOM_APP_HOST_STATE_UPDATED_EVENT, refreshHostState);
     return () => window.removeEventListener(CUSTOM_APP_HOST_STATE_UPDATED_EVENT, refreshHostState);
+  }, []);
+
+  // 桌面「聊天」图标未读红标：初次挂载等聊天存储水合完再打基线并取数，
+  // 之后靠消息落库事件 + 自身已读事件刷新。
+  useEffect(() => {
+    if (!desktopReady) return;
+    let cancelled = false;
+    const refreshChatUnread = () => {
+      if (cancelled) return;
+      // 你正在看的那个会话不该顶红标（线上线下都一样）：它刚产生的消息在眼前，
+      // 顺手记为已读。只认「当前会话」，不碰列表里其他会话。
+      // 防重入：markSessionChatRead 会派发未读变更事件，而本函数挂着那个监听。
+      const currentSessionId = activeAppRef.current === "chat"
+        ? activeChatSessionRef.current?.id
+        : undefined;
+      if (currentSessionId && !unreadClearingRef.current) {
+        unreadClearingRef.current = true;
+        markSessionChatRead(currentSessionId);
+        unreadClearingRef.current = false;
+      }
+      setChatUnreadCount(getTotalChatUnreadCount());
+      // 汇总厘清未读构成（开关已在统计层过滤，这里拿到的就是实际会显示的）
+      const bySession = getChatUnreadBreakdownBySession();
+      const totals = { online: 0, offline: 0 };
+      for (const parts of Object.values(bySession)) {
+        totals.online += parts.online;
+        totals.offline += parts.offline;
+      }
+      setChatUnreadParts(totals);
+    };
+    void hydrateChatStorage().then(() => {
+      if (cancelled) return;
+      ensureChatUnreadBaseline();
+      pruneChatReadState();
+      refreshChatUnread();
+    });
+    window.addEventListener(CHAT_MESSAGE_PUSHED_EVENT, refreshChatUnread);
+    window.addEventListener(CHAT_UNREAD_CHANGED_EVENT, refreshChatUnread);
+    // 线下模式的回合不落 chat-storage，得单独听它的事件
+    window.addEventListener(CHAT_OFFLINE_TURNS_CHANGED_EVENT, refreshChatUnread);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(CHAT_MESSAGE_PUSHED_EVENT, refreshChatUnread);
+      window.removeEventListener(CHAT_UNREAD_CHANGED_EVENT, refreshChatUnread);
+      window.removeEventListener(CHAT_OFFLINE_TURNS_CHANGED_EVENT, refreshChatUnread);
+    };
+  }, [desktopReady]);
+
+  // 注意：这里刻意不做「进聊天 App 就全清」或「按上次会话清」——
+  // 图标红标要能回答"哪个人我还没点开"，清除只发生在真正点开某条会话时
+  // （见 renderAppBody 里的 onSessionChange）。
+
+  // 聊天相关事件后兜底重算一次（清空会话、批量删除、微信云同步拉回旧消息等
+  // 会绕过 CHAT_MESSAGE_PUSHED 的路径）；回到前台也补一次，防止后台期间漏刷。
+  useEffect(() => {
+    const refresh = () => {
+      setChatUnreadCount(getTotalChatUnreadCount());
+      const bySession = getChatUnreadBreakdownBySession();
+      const totals = { online: 0, offline: 0 };
+      for (const parts of Object.values(bySession)) {
+        totals.online += parts.online;
+        totals.offline += parts.offline;
+      }
+      setChatUnreadParts(totals);
+    };
+    window.addEventListener("chat-messages-updated", refresh);
+    window.addEventListener("weixin-messages-updated", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("chat-messages-updated", refresh);
+      window.removeEventListener("weixin-messages-updated", refresh);
+      window.removeEventListener("focus", refresh);
+    };
   }, []);
 
   useEffect(() => {
@@ -2331,6 +2420,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       return;
     }
     if (builtinIconId === "resources") setResourcesInitialPage("main");
+    // 聊天图标的红标清零交给「聊天进入前台」那个 effect，这里不用重复清
     if (builtinIconId === "chat") setChatInitSessionId(null);
     setActiveApp(builtinIconId);
   }
@@ -3978,7 +4068,14 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
             setChatInitSessionId(null);
           }}
           initialSessionId={chatInitSessionId}
-          onSessionChange={setActiveChatSession}
+          onSessionChange={(session) => {
+            setActiveChatSession(session);
+            activeChatSessionRef.current = session;
+            // 点开哪条就清哪条（微信语义）：进入某会话即记为已读，其余会话的红标
+            // 保留，桌面图标上的总数随之减少。退回列表（session 为 null）不动。
+            if (session) markSessionChatRead(session.id);
+            setChatUnreadCount(getTotalChatUnreadCount());
+          }}
         />
       );
     }
@@ -4589,8 +4686,16 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                 if (!folder) return null;
                                 const folderBadge = folder.icons.reduce((sum, memberId) => {
                                   const appId = customAppIdFromIconId(memberId);
-                                  return sum + (appId ? customAppBadges[appId] ?? 0 : 0);
+                                  if (appId) return sum + (customAppBadges[appId] ?? 0);
+                                  // 文件夹里揣着内置聊天图标时，红点也要跟着（否则未读被藏进文件夹）
+                                  return sum + (memberId === "chat" ? chatUnreadCount : 0);
                                 }, 0);
+                                // 文件夹红点只在「整个数字都来自内置聊天、且聊天未读全是线下」时才换底色：
+                                // 混了别的 APP 角标就说不清是哪一侧的未读，保持默认红。
+                                const folderBadgeScope = folder.icons.includes("chat" as DesktopIconId)
+                                  && folderBadge === chatUnreadCount
+                                  ? chatUnreadScope
+                                  : undefined;
                                 return (
                                   <button
                                     key={iconId}
@@ -4600,12 +4705,19 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                     onClick={() => { if (!editMode) { setFolderPageIndex(0); setOpenFolderId(iconId); } }}
                                     onPointerDown={(e) => handleItemPointerDown(e, "icon", iconId, pageKey)}
                                   >
-                                    <span className="icon-glyph-box folder-glyph-box" aria-hidden>
+                                    <span
+                                      className={folderBadge > 0 ? "icon-glyph-box folder-glyph-box icon-glyph-box-badged" : "icon-glyph-box folder-glyph-box"}
+                                      aria-hidden
+                                    >
                                       <span className="folder-mini-grid">
                                         {folder.icons.slice(0, 4).map(memberId => renderFolderMini(memberId))}
                                       </span>
                                       {folderBadge > 0 ? (
-                                        <span className="desktop-icon-badge" aria-label={`${folderBadge} 条未读`}>
+                                        <span
+                                          className="desktop-icon-badge"
+                                          aria-label={`${folderBadge} 条未读`}
+                                          data-scope={folderBadgeScope}
+                                        >
                                           {folderBadge > 99 ? "99+" : folderBadge}
                                         </span>
                                       ) : null}
@@ -4625,7 +4737,12 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                 : null;
                               const iconImageUrl = iconSkinUrl || customIconUrl;
                               const hasImageIcon = Boolean(iconImageUrl);
-                              const badgeCount = customApp ? customAppBadges[customApp.id] ?? 0 : 0;
+                              // 自定义 APP 用宿主角标；内置「聊天」用未读统计，其余内置图标为 0
+                              const badgeCount = customApp
+                                ? customAppBadges[customApp.id] ?? 0
+                                : builtinIconId === "chat"
+                                  ? chatUnreadCount
+                                  : 0;
                               return (
                                 <button
                                   key={iconId}
@@ -4636,7 +4753,11 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                   onPointerDown={(e) => handleItemPointerDown(e, "icon", iconId, pageKey)}
                                 >
                                   <span
-                                    className={hasImageIcon ? "icon-glyph-box icon-glyph-box-skin" : "icon-glyph-box"}
+                                    className={[
+                                      hasImageIcon ? "icon-glyph-box icon-glyph-box-skin" : "icon-glyph-box",
+                                      // 有红标时解禁裁切，红标才能挂到图标外框之外
+                                      badgeCount > 0 ? "icon-glyph-box-badged" : "",
+                                    ].filter(Boolean).join(" ")}
                                     style={hasImageIcon ? undefined : { "--icon-tone": icon.tone } as React.CSSProperties}
                                     aria-hidden
                                   >
@@ -4663,7 +4784,11 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                       <CustomAppGlyph seed={customApp?.name || icon.label} className="icon-glyph" />
                                     )}
                                     {badgeCount > 0 ? (
-                                      <span className="desktop-icon-badge" aria-label={`${badgeCount} 条未读`}>
+                                      <span
+                                        className="desktop-icon-badge"
+                                        aria-label={`${badgeCount} 条未读`}
+                                        data-scope={builtinIconId === "chat" ? chatUnreadScope : undefined}
+                                      >
                                         {badgeCount > 99 ? "99+" : badgeCount}
                                       </span>
                                     ) : null}
@@ -4764,6 +4889,12 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                       : null;
                     const iconImageUrl = iconSkinUrl || customIconUrl;
                     const hasImageIcon = Boolean(iconImageUrl);
+                    // 与桌面页同一套规则：自定义 APP 走宿主角标，内置聊天走未读统计
+                    const dockBadgeCount = customApp
+                      ? customAppBadges[customApp.id] ?? 0
+                      : builtinIconId === "chat"
+                        ? chatUnreadCount
+                        : 0;
                     const isDragging = dragItem?.type === "icon" && dragItem.id === iconId;
                     return (
                       <button
@@ -4775,11 +4906,12 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                         onPointerDown={(e) => handleItemPointerDown(e, "icon", iconId, DOCK_PAGE_KEY)}
                       >
                         <span
-                          className={
+                          className={[
                             hasImageIcon
                               ? "icon-glyph-box dock-glyph-box icon-glyph-box-skin"
-                              : "icon-glyph-box dock-glyph-box"
-                          }
+                              : "icon-glyph-box dock-glyph-box",
+                            dockBadgeCount > 0 ? "icon-glyph-box-badged" : "",
+                          ].filter(Boolean).join(" ")}
                           style={hasImageIcon ? undefined : { "--icon-tone": icon.tone } as React.CSSProperties}
                           aria-hidden
                         >
@@ -4802,6 +4934,15 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                           ) : customIconUrl ? null : (
                             <CustomAppGlyph seed={customApp?.name || icon.label} className="icon-glyph" />
                           )}
+                          {dockBadgeCount > 0 ? (
+                            <span
+                              className="desktop-icon-badge"
+                              aria-label={`${dockBadgeCount} 条未读`}
+                              data-scope={builtinIconId === "chat" ? chatUnreadScope : undefined}
+                            >
+                              {dockBadgeCount > 99 ? "99+" : dockBadgeCount}
+                            </span>
+                          ) : null}
                         </span>
                         <span className="icon-label">{icon.label}</span>
                       </button>
@@ -4971,7 +5112,11 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                 ? memberCustomApp.iconDataUrl ?? null
                                 : null;
                               const memberImageUrl = memberSkinUrl || memberCustomUrl;
-                              const memberBadge = memberCustomApp ? customAppBadges[memberCustomApp.id] ?? 0 : 0;
+                              const memberBadge = memberCustomApp
+                                ? customAppBadges[memberCustomApp.id] ?? 0
+                                : memberBuiltinId === "chat"
+                                  ? chatUnreadCount
+                                  : 0;
                               return (
                                 <button
                                   key={memberId}
@@ -4984,7 +5129,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                   onPointerCancel={cancelFolderIconPress}
                                 >
                                   <span
-                                    className={memberImageUrl ? "icon-glyph-box icon-glyph-box-skin" : "icon-glyph-box"}
+                                    className={[
+                                      memberImageUrl ? "icon-glyph-box icon-glyph-box-skin" : "icon-glyph-box",
+                                      memberBadge > 0 ? "icon-glyph-box-badged" : "",
+                                    ].filter(Boolean).join(" ")}
                                     style={memberImageUrl ? undefined : { "--icon-tone": meta.tone } as CSSProperties}
                                     aria-hidden
                                   >
@@ -5000,7 +5148,11 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                       <CustomAppGlyph seed={memberCustomApp?.name || ""} className="icon-glyph" />
                                     )}
                                     {memberBadge > 0 ? (
-                                      <span className="desktop-icon-badge" aria-label={`${memberBadge} 条未读`}>
+                                      <span
+                                        className="desktop-icon-badge"
+                                        aria-label={`${memberBadge} 条未读`}
+                                        data-scope={memberBuiltinId === "chat" ? chatUnreadScope : undefined}
+                                      >
                                         {memberBadge > 99 ? "99+" : memberBadge}
                                       </span>
                                     ) : null}

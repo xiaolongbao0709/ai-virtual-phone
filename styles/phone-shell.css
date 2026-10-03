@@ -541,6 +541,15 @@
   border: none;
 }
 
+/* 有未读红标的图标盒：放开裁切，让红标能挂在图标外框之外。
+   正常状态下图标盒必须 overflow:hidden（裁图标皮肤的圆角/方形边界），
+   所以只在需要时解禁——否则所有图标的溢出层都会露出来。
+   用双类名（.icon-glyph-box.icon-glyph-box-badged）提高权重：folder-glyph-box、
+   icon-glyph-box-skin 等单类名规则若写在后面，也不会把这条盖掉。 */
+.icon-glyph-box.icon-glyph-box-badged {
+  overflow: visible;
+}
+
 .icon-skin-layer {
   position: absolute;
   inset: 0;
@@ -563,11 +572,15 @@
   opacity: 0;
 }
 
+/* 未读角标：挂在外框（图标盒）的右上角、向外溢出，不压在图标内部。
+   · 负数偏移让它一半在盒外：无论图标是方形还是圆形皮肤都挂在框角上；
+   · 纯色块：无描边、无投影、无任何特效，只有一个红标；
+   · 容器需 .icon-glyph-box-badged 解禁 overflow，否则会被裁掉。 */
 .desktop-icon-badge {
   position: absolute;
   z-index: 5;
-  top: 4px;
-  right: 4px;
+  top: -6px;
+  right: -6px;
   min-width: 17px;
   height: 17px;
   padding: 0 5px;
@@ -577,12 +590,17 @@
   justify-content: center;
   color: #fff;
   background: #ef4444;
-  border: 1.5px solid rgba(255, 255, 255, 0.92);
-  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.22);
+  border: none;
+  box-shadow: none;
   font-size: calc(9.5px*var(--app-text-scale,1));
   font-weight: 850;
   line-height: 1;
   pointer-events: none;
+}
+
+/* 线下未读：换个底色与线上区分（琥珀橙，同为警示色系但一眼可辨） */
+.desktop-icon-badge[data-scope="offline"] {
+  background: #f59e0b;
 }
 
 .icon-label {

@@ -36,6 +36,37 @@
   isolation: isolate;
 }
 
+/* ── 会话列表：每条右侧的未读红标 ──
+   与桌面图标的角标（.desktop-icon-badge）同一套视觉，尺寸略小以适配列表行高。 */
+.chat-session-unread-badge {
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #ef4444;
+  font-size: calc(10.5px * var(--app-text-scale, 1));
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  /* 纯色块：无描边、无投影、无特效 */
+  box-shadow: none;
+}
+
+/* 线下未读：与桌面角标同色系（琥珀橙），两个位置的语义保持一致 */
+.chat-session-unread-badge[data-scope="offline"] {
+  background: #f59e0b;
+}
+
+/* 有未读的会话名加粗，一眼看出哪条还没点开 */
+.chat-session-name-unread {
+  font-weight: 700;
+}
+
 
 .chat-app .page-shell > .page-body {
   padding-bottom: 120px;
