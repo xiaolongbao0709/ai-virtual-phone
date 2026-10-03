@@ -9,6 +9,7 @@ import {
     resolveUserIdentity,
 } from "@/lib/settings-storage";
 import { loadChatAppSettings, saveChatAppSettings } from "@/lib/chat-storage";
+import { loadChatUnreadBadgeSettings, saveChatUnreadBadgeSettings, type ChatUnreadBadgeSettings } from "@/lib/chat-unread";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import { getApiLogs, clearApiLogs, type DebugInfo } from "@/lib/chat-engine";
 import type { FollowUpConfig } from "@/lib/settings-storage";
@@ -163,6 +164,8 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const [showPushSettings, setShowPushSettings] = useState(false);
     const [enterToSendEnabled, setEnterToSendEnabled] = useState(false);
     const [callVibrationEnabled, setCallVibrationEnabled] = useState(true);
+    // 未读红标开关（线上/线下分开）。默认两侧都开，挂载后再读存储，避免水合不一致。
+    const [unreadBadge, setUnreadBadge] = useState<ChatUnreadBadgeSettings>({ online: true, offline: true });
     const [userStats, setUserStats] = useState({ chats: 0, moments: 0, visitors: 1234 });
     const [walletSummary, setWalletSummary] = useState(() => {
         const wallet = loadWalletState();
@@ -179,6 +182,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
         setNotifEnabled(settings.browserNotificationsEnabled === true && browserGranted);
         setEnterToSendEnabled(settings.enterToSendEnabled === true);
         setCallVibrationEnabled(settings.callVibrationEnabled !== false);
+        setUnreadBadge(loadChatUnreadBadgeSettings());
         if (settings.browserNotificationsEnabled === true && !browserGranted) {
             setNotifHint(readBrowserNotificationPermissionHint());
         }
@@ -249,6 +253,14 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const handleCallVibrationToggle = (enabled: boolean) => {
         setCallVibrationEnabled(enabled);
         saveChatAppSettings({ ...loadChatAppSettings(), callVibrationEnabled: enabled });
+    };
+
+    // 未读红标：关掉某一侧就只统计另一侧（存进 lib/chat-unread.ts，桌面角标与
+    // 会话列表都读这份设置，保存时会派发未读变更事件让两处一起刷新）。
+    const handleUnreadBadgeToggle = (side: "online" | "offline", enabled: boolean) => {
+        const next: ChatUnreadBadgeSettings = { ...unreadBadge, [side]: enabled };
+        setUnreadBadge(next);
+        saveChatUnreadBadgeSettings(next);
     };
 
     if (showFollowUpEditor) {
@@ -454,6 +466,28 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                                 <span className="ts-11 text-[var(--c-text)] opacity-70">{notifHint || "允许网页在后台时弹出新消息横幅提醒"}</span>
                             </div>
                             <Toggle checked={notifEnabled} disabled={notifChecking} onChange={handleNotificationToggle} />
+                        </div>
+                    </div>
+
+                    {/* 未读红标 */}
+                    <div className="mx-4 mb-4 bg-[var(--c-card)] rounded-2xl px-4 py-1 flex flex-col"
+                         style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.025)" }}>
+                        <div className="flex items-center gap-3 py-3 w-full border-b border-[color-mix(in_srgb,var(--c-card-border)_20%,transparent)]">
+                            <MessageSquare size={18} className="text-[var(--c-icon)] opacity-70" strokeWidth={1.25}/>
+                            <div className="flex flex-col flex-1 text-left gap-0.5">
+                                <span className="ts-14 font-semibold text-[var(--c-text-title)]">线上模式未读红标</span>
+                                <span className="ts-11 text-[var(--c-text)] opacity-70">桌面聊天图标与会话列表显示线上消息未读数</span>
+                            </div>
+                            <Toggle checked={unreadBadge.online} onChange={c => handleUnreadBadgeToggle("online", c)} />
+                        </div>
+
+                        <div className="flex items-center gap-3 py-3 w-full">
+                            <MessageSquareDashed size={18} className="text-[var(--c-icon)] opacity-70" strokeWidth={1.25}/>
+                            <div className="flex flex-col flex-1 text-left gap-0.5">
+                                <span className="ts-14 font-semibold text-[var(--c-text-title)]">线下模式未读红标</span>
+                                <span className="ts-11 text-[var(--c-text)] opacity-70">线下回合未读用琥珀色角标，与线上区分</span>
+                            </div>
+                            <Toggle checked={unreadBadge.offline} onChange={c => handleUnreadBadgeToggle("offline", c)} />
                         </div>
                     </div>
 
