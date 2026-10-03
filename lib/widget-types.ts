@@ -18,6 +18,7 @@ export type WidgetType =
   | "ticketStub"
   | "postCard"
   | "profileCard"
+  | "cloudSync"
   | (string & {});
 
 export type DIYTemplateSlot = {
@@ -103,6 +104,8 @@ export const WIDGET_CATALOG: WidgetCatalogEntry[] = [
   { type: "photo", name: "\u7167\u7247\u76F8\u6846", desc: "\u653E\u4E00\u5F20\u7167\u7247\uFF0C\u70B9\u51FB\u66FF\u6362", size: "2x2" },
   { type: "loveNote", name: "\u60C5\u8BDD\u4FBF\u7B7E", desc: "\u968F\u673A\u751C\u871C\u60C5\u8BDD", size: "2x2" },
   { type: "mascot", name: "AI助手", desc: "AI创作桌宠，点击召唤", size: "2x2" },
+  // 1×2：云端备份/恢复的桌面快捷入口，省得每次点进设置里翻
+  { type: "cloudSync", name: "云同步", desc: "一键备份到云端或同步回本机", size: "1x2" },
   // 🌸 Kawaii Aesthetic Series
   { type: "kawaiiMusicPlayer", name: "美萌 · 音乐播放器", desc: "柔光风格音乐播放组件", size: "2x4" },
   { type: "mySpace", name: "My Space 名片", desc: "极简纯白个人资料展示页", size: "3x4" },

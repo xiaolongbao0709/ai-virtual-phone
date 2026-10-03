@@ -11,6 +11,7 @@ import { getMascotState, activateMascot, subscribeMascot } from "@/lib/mascot-st
 import { getMascotSettingsSnapshot, resolveMascotImageRef, subscribeMascotSettings } from "@/lib/mascot-settings";
 import { loadDIYTemplates } from "@/lib/widget-storage";
 import { DIYWidgetRenderer } from "@/components/widgets/diy-widget-renderer";
+import { CloudSyncWidget } from "@/components/widgets/cloud-sync-widget";
 
 const DEFAULT_WHITE_IMAGE =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="transparent"/></svg>';
@@ -104,6 +105,8 @@ function WidgetContent({
       return <KaomojiWidget config={config} widgetId={widgetId} onConfigChange={onConfigChange} />;
     case "mascot":
       return <MascotWidget />;
+    case "cloudSync":
+      return <CloudSyncWidget preview={preview} />;
     case "kawaiiMusicPlayer":
       return <KawaiiMusicPlayerWidget config={config} widgetId={widgetId} onConfigChange={onConfigChange} preview={preview} />;
     case "iosMenu":
