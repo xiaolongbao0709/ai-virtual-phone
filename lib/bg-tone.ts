@@ -169,6 +169,26 @@ export async function detectElementTone(el: HTMLElement): Promise<"light" | "dar
 }
 
 /**
+ * 该元素是不是「页面底色」，而不是压在底色上的小装饰。
+ *
+ * 采色逻辑原本只看可见性（display/visibility/getClientRects），于是绝对定位的
+ * 未读角标也会被当成背景候选。而 [class*="session-"] 这类选择器是按类名子串
+ * 匹配的——会话列表里的 .chat-session-unread-badge 恰好含 "session-"，
+ * 一进聊天列表就命中它，采到警示红（#ef4444）当作聊天室背景，
+ * 状态栏随之被刷成红色，看起来像页面出了故障。
+ *
+ * 角标/指示灯这类装饰的颜色永远是警示色、面积又极小，不可能是页面底色，
+ * 这里统一挡掉，避免以后再加角标时重蹈覆辙。
+ */
+function isBackgroundDecoration(el: HTMLElement): boolean {
+  const className = typeof el.className === "string" ? el.className : "";
+  if (/badge/i.test(className)) return true;
+  const style = getComputedStyle(el);
+  // 绝对/固定定位 + 不吃指针事件：典型的小色块装饰，不是底色
+  return style.pointerEvents === "none" && (style.position === "absolute" || style.position === "fixed");
+}
+
+/**
  * 按优先级查找当前可见的背景元素。
  * 更具体的（如聊天室）优先于更通用的（如 app 外壳）。
  */
@@ -197,7 +217,9 @@ function findBgElements(shell: HTMLElement, activeApp: string | null): HTMLEleme
     for (const el of elements) {
       const style = getComputedStyle(el);
       const visible = style.display !== "none" && style.visibility !== "hidden" && el.getClientRects().length > 0;
-      if (visible && !found.includes(el)) found.push(el);
+      if (!visible) continue;
+      if (isBackgroundDecoration(el)) continue;
+      if (!found.includes(el)) found.push(el);
     }
   }
   return found;
