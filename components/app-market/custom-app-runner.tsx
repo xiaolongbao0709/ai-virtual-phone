@@ -238,11 +238,11 @@ html, body { min-height: 100%; }
   }
   setTimeout(checkBlank, 4000);
 
-  function request(action, payload){
+  function request(action, payload, onStreamDelta){
     var requestId = frameId + '_' + (++seq);
     parent.postMessage({ source:'ai-phone-custom-app-frame', type:'request', frameId:frameId, appId:appId, requestId:requestId, action:action, payload:payload || {} }, '*');
     return new Promise(function(resolve, reject){
-      pending[requestId] = { resolve: resolve, reject: reject };
+      pending[requestId] = { resolve: resolve, reject: reject, onStreamDelta: onStreamDelta };
     });
   }
   window.addEventListener('message', function(event){
@@ -260,6 +260,13 @@ html, body { min-height: 100%; }
       root.style.setProperty('--ai-phone-app-bar-clear-left', String(safeArea.barClearLeft || '0px'));
       root.style.setProperty('--ai-phone-app-bar-clear-right', String(safeArea.barClearRight || '0px'));
       window.dispatchEvent(new CustomEvent('aiphone:safe-area-change', { detail: safeArea }));
+      return;
+    }
+    if (data.type === 'stream.delta' && data.requestId) {
+      var activeItem = pending[data.requestId];
+      if (activeItem && typeof activeItem.onStreamDelta === 'function') {
+        try { activeItem.onStreamDelta(data.delta); } catch (e) { /* ignore */ }
+      }
       return;
     }
     if (data.type === 'tool.invoke' && data.toolRequestId) {
@@ -359,7 +366,14 @@ html, body { min-height: 100%; }
       delete: function(collection, id){ return request('db.delete', { collection: collection, id: id }); }
     },
     ai: {
-      generate: function(payload){ return request('ai.generate', payload || {}); },
+      generate: function(payload){
+        var params = payload || {};
+        var onChunk = typeof params.onChunk === 'function' ? params.onChunk : undefined;
+        // 把 onChunk 从纯数据 payload 中分离出来，避免 postMessage 克隆报错
+        var purePayload = Object.assign({}, params);
+        delete purePayload.onChunk;
+        return request('ai.generate', purePayload, onChunk);
+      },
       generateImage: function(payload){ return request('ai.generateImage', payload || {}); },
       chat: function(payload){ return request('ai.chat', payload || {}); },
       embed: function(payload){ return request('ai.embed', payload || {}); },
@@ -1051,7 +1065,7 @@ export function CustomAppRunner({
     throw new Error(`应用未声明权限：${permissions.join(" 或 ")}`);
   }, [app]);
 
-  const handleBridgeRequest = useCallback(async (action: string, payload: unknown): Promise<BridgeResult> => {
+  const handleBridgeRequest = useCallback(async (action: string, payload: unknown, onProgress?: (data: Record<string, unknown>) => void): Promise<BridgeResult> => {
     const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
     const launchRecord = launchContext && typeof launchContext === "object" ? launchContext : {};
     const backgroundRecord = launchRecord.origin === "custom_app_background" && !record.origin
@@ -1701,7 +1715,9 @@ export function CustomAppRunner({
       // 分流只看 APP 显式传参，避免 launchContext 里的 sessionId 误触发群聊模式
       return isCustomAppGroupGenerateRecord(record)
         ? generateCustomAppGroupText(app, { ...launchRecord, ...record })
-        : generateCustomAppText(app, { ...launchRecord, ...record });
+        : generateCustomAppText(app, { ...launchRecord, ...record }, (delta) => {
+            onProgress?.({ delta });
+          });
     }
     if (action === "ai.generateImage") {
       requirePermission("ai.generateImage");
@@ -1972,7 +1988,15 @@ export function CustomAppRunner({
       const requestId = String(record.requestId ?? "");
       const action = String(record.action ?? "");
       if (!requestId || !action) return;
-      void Promise.resolve(handleBridgeRequest(action, record.payload))
+      void Promise.resolve(handleBridgeRequest(action, record.payload, (progress) => {
+        iframeRef.current?.contentWindow?.postMessage({
+          source: "ai-phone-custom-app-host",
+          type: "stream.delta",
+          frameId,
+          requestId,
+          delta: progress.delta,
+        }, "*");
+      }))
         .then(result => postResponse(requestId, true, result))
         .catch(err => postResponse(requestId, false, undefined, err instanceof Error ? err.message : String(err)));
     };

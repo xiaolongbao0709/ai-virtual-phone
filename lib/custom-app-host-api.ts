@@ -1893,7 +1893,11 @@ export async function requestCustomAppReply(app: InstalledCustomApp, record: Rec
   return { sessionId: session.id, messageIds: [], text: "", requested: true, handled: detail.handled };
 }
 
-export async function generateCustomAppText(app: InstalledCustomApp, record: Record<string, unknown>): Promise<{
+export async function generateCustomAppText(
+  app: InstalledCustomApp,
+  record: Record<string, unknown>,
+  onStreamDelta?: (delta: string) => void,
+): Promise<{
   text: string;
   appendMessages: Record<string, unknown>[];
   messages: Record<string, unknown>[];
@@ -1952,6 +1956,11 @@ export async function generateCustomAppText(app: InstalledCustomApp, record: Rec
     toolsAllowed,
     forceEnableTools: enableTools,
   }, {
+    onStreamDelta: (delta) => {
+      if (typeof onStreamDelta === "function") {
+        onStreamDelta(delta);
+      }
+    },
     onTextPart: (text, _senderInfo, options) => {
       const content = cleanUnboundedText(text);
       if (!content) return;
