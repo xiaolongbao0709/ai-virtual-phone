@@ -21,6 +21,7 @@ import {
 import { Alert } from "@/components/ui/feedback";
 import { Input, Select, Textarea, Toggle } from "@/components/ui/form";
 import { ConfirmDialog } from "@/components/ui/modal";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
     NOVELAI_COMMON_MODELS,
     NOVELAI_NOISE_SCHEDULE_OPTIONS,
@@ -454,33 +455,16 @@ export function ImageGenerationSettings() {
                         <div className="flex flex-col gap-1">
                             <label className="menu-desc ml-1">模型 (Model)</label>
                             <div className="flex gap-2">
-                                <div className="relative flex-1">
-                                    <Input
-                                        type="text"
-                                        value={naiSettings.activePreset.model}
-                                        onChange={(event) => updateActivePreset({ model: event.target.value })}
-                                        placeholder="nai-diffusion-4-curated-preview"
-                                        className={naiModels.length > 0 ? "w-full pr-9" : "w-full"}
-                                    />
-                                    {naiModels.length > 0 && (
-                                        <>
-                                            <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 opacity-60" />
-                                            <select
-                                                aria-label="选择常见 NAI 模型"
-                                                value=""
-                                                onChange={(event) => {
-                                                    if (event.target.value) updateActivePreset({ model: event.target.value });
-                                                }}
-                                                className="absolute inset-y-0 right-0 w-10 cursor-pointer opacity-0"
-                                            >
-                                                <option value="">快速选择模型...</option>
-                                                {naiModels.map(m => (
-                                                    <option key={m} value={m}>{m}</option>
-                                                ))}
-                                            </select>
-                                        </>
-                                    )}
-                                </div>
+                                <SearchableSelect
+                                    mode="input"
+                                    value={naiSettings.activePreset.model}
+                                    onChange={(val) => updateActivePreset({ model: val })}
+                                    options={naiModels}
+                                    placeholder="nai-diffusion-4-curated-preview"
+                                    searchPlaceholder="搜索常见 NAI 模型..."
+                                    title="选择 NovelAI 模型"
+                                    className="flex-1"
+                                />
                                 <button
                                     type="button"
                                     onClick={fetchNaiModels}
@@ -661,31 +645,16 @@ export function ImageGenerationSettings() {
                         <div className="flex flex-col gap-1">
                             <label className="menu-desc ml-1">模型名</label>
                             <div className="flex gap-2">
-                                <div className="relative flex-1">
-                                    <Input
-                                        type="text"
-                                        value={activeOpenAiPreset.model}
-                                        onChange={(event) => updateOpenAiPreset({ model: event.target.value })}
-                                        placeholder="gpt-image-2 / image2 / chatgpt-image-latest"
-                                        className={likelyModels.length > 0 ? "w-full pr-9" : "w-full"}
-                                    />
-                                    {likelyModels.length > 0 && (
-                                        <>
-                                            <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 opacity-60" />
-                                            <select
-                                                aria-label="选择拉取到的模型"
-                                                value=""
-                                                onChange={(event) => {
-                                                    if (event.target.value) updateOpenAiPreset({ model: event.target.value });
-                                                }}
-                                                className="absolute inset-y-0 right-0 w-10 cursor-pointer opacity-0"
-                                            >
-                                                <option value="">选择拉取到的模型...</option>
-                                                {likelyModels.map(model => <option key={model} value={model}>{model}</option>)}
-                                            </select>
-                                        </>
-                                    )}
-                                </div>
+                                <SearchableSelect
+                                    mode="input"
+                                    value={activeOpenAiPreset.model}
+                                    onChange={(val) => updateOpenAiPreset({ model: val })}
+                                    options={likelyModels}
+                                    placeholder="gpt-image-2"
+                                    searchPlaceholder="搜索生图模型..."
+                                    title="选择生图模型"
+                                    className="flex-1"
+                                />
                                 <button
                                     type="button"
                                     onClick={fetchModels}

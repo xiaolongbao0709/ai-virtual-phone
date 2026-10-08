@@ -26,3 +26,6 @@ export { CardGrid, FeaturedCard, HeroCard, SectionLabel } from "./card-grid";
 export type { CardItem, FeaturedCardItem, HeroCardItem } from "./card-grid";
 
 export { PageShell, PageOverlayHeader } from "./page-shell";
+
+export { SearchableSelect } from "./searchable-select";
+export type { SearchableOption, SearchableSelectProps } from "./searchable-select";

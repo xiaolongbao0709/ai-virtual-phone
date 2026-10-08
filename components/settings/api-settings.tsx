@@ -9,6 +9,7 @@ import { generateEmbedding, isEmbeddingModelName } from "@/lib/memory-embedding"
 import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { determineBaseUrl, simpleLLMCall } from "@/lib/api-helpers";
 
 const DEFAULT_CONFIGS: ApiConfig[] = [
@@ -364,16 +365,15 @@ export function ApiSettings() {
                                             <label className="menu-desc ml-1">默认模型 (Default Model)</label>
                                             <div className="flex gap-2">
                                                 {fetchedModels[config.id] && fetchedModels[config.id].length > 0 ? (
-                                                    <select
+                                                    <SearchableSelect
                                                         value={config.defaultModel}
-                                                        onChange={(e) => updateConfig(config.id, { defaultModel: e.target.value })}
-                                                        className="ui-select flex-1"
-                                                    >
-                                                        <option value="">请选择模型...</option>
-                                                        {fetchedModels[config.id].map(m => (
-                                                            <option key={m} value={m}>{m}</option>
-                                                        ))}
-                                                    </select>
+                                                        onChange={(val) => updateConfig(config.id, { defaultModel: val })}
+                                                        options={fetchedModels[config.id]}
+                                                        placeholder="请选择模型..."
+                                                        searchPlaceholder="输入关键字搜索模型..."
+                                                        title="选择默认模型"
+                                                        className="flex-1"
+                                                    />
                                                 ) : (
                                                     <input
                                                         type="text"

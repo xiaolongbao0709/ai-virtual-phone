@@ -9,6 +9,7 @@ import { synthesizeSpeech } from "@/lib/tts-service";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 const SUPPORTED_VOICE_PROVIDERS = new Set(["Minimax", "OpenAI"]);
 const MINIMAX_BASE_URL_OPTIONS = [
@@ -170,7 +171,7 @@ const DEFAULT_OPENAI_VOICES = [
     { id: "shimmer", name: "Shimmer" },
 ];
 
-type VoiceOption = { id: string; name: string; createdAt?: number };
+type VoiceOption = { id: string; name: string; createdAt?: number; provider?: string };
 
 function uniqueOptions(options: VoiceOption[]): VoiceOption[] {
     const seen = new Set<string>();
@@ -186,9 +187,13 @@ function defaultVoiceOptions(provider: string): VoiceOption[] {
 }
 
 function voiceOptionsForConfig(config: VoiceApiConfig, fetchedVoices: Record<string, VoiceOption[]>): VoiceOption[] {
+    const customVoices = (config.customVoices || []).filter(v => {
+        if (!v.provider) return config.provider === "Minimax";
+        return v.provider === config.provider;
+    });
     return uniqueOptions([
         ...(fetchedVoices[config.id] || []),
-        ...(config.customVoices || []),
+        ...customVoices,
         ...defaultVoiceOptions(config.provider),
     ]);
 }
@@ -239,6 +244,12 @@ export function VoiceSettings() {
     const [isCloning, setIsCloning] = useState(false);
     const [manualModelIds, setManualModelIds] = useState<Record<string, boolean>>({});
     const [manualVoiceIds, setManualVoiceIds] = useState<Record<string, boolean>>({});
+    const [customVoiceTargetId, setCustomVoiceTargetId] = useState<string | null>(null);
+    const [editingVoiceOriginId, setEditingVoiceOriginId] = useState<string | null>(null);
+    const [customVoiceIdInput, setCustomVoiceIdInput] = useState("");
+    const [customVoiceNameInput, setCustomVoiceNameInput] = useState("");
+    const [customVoiceError, setCustomVoiceError] = useState("");
+    const [confirmDeleteCustomVoice, setConfirmDeleteCustomVoice] = useState(false);
     const [isLoaded, setIsLoaded] = useState(false);
     const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -304,6 +315,19 @@ export function VoiceSettings() {
 
     const updateProvider = (id: string, providerOption: string) => {
         const current = configs.find(c => c.id === id);
+        const newProvider = providerOption === "OpenAI" ? "OpenAI" : "Minimax";
+        if (current?.provider !== newProvider) {
+            setFetchedVoices(prev => {
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            });
+            setFetchError(prev => {
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            });
+        }
         if (providerOption === "OpenAI") {
             updateConfig(id, {
                 provider: "OpenAI",
@@ -367,6 +391,99 @@ export function VoiceSettings() {
         setCloneVoiceId("");
         setCloneFile(null);
         setCloneError("");
+    };
+
+    const openCustomVoiceModal = (config: VoiceApiConfig) => {
+        setCustomVoiceTargetId(config.id);
+        setEditingVoiceOriginId(null);
+        setCustomVoiceIdInput("");
+        setCustomVoiceNameInput("");
+        setCustomVoiceError("");
+    };
+
+    const openEditCustomVoiceModal = (config: VoiceApiConfig, voice: VoiceOption) => {
+        setCustomVoiceTargetId(config.id);
+        setEditingVoiceOriginId(voice.id);
+        setCustomVoiceIdInput(voice.id);
+        const isFallbackName = voice.name === `自定义音色 (${voice.id})` || voice.name === voice.id;
+        setCustomVoiceNameInput(isFallbackName ? "" : voice.name);
+        setCustomVoiceError("");
+    };
+
+    const closeCustomVoiceModal = () => {
+        setCustomVoiceTargetId(null);
+        setEditingVoiceOriginId(null);
+        setCustomVoiceIdInput("");
+        setCustomVoiceNameInput("");
+        setCustomVoiceError("");
+        setConfirmDeleteCustomVoice(false);
+    };
+
+    const saveCustomVoice = () => {
+        const config = configs.find(c => c.id === customVoiceTargetId);
+        if (!config) return;
+        const vid = customVoiceIdInput.trim();
+        if (!vid) {
+            setCustomVoiceError("Voice ID 不能为空");
+            return;
+        }
+        const vname = customVoiceNameInput.trim() || `自定义音色 (${vid})`;
+        const newOption: VoiceOption = {
+            id: vid,
+            name: vname,
+            provider: config.provider,
+            createdAt: Date.now(),
+        };
+
+        if (editingVoiceOriginId) {
+            const listWithoutOrigin = (config.customVoices || []).filter(v => v.id !== editingVoiceOriginId);
+            const nextCustomVoices = uniqueOptions([newOption, ...listWithoutOrigin]);
+            const nextDefault = config.defaultVoice === editingVoiceOriginId ? vid : config.defaultVoice;
+            updateConfig(config.id, {
+                customVoices: nextCustomVoices,
+                defaultVoice: nextDefault,
+            });
+            setFetchedVoices(prev => {
+                const list = (prev[config.id] || []).filter(v => v.id !== editingVoiceOriginId);
+                return {
+                    ...prev,
+                    [config.id]: uniqueOptions([newOption, ...list]),
+                };
+            });
+        } else {
+            const nextCustomVoices = uniqueOptions([newOption, ...(config.customVoices || [])]);
+            updateConfig(config.id, {
+                customVoices: nextCustomVoices,
+                defaultVoice: vid,
+            });
+            setFetchedVoices(prev => ({
+                ...prev,
+                [config.id]: uniqueOptions([newOption, ...(prev[config.id] || [])]),
+            }));
+        }
+        closeCustomVoiceModal();
+    };
+
+    const deleteCustomVoice = (config: VoiceApiConfig, voiceIdToDelete: string) => {
+        const updated = (config.customVoices || []).filter(v => v.id !== voiceIdToDelete);
+        const nextDefault = config.defaultVoice === voiceIdToDelete
+            ? (updated[0]?.id || (config.provider === "Minimax" ? "male-qn-qingse" : "alloy"))
+            : config.defaultVoice;
+        updateConfig(config.id, {
+            customVoices: updated,
+            defaultVoice: nextDefault,
+        });
+        setFetchedVoices(prev => ({
+            ...prev,
+            [config.id]: (prev[config.id] || []).filter(v => v.id !== voiceIdToDelete),
+        }));
+    };
+
+    const handleDeleteCustomVoiceInModal = () => {
+        const config = configs.find(c => c.id === customVoiceTargetId);
+        if (!config || !editingVoiceOriginId) return;
+        deleteCustomVoice(config, editingVoiceOriginId);
+        closeCustomVoiceModal();
     };
 
     const submitClone = async () => {
@@ -443,6 +560,7 @@ export function VoiceSettings() {
             const clonedVoice: VoiceOption = {
                 id: nextVoiceId,
                 name: `克隆音色 (${nextVoiceId})`,
+                provider: "Minimax",
                 createdAt: Date.now(),
             };
             updateConfig(config.id, {
@@ -786,15 +904,19 @@ export function VoiceSettings() {
                                                 </div>
                                                 <div className="flex flex-col gap-1 mt-1">
                                                     <label className="menu-desc ml-1">朗读语言</label>
-                                                    <select
+                                                    <SearchableSelect
                                                         value={config.languageBoost || ""}
-                                                        onChange={(e) => updateConfig(config.id, { languageBoost: e.target.value || undefined })}
-                                                        className="ui-select"
-                                                    >
-                                                        {MINIMAX_LANGUAGE_OPTIONS.map(option => (
-                                                            <option key={option.value || "default"} value={option.value}>{option.label}</option>
-                                                        ))}
-                                                    </select>
+                                                        onChange={(val) => updateConfig(config.id, { languageBoost: val || undefined })}
+                                                        options={MINIMAX_LANGUAGE_OPTIONS.map(option => ({
+                                                            value: option.value,
+                                                            label: option.label,
+                                                            description: option.value ? option.value : undefined,
+                                                        }))}
+                                                        placeholder="不指定（保持默认）"
+                                                        title="选择朗读语言"
+                                                        searchPlaceholder="搜索语言，如：普通话、粤语、日语..."
+                                                        allowCustom={false}
+                                                    />
                                                 </div>
                                                 <div className="flex flex-col gap-1">
                                                     <label className="menu-desc ml-1">语音模型 (TTS Model)</label>
@@ -867,23 +989,45 @@ export function VoiceSettings() {
                                                     ) : (
                                                         (() => {
                                                             const options = voiceOptionsForConfig(config, fetchedVoices);
+                                                            const customList = (config.customVoices || []).filter(v => {
+                                                                if (!v.provider) return config.provider === "Minimax";
+                                                                return v.provider === config.provider;
+                                                            });
+                                                            const selectOptions = [
+                                                                {
+                                                                    value: "__add_custom__",
+                                                                    label: "+ 添加自定义 Voice ID...",
+                                                                },
+                                                                ...options.map(v => {
+                                                                    const isCustom = customList.some(cv => cv.id === v.id);
+                                                                    const customVoiceObj = isCustom ? customList.find(cv => cv.id === v.id) : undefined;
+                                                                    const cleanName = v.name.replace(/（自定义）$/, "").replace(/\(自定义\)$/, "").trim();
+                                                                    return {
+                                                                        value: v.id,
+                                                                        label: cleanName,
+                                                                        onAction: isCustom && customVoiceObj
+                                                                            ? () => openEditCustomVoiceModal(config, customVoiceObj)
+                                                                            : undefined,
+                                                                        actionTitle: "查看与编辑 Voice ID",
+                                                                    };
+                                                                }),
+                                                            ];
                                                             return (
-                                                                <select
-                                                                    value={options.some(v => v.id === config.defaultVoice) ? config.defaultVoice : "__manual__"}
-                                                                    onChange={(e) => {
-                                                                        if (e.target.value === "__manual__") {
-                                                                            setManualVoiceIds(prev => ({ ...prev, [config.id]: true }));
+                                                                <SearchableSelect
+                                                                    value={config.defaultVoice}
+                                                                    onChange={(val) => {
+                                                                        if (val === "__add_custom__") {
+                                                                            openCustomVoiceModal(config);
                                                                             return;
                                                                         }
-                                                                        updateConfig(config.id, { defaultVoice: e.target.value });
+                                                                        updateConfig(config.id, { defaultVoice: val });
                                                                     }}
-                                                                    className="ui-select flex-1"
-                                                                >
-                                                                    {options.map(v => (
-                                                                        <option key={v.id} value={v.id}>{v.name}</option>
-                                                                    ))}
-                                                                    <option value="__manual__">手动输入...</option>
-                                                                </select>
+                                                                    options={selectOptions}
+                                                                    placeholder="请选择音色..."
+                                                                    searchPlaceholder="搜索音色..."
+                                                                    title="选择音色"
+                                                                    className="flex-1"
+                                                                />
                                                             );
                                                         })()
                                                     )}
@@ -999,6 +1143,104 @@ export function VoiceSettings() {
                     </div>
                 );
             })()}
+
+            {customVoiceTargetId && (() => {
+                const config = configs.find(c => c.id === customVoiceTargetId);
+                if (!config) return null;
+                return (
+                    <div className="modal-overlay" style={{ zIndex: 10005 }} onClick={closeCustomVoiceModal}>
+                        <div
+                            className="modal-expand"
+                            data-ui="modal-dialog"
+                            style={{ width: "min(400px, calc(100% - 32px))", maxHeight: "80%" }}
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <div className="modal-header justify-center" data-ui="modal-header" style={{ justifyContent: "center" }}>
+                                <span className="modal-header-title" style={{ textAlign: "center", width: "100%" }}>
+                                    {editingVoiceOriginId ? "编辑自定义 Voice ID" : "添加自定义 Voice ID"}
+                                </span>
+                            </div>
+
+                            <div className="modal-body hide-scrollbar" data-ui="modal-body">
+                                <div className="flex flex-col gap-4">
+                                    <div className="flex flex-col gap-1">
+                                        <label className="menu-desc ml-1 font-medium">Voice ID（必填）</label>
+                                        <Input
+                                            type="text"
+                                            value={customVoiceIdInput}
+                                            onChange={e => setCustomVoiceIdInput(e.target.value)}
+                                            placeholder="例如: voice_xxx 或特定音色标识"
+                                            autoFocus
+                                        />
+                                        <span className="menu-desc ml-1 opacity-70">
+                                            输入Voice ID，并将该音色存入对应音色库
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <label className="menu-desc ml-1 font-medium">音色备注名称（可选）</label>
+                                        <Input
+                                            type="text"
+                                            value={customVoiceNameInput}
+                                            onChange={e => setCustomVoiceNameInput(e.target.value)}
+                                            placeholder="例如:「角色名」的声音"
+                                        />
+                                        <span className="menu-desc ml-1 opacity-70">
+                                            留空则自动显示为“自定义音色 (Voice ID)”
+                                        </span>
+                                    </div>
+
+                                    {customVoiceError && (
+                                        <Alert variant="danger">
+                                            <AlertCircle size={14} />
+                                            {customVoiceError}
+                                        </Alert>
+                                    )}
+
+                                    <div className="flex items-center justify-between pt-2">
+                                        <div>
+                                            {editingVoiceOriginId && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setConfirmDeleteCustomVoice(true)}
+                                                    className="ui-btn ui-btn-ghost px-2"
+                                                    style={{ color: "var(--c-danger, #fa5151)" }}
+                                                >
+                                                    删除
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button type="button" onClick={closeCustomVoiceModal} className="ui-btn ui-btn-outline">
+                                                取消
+                                            </button>
+                                            <button type="button" onClick={saveCustomVoice} className="ui-btn ui-btn-primary">
+                                                保存
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {confirmDeleteCustomVoice && editingVoiceOriginId && (
+                <ConfirmDialog
+                    title="确认删除该音色"
+                    message={`删除自定义 Voice ID「${customVoiceNameInput.trim() || editingVoiceOriginId}」后无法恢复。是否继续？`}
+                    icon={AlertCircle}
+                    variant="danger"
+                    confirmLabel="确认删除"
+                    cancelLabel="取消"
+                    overlayClassName="!z-[10010]"
+                    onConfirm={() => {
+                        handleDeleteCustomVoiceInModal();
+                        setConfirmDeleteCustomVoice(false);
+                    }}
+                    onCancel={() => setConfirmDeleteCustomVoice(false)}
+                />
+            )}
 
             {confirmDeleteId && (
                 <ConfirmDialog

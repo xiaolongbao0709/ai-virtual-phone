@@ -171,7 +171,7 @@ export type VoiceApiConfig = {
     speechSpeed?: number;
     /** Minimax voice_setting.pitch（半音，±12）。缺省保持旧行为（0，原声）。 */
     speechPitch?: number;
-    customVoices?: { id: string; name: string; createdAt?: number }[];
+    customVoices?: { id: string; name: string; createdAt?: number; provider?: string }[];
     enableSTT: boolean;
     enableTTS: boolean;
 };
