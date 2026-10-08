@@ -216,10 +216,43 @@ function createQaStreamFilter(sink: QaVisibleSink, onHolding?: (holding: boolean
         await onHolding?.(next);
     };
 
+    // 反引号代码范围内（行内反引号或三反引号围栏）出现的思考标签 / 动作指令开头是示例文字，不是真指令。
+    // 之前裸扫整段文本：示例标签没有闭合，后文会被整段扣住、flush 时丢弃——表现为「正文到反引号处被截断」。
+    // 流式中围栏可能还没闭合：未闭合的围栏 / 行内反引号一律视为延伸到当前文本末尾。
+    const CODE_FENCE = "`" + "`" + "`";
+    const insideCode = (text: string, index: number): boolean => {
+        let inFence = false;
+        let inInline = false;
+        for (let i = 0; i < index; i++) {
+            if (text.startsWith(CODE_FENCE, i)) {
+                inFence = !inFence;
+                inInline = false;
+                i += 2;
+                continue;
+            }
+            if (inFence) continue;
+            const ch = text[i];
+            if (ch === "`") inInline = !inInline;
+            else if (ch === "\n") inInline = false;
+        }
+        return inFence || inInline;
+    };
+
+    const findFirstOutsideCode = (text: string, re: RegExp): number => {
+        const scanner = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+        let match: RegExpExecArray | null;
+        while ((match = scanner.exec(text))) {
+            if (!insideCode(text, match.index)) return match.index;
+            if (match[0].length === 0) scanner.lastIndex++;
+        }
+        return -1;
+    };
+
     const findStart = (text: string): number => {
-        const directive = QA_DIRECTIVE_START.exec(text);
-        const think = QA_THINK_START.exec(text);
-        const indexes = [directive?.index, think?.index].filter((v): v is number => typeof v === "number");
+        const indexes = [
+            findFirstOutsideCode(text, QA_DIRECTIVE_START),
+            findFirstOutsideCode(text, QA_THINK_START),
+        ].filter((v) => v !== -1);
         return indexes.length ? Math.min(...indexes) : -1;
     };
 
