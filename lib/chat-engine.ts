@@ -2591,7 +2591,7 @@ async function generateChatCompletionCore(
     for (let round = 0; round < maxToolRounds; round++) {
         let filteredOutput: string;
         try {
-            if (isSessionStreamingEnabled(session, true)) {
+            if (isSessionStreamingEnabled(session, true) || Boolean(callbacks?.onStreamDelta)) {
                 // 流式分支：与 sendLLMRequest 走同一套请求构造/日志/正则，仅把「整段等待」换成
                 // SSE 增量，并通过 onStreamDelta 把原文增量实时交给 UI 层做预览显示。
                 let streamReasoning = "";
