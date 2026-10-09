@@ -70,6 +70,24 @@ const RICH_PATTERNS: {
     build: (m: RegExpMatchArray) => ParsedMessagePart;
 }[] = [
     {
+        // 角色主动换自己头像指令：[更换头像] 或 [换头像]
+        regex: /\[(?:更换头像|换头像)\]/,
+        build: () => ({
+            content: "",
+            mediaType: "change_char_avatar" as any,
+            mediaData: { label: "更换头像" },
+        }),
+    },
+    {
+        // 角色主动给用户换头像指令：[更换你的头像] 或 [换你的头像]
+        regex: /\[(?:更换你的头像|换你的头像)\]/,
+        build: () => ({
+            content: "",
+            mediaType: "change_user_avatar" as any,
+            mediaData: { label: "更换用户头像" },
+        }),
+    },
+    {
         // 3段格式：[红包:金额:个数:留言]
         regex: new RegExp(`\\[红包${C}(\\d+(?:\\.\\d+)?)${C}(\\d+)${C}([^\\]]*)\\]`),
         build: (m) => ({

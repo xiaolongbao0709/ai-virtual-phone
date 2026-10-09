@@ -2845,6 +2845,38 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 handleAIMediaAction(p.mediaType, charN, userN);
                 continue;
             }
+            // 角色主动换自己头像
+            if ((p.mediaType as string) === "change_char_avatar") {
+                const historyMsgs = loadChatMessages(session.id);
+                // 找到聊天中最新的一张图片作为头像
+                const lastImageMsg = [...historyMsgs].reverse().find(m => (m.mediaType === "image" || (m.mediaType === "media_file" && m.mediaData?.fileType === "image")) && m.mediaUrl);
+                if (lastImageMsg?.mediaUrl && character) {
+                    const allChars = loadCharacters();
+                    const target = allChars.find(c => c.id === character.id);
+                    if (target) {
+                        target.avatar = lastImageMsg.mediaUrl;
+                        import("@/lib/character-storage").then(({ saveCharacters }) => saveCharacters(allChars));
+                    }
+                }
+                continue;
+            }
+
+            // 角色主动给用户换头像
+            if ((p.mediaType as string) === "change_user_avatar") {
+                const historyMsgs = loadChatMessages(session.id);
+                const lastImageMsg = [...historyMsgs].reverse().find(m => (m.mediaType === "image" || (m.mediaType === "media_file" && m.mediaData?.fileType === "image")) && m.mediaUrl);
+                if (lastImageMsg?.mediaUrl) {
+                    import("@/lib/settings-storage").then(({ loadUserIdentities, saveUserIdentities }) => {
+                        const identities = loadUserIdentities();
+                        if (identities.length > 0) {
+                            identities[0].avatarUrl = lastImageMsg.mediaUrl;
+                            saveUserIdentities(identities);
+                        }
+                    });
+                }
+                continue;
+            }
+
             // Music: convert to plain text [音乐:xxx] (stays in history for AI), auto-play
             if (p.mediaType === "music") {
                 const mTitle = p.mediaData?.musicTitle || p.mediaData?.label;
