@@ -23,7 +23,7 @@ import remarkBreaks from "remark-breaks";
 import { createPortal } from "react-dom";
 import { Blocks, Maximize2, ReceiptText } from "lucide-react";
 import { retryChatGeneratedImage } from "@/lib/generated-image-retry";
-import { hasCharacterReferenceImage } from "@/lib/image-generation-service";
+import { hasCharacterReferenceImage, hasUserReferenceImage } from "@/lib/image-generation-service";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { ScanPayCard } from "@/components/chat/scan-pay-card";
 import { payWithWalletBalance } from "@/lib/wallet-storage";
@@ -122,15 +122,10 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
             return <XiaohongshuShareBubble msg={msg} />;
         case "audio":
             return <VoiceMessageBubble msg={msg} characterId={characterId} onUpdate={onUpdate} defaultTranslationExpanded={defaultTranslationExpanded} />;
-        case "tool_notice":
-            return null;
         default: {
             // 聊天插件自定义消息类型：mediaType = "plugin:<kind>"，由注册插件渲染
             if (msg.mediaType?.startsWith("plugin:")) {
                 return <PluginKindBubble msg={msg} kind={msg.mediaType.slice("plugin:".length)} />;
-            }
-            if (msg.role === "system" && msg.content?.startsWith("[系统提示：")) {
-                return null;
             }
             const textBubble = <TextBubble content={displayContent ?? msg.content} onActionSelect={onActionSelect} defaultTranslationExpanded={defaultTranslationExpanded} />;
             return (
@@ -1187,6 +1182,9 @@ function GeneratedImagePromptDialog({
     useReferenceImage,
     onUseReferenceImageChange,
     hasReferenceImage,
+    useUserReferenceImage,
+    onUseUserReferenceImageChange,
+    hasUserRef,
 }: {
     value: string;
     onChange: (value: string) => void;
@@ -1197,6 +1195,9 @@ function GeneratedImagePromptDialog({
     useReferenceImage: boolean;
     onUseReferenceImageChange: (useRef: boolean) => void;
     hasReferenceImage: boolean;
+    useUserReferenceImage: boolean;
+    onUseUserReferenceImageChange: (useRef: boolean) => void;
+    hasUserRef: boolean;
 }) {
     return (
         <div
@@ -1224,19 +1225,39 @@ function GeneratedImagePromptDialog({
                         placeholder="输入图片提示词"
                         disabled={busy}
                     />
-                    {hasReferenceImage ? (
-                        <label className="chat-generated-image-prompt-check">
-                            <input
-                                type="checkbox"
-                                checked={useReferenceImage}
-                                disabled={busy}
-                            onChange={e => onUseReferenceImageChange(e.target.checked)}
-                            />
-                            <span>使用角色参考图（角色出镜）</span>
-                        </label>
-                    ) : (
-                        <div className="chat-generated-image-prompt-empty-hint">该角色未配置参考图</div>
-                    )}
+                    <div className="flex flex-col gap-2">
+                        {hasReferenceImage ? (
+                            <label className="chat-generated-image-prompt-check">
+                                <input
+                                    type="checkbox"
+                                    checked={useReferenceImage}
+                                    disabled={busy}
+                                    onChange={e => onUseReferenceImageChange(e.target.checked)}
+                                />
+                                <span>使用角色参考图（角色出镜）</span>
+                            </label>
+                        ) : (
+                            <div className="chat-generated-image-prompt-empty-hint">该角色未配置参考图</div>
+                        )}
+
+                        {hasUserRef ? (
+                            <label className="chat-generated-image-prompt-check">
+                                <input
+                                    type="checkbox"
+                                    checked={useUserReferenceImage}
+                                    disabled={busy}
+                                    onChange={e => onUseUserReferenceImageChange(e.target.checked)}
+                                />
+                                <span>使用我的参考图（我出镜）</span>
+                            </label>
+                        ) : null}
+
+                        {hasReferenceImage && hasUserRef && useReferenceImage && useUserReferenceImage && (
+                            <div className="ts-12 text-[var(--c-accent)] px-1 py-0.5 rounded bg-[var(--c-accent)]/10 font-medium">
+                                ✨ 已开启双人同框合影模式（将结合双方参考图与外貌特征生成）
+                            </div>
+                        )}
+                    </div>
                     {error && <div className="chat-generated-image-retry-error">{error}</div>}
                 </div>
                 <div className="modal-footer" data-ui="modal-footer">
@@ -1281,7 +1302,9 @@ function ImageBubble({
     const [showPreview, setShowPreview] = useState(false);
 
     const [hasRef, setHasRef] = useState(() => hasCharacterReferenceImage(characterId));
+    const [hasUserRefVal, setHasUserRefVal] = useState(() => hasUserReferenceImage());
     const [useReferenceDraft, setUseReferenceDraft] = useState(d?.useReferenceImage === true);
+    const [useUserRefDraft, setUseUserRefDraft] = useState(false);
 
     useEffect(() => {
         if (!isMediaStoreRef(rawUrl)) {
@@ -1299,9 +1322,12 @@ function ImageBubble({
 
     const openPromptEditor = useCallback(() => {
         const latestHasRef = hasCharacterReferenceImage(characterId);
+        const latestHasUserRef = hasUserReferenceImage();
         setHasRef(latestHasRef);
+        setHasUserRefVal(latestHasUserRef);
         setPromptDraft(d?.label?.trim() || "");
         setUseReferenceDraft(latestHasRef && d?.useReferenceImage === true);
+        setUseUserRefDraft(latestHasUserRef);
         setRetryError("");
         setShowPromptEditor(true);
     }, [characterId, d?.label, d?.useReferenceImage]);
@@ -1316,7 +1342,7 @@ function ImageBubble({
         setShowPromptEditor(false);
         setRegenerating(true);
         setRetryError("");
-        retryChatGeneratedImage(msg, characterId, nextDescription, latestHasRef ? useReferenceDraft : undefined)
+        retryChatGeneratedImage(msg, characterId, nextDescription, latestHasRef ? useReferenceDraft : undefined, hasUserRefVal ? useUserRefDraft : undefined)
             .then(async (updated) => {
                 if (updated?.mediaUrl) {
                     try {
@@ -1361,6 +1387,9 @@ function ImageBubble({
                     onCancel={() => setShowPromptEditor(false)}
                     busy={regenerating}
                     error={retryError}
+                    useUserReferenceImage={useUserRefDraft}
+                    onUseUserReferenceImageChange={setUseUserRefDraft}
+                    hasUserRef={hasUserRefVal}
                 />,
                 document.body,
             )}

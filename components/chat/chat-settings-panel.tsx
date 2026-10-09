@@ -526,8 +526,8 @@ export function ChatSettingsPanel({
         : [];
     const userIdentity = resolveUserIdentity(undefined, session.isGroup ? "group_chat" : "chat");
 
-    const [currentCharAvatar, setCurrentCharAvatar] = useState(session.customCharAvatar || character?.avatar || null);
-    const [currentUserAvatar, setCurrentUserAvatar] = useState(session.customUserAvatar || userIdentity?.avatarUrl || null);
+    const [currentCharAvatar, setCurrentCharAvatar] = useState(character?.avatar || null);
+    const [currentUserAvatar, setCurrentUserAvatar] = useState(userIdentity?.avatarUrl || null);
 
     const handleCharAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -535,12 +535,14 @@ export function ChatSettingsPanel({
         const reader = new FileReader();
         reader.onload = async () => {
             const dataUrl = reader.result as string;
-            setCurrentCharAvatar(dataUrl);
-            // 只在当前会话记录换头像，不污染全局角色卡
-            updateSession({
-                customCharAvatar: dataUrl,
-                pendingAvatarNotice: `[环境感知：用户刚刚在聊天信息中为你在本聊天里的头像更换了一张新照片。在接下来的回复中，请自然地注意到自己换了头像并给出反应、调侃或道谢，但绝对不要解释这是系统提示。]`,
-            });
+            const allChars = loadCharacters();
+            const target = allChars.find(c => c.id === character.id);
+            if (target) {
+                target.avatar = dataUrl;
+                const { saveCharacters } = await import("@/lib/character-storage");
+                saveCharacters(allChars);
+                setCurrentCharAvatar(dataUrl);
+            }
         };
         reader.readAsDataURL(file);
     };
@@ -552,10 +554,16 @@ export function ChatSettingsPanel({
         reader.onload = async () => {
             const dataUrl = reader.result as string;
             setCurrentUserAvatar(dataUrl);
-            updateSession({
-                customUserAvatar: dataUrl,
-                pendingAvatarNotice: `[环境感知：用户刚刚在聊天信息中将自己在这场聊天里的头像更换为了一张新照片。在接下来的回复中，可以根据性格自然地提及或调侃TA换了头像。]`,
-            });
+            try {
+                const { loadUserIdentities, saveUserIdentities } = await import("@/lib/settings-storage");
+                const identities = loadUserIdentities();
+                if (identities.length > 0) {
+                    identities[0].avatarUrl = dataUrl;
+                    saveUserIdentities(identities);
+                }
+            } catch {
+                // ignore
+            }
         };
         reader.readAsDataURL(file);
     };
@@ -879,7 +887,7 @@ export function ChatSettingsPanel({
                                 </div>
                                 <div className="flex flex-col min-w-0">
                                     <span className="menu-label text-sm font-semibold truncate">{characterName} 的头像</span>
-                                    <span className="menu-desc text-xs text-[var(--c-accent)]">点击为 TA 更换聊天头像</span>
+                                    <span className="menu-desc text-xs text-[var(--c-accent)]">点击为 TA 更换头像</span>
                                 </div>
                                 <input type="file" accept="image/*" onChange={handleCharAvatarChange} className="hidden" />
                             </label>
@@ -1467,14 +1475,7 @@ export function ChatSettingsPanel({
                                 if (session.isGroup) {
                                     updateSession({ groupName });
                                 } else {
-                                    const oldAlias = alias;
-                                    const nextAlias = alias?.trim();
-                                    updateSession({
-                                        alias: nextAlias,
-                                        pendingAliasNotice: (nextAlias && nextAlias !== oldAlias?.trim())
-                                            ? `[环境感知：用户刚刚在聊天设置中将对你的备注修改为了"${nextAlias}"。在接下来的回复中，请自然地表现出自己发现了这个新备注，并根据你和用户的性格关系做出调侃、害羞、疑惑或高兴的反应，但不要提及这是系统指令。]`
-                                            : undefined,
-                                    });
+                                    updateSession({ alias });
                                 }
                                 setEditingAlias(false);
                             }} className="ui-btn ui-btn-success flex-1">保存</button>
