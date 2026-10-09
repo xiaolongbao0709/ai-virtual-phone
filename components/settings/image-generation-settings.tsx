@@ -1005,62 +1005,63 @@ export function ImageGenerationSettings() {
                         ) : characters.map(character => {
                             const preview = referencePreviews[character.id];
                             return (
-                                <div key={character.id} className="menu-item">
-                                <span className="h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-[var(--c-input)]">
-                                    {preview ? (
-                                        <img src={preview} alt="" className="h-full w-full object-cover" />
-                                    ) : character.avatar ? (
-                                        <img src={character.avatar} alt="" className="h-full w-full object-cover" />
-                                    ) : (
-                                        <span className="flex h-full w-full items-center justify-center ts-13 font-semibold text-[var(--c-icon)]">
-                                            {character.name.slice(0, 1)}
+                                <div key={character.id} className="flex flex-col border-b last:border-b-0 border-[var(--c-card-border)]/40">
+                                    <div className="menu-item !border-b-0">
+                                        <span className="h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-[var(--c-input)]">
+                                            {preview ? (
+                                                <img src={preview} alt="" className="h-full w-full object-cover" />
+                                            ) : character.avatar ? (
+                                                <img src={character.avatar} alt="" className="h-full w-full object-cover" />
+                                            ) : (
+                                                <span className="flex h-full w-full items-center justify-center ts-13 font-semibold text-[var(--c-icon)]">
+                                                    {character.name.slice(0, 1)}
+                                                </span>
+                                            )}
                                         </span>
-                                    )}
-                                </span>
-                                <span className="min-w-0 flex flex-1 flex-col">
-                                    <span className="menu-label truncate">{character.name}</span>
-                                    <span className="menu-desc truncate">{preview ? "已上传参考图" : "未上传参考图"}</span>
-                                </span>
-                                <span className="menu-right flex gap-2">
-                                    <button
-                                        type="button"
-                                        className="ui-link-btn"
-                                        aria-label={`上传 ${character.name} 的参考图`}
-                                        onClick={() => {
-                                            const input = document.createElement("input");
-                                            input.type = "file";
-                                            input.accept = "image/*";
-                                            input.onchange = async () => {
-                                                const file = input.files?.[0];
-                                                if (file) await uploadReference(character.id, file);
-                                            };
-                                            input.click();
-                                        }}
-                                    >
-                                        <Upload size={18} />
-                                    </button>
-                                    {preview && (
-                                        <button
-                                            type="button"
-                                            className="ui-link-btn"
-                                            data-variant="danger"
-                                            aria-label={`删除 ${character.name} 的参考图`}
-                                            onClick={() => removeReference(character.id)}
-                                        >
-                                            <Trash2 size={18} />
-                                        </button>
-                                    )}
-                                </span>
-                                </div>
-                                <div className="px-3 pb-3 pt-0">
-                                    <Input
-                                        type="text"
-                                        value={settings.characterAnchors?.[character.id] || ""}
-                                        onChange={(e) => updateCharacterAnchor(character.id, e.target.value)}
-                                        placeholder={`为 ${character.name} 设定外貌锚点提示词（如发色、服装特征）...`}
-                                        className="text-xs"
-                                    />
-                                </div>
+                                        <span className="min-w-0 flex flex-1 flex-col">
+                                            <span className="menu-label truncate">{character.name}</span>
+                                            <span className="menu-desc truncate">{preview ? "已上传参考图" : "未上传参考图"}</span>
+                                        </span>
+                                        <span className="menu-right flex gap-2">
+                                            <button
+                                                type="button"
+                                                className="ui-link-btn"
+                                                aria-label={`上传 ${character.name} 的参考图`}
+                                                onClick={() => {
+                                                    const input = document.createElement("input");
+                                                    input.type = "file";
+                                                    input.accept = "image/*";
+                                                    input.onchange = async () => {
+                                                        const file = input.files?.[0];
+                                                        if (file) await uploadReference(character.id, file);
+                                                    };
+                                                    input.click();
+                                                }}
+                                            >
+                                                <Upload size={18} />
+                                            </button>
+                                            {preview && (
+                                                <button
+                                                    type="button"
+                                                    className="ui-link-btn"
+                                                    data-variant="danger"
+                                                    aria-label={`删除 ${character.name} 的参考图`}
+                                                    onClick={() => removeReference(character.id)}
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
+                                            )}
+                                        </span>
+                                    </div>
+                                    <div className="px-3 pb-3 pt-0">
+                                        <Input
+                                            type="text"
+                                            value={settings.characterAnchors?.[character.id] || ""}
+                                            onChange={(e) => updateCharacterAnchor(character.id, e.target.value)}
+                                            placeholder={`为 ${character.name} 设定外貌锚点提示词（如发色、服装特征）...`}
+                                            className="text-xs"
+                                        />
+                                    </div>
                                 </div>
                             );
                         })}
