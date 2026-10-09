@@ -1248,9 +1248,15 @@ function GeneratedImagePromptDialog({
                                     disabled={busy}
                                     onChange={e => onUseUserReferenceImageChange(e.target.checked)}
                                 />
-                                <span>使用我的参考图（我出镜 / 双人合影）</span>
+                                <span>使用我的参考图（我出镜）</span>
                             </label>
                         ) : null}
+
+                        {hasReferenceImage && hasUserRef && useReferenceImage && useUserReferenceImage && (
+                            <div className="ts-12 text-[var(--c-accent)] px-1 py-0.5 rounded bg-[var(--c-accent)]/10 font-medium">
+                                ✨ 已开启双人同框合影模式（将结合双方参考图与外貌特征生成）
+                            </div>
+                        )}
                     </div>
                     {error && <div className="chat-generated-image-retry-error">{error}</div>}
                 </div>

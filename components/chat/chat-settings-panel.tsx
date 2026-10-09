@@ -526,6 +526,63 @@ export function ChatSettingsPanel({
         : [];
     const userIdentity = resolveUserIdentity(undefined, session.isGroup ? "group_chat" : "chat");
 
+    const [currentCharAvatar, setCurrentCharAvatar] = useState(character?.avatar || null);
+    const [currentUserAvatar, setCurrentUserAvatar] = useState(userIdentity?.avatarUrl || null);
+
+    const handleCharAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !character) return;
+        const reader = new FileReader();
+        reader.onload = async () => {
+            const dataUrl = reader.result as string;
+            const allChars = loadCharacters();
+            const target = allChars.find(c => c.id === character.id);
+            if (target) {
+                target.avatar = dataUrl;
+                const { saveCharacters } = await import("@/lib/character-storage");
+                saveCharacters(allChars);
+                setCurrentCharAvatar(dataUrl);
+
+                // 注入察觉事件：TA 察觉到你给 TA 换了头像
+                try {
+                    const noticeText = `[系统提示：用户刚刚在聊天设置中为你更换了新的社交头像照片。在接下来的回复中，你可以自然地注意到自己的新头像并给出反应、调侃或道谢。]`;
+                    pushChatMessage({
+                        sessionId: session.id,
+                        senderId: "system",
+                        senderName: "系统",
+                        role: "system",
+                        content: noticeText,
+                    });
+                } catch {
+                    // ignore push failure
+                }
+            }
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const handleUserAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async () => {
+            const dataUrl = reader.result as string;
+            setCurrentUserAvatar(dataUrl);
+            // 更新当前用户的头像
+            try {
+                const { loadUserIdentities, saveUserIdentities } = await import("@/lib/settings-storage");
+                const identities = loadUserIdentities();
+                if (identities.length > 0) {
+                    identities[0].avatarUrl = dataUrl;
+                    saveUserIdentities(identities);
+                }
+            } catch {
+                // ignore
+            }
+        };
+        reader.readAsDataURL(file);
+    };
+
     // ── Group member management ──
     const [, setRosterVersion] = useState(0); // bump to re-render after admin actions
     const [memberActionKey, setMemberActionKey] = useState<string | null>(null);
@@ -830,6 +887,46 @@ export function ChatSettingsPanel({
             <div className="page-menu chat-info-menu">
                 {/* Basic Info & Search */}
                 <div className="menu-group">
+                    {!session.isGroup && (
+                        <div className="menu-item !py-3 !items-center justify-between border-b border-[var(--c-card-border)]/40">
+                            <label className="flex items-center gap-3 cursor-pointer group flex-1">
+                                <div className="w-12 h-12 rounded-2xl overflow-hidden bg-[var(--c-input)] shrink-0 border border-[var(--c-card-border)] relative shadow-sm">
+                                    {currentCharAvatar ? (
+                                        <img src={currentCharAvatar} className="w-full h-full object-cover" alt="" />
+                                    ) : (
+                                        <ChatFallbackAvatar />
+                                    )}
+                                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] transition-opacity">
+                                        换TA头像
+                                    </div>
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                    <span className="menu-label text-sm font-semibold truncate">{characterName} 的头像</span>
+                                    <span className="menu-desc text-xs text-[var(--c-accent)]">点击可为 TA 更换头像</span>
+                                </div>
+                                <input type="file" accept="image/*" onChange={handleCharAvatarChange} className="hidden" />
+                            </label>
+
+                            <label className="flex items-center gap-3 cursor-pointer group ml-3 pl-3 border-l border-[var(--c-card-border)]/40">
+                                <div className="flex flex-col items-end min-w-0">
+                                    <span className="menu-label text-sm font-semibold truncate">我的头像</span>
+                                    <span className="menu-desc text-xs opacity-75">点击更换</span>
+                                </div>
+                                <div className="w-12 h-12 rounded-2xl overflow-hidden bg-[var(--c-input)] shrink-0 border border-[var(--c-card-border)] relative shadow-sm">
+                                    {currentUserAvatar ? (
+                                        <img src={currentUserAvatar} className="w-full h-full object-cover" alt="" />
+                                    ) : (
+                                        <ChatFallbackAvatar />
+                                    )}
+                                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] transition-opacity">
+                                        换我头像
+                                    </div>
+                                </div>
+                                <input type="file" accept="image/*" onChange={handleUserAvatarChange} className="hidden" />
+                            </label>
+                        </div>
+                    )}
+
                     <button className="menu-item" onClick={() => setEditingAlias(true)}>
                         <ChatInfoIcon icon={MessageSquare} color={CONTENT_APP_ACCENTS.chat} />
                         <div className="menu-label-group"><span className="menu-label">{session.isGroup ? "群聊名称" : "设置备注"}</span></div>
@@ -1393,7 +1490,23 @@ export function ChatSettingsPanel({
                                 if (session.isGroup) {
                                     updateSession({ groupName });
                                 } else {
+                                    const oldAlias = alias;
                                     updateSession({ alias });
+                                    // 备注察觉：如果修改了备注，注入系统察觉事件
+                                    if (alias && alias.trim() !== oldAlias?.trim()) {
+                                        try {
+                                            const noticeText = `[系统提示：用户刚刚在聊天设置中将对你的备注改为了"${alias.trim()}"。在接下来的回复中，你可以自然地表现出自己发现了这个新备注，并根据你和用户的性格关系做出调侃、害羞、疑惑或高兴的反应。]`;
+                                            pushChatMessage({
+                                                sessionId: session.id,
+                                                senderId: "system",
+                                                senderName: "系统",
+                                                role: "system",
+                                                content: noticeText,
+                                            });
+                                        } catch {
+                                            // ignore push failure
+                                        }
+                                    }
                                 }
                                 setEditingAlias(false);
                             }} className="ui-btn ui-btn-success flex-1">保存</button>
