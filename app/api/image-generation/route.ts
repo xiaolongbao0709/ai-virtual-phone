@@ -25,6 +25,7 @@ type ImageGenerationRequest = {
   size?: string;
   quality?: string;
   referenceImageDataUrl?: string;
+  userReferenceImageDataUrl?: string;
   // NovelAI 专属参数
   negativePrompt?: string;
   steps?: number;
@@ -301,7 +302,9 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
     const baseUrl = input.baseUrl?.trim();
     const model = input.model?.trim();
     const prompt = input.prompt?.trim();
-    const hasReference = Boolean(input.referenceImageDataUrl?.trim());
+    const charRef = input.referenceImageDataUrl?.trim();
+    const userRef = input.userReferenceImageDataUrl?.trim();
+    const hasReference = Boolean(charRef || userRef);
 
     if (!apiKey) return { status: 400, body: { error: "缺少 API Key" } };
     if (!baseUrl) return { status: 400, body: { error: "缺少 Base URL" } };
@@ -313,14 +316,29 @@ async function runImageGeneration(input: ImageGenerationRequest): Promise<{ stat
     let body: BodyInit;
 
     if (hasReference) {
-      const converted = dataUrlToBlob(input.referenceImageDataUrl || "");
-      if (!converted) return { status: 400, body: { error: "参考图格式无效" } };
       const form = new FormData();
       form.set("model", model);
       form.set("prompt", prompt);
       if (input.size && input.size !== "auto") form.set("size", input.size);
       if (input.quality && input.quality !== "auto") form.set("quality", input.quality);
-      form.append("image", converted.blob, `reference.${converted.mimeType.split("/")[1] || "png"}`);
+
+      if (charRef) {
+        const convertedChar = dataUrlToBlob(charRef);
+        if (convertedChar) {
+          form.append("image", convertedChar.blob, `char_ref.${convertedChar.mimeType.split("/")[1] || "png"}`);
+        }
+      }
+      if (userRef) {
+        const convertedUser = dataUrlToBlob(userRef);
+        if (convertedUser) {
+          // 如果没有 charRef，则把 userRef 作为主 image；若已有，则作为 user_image / image2 附加
+          const fieldName = charRef ? "user_image" : "image";
+          form.append(fieldName, convertedUser.blob, `user_ref.${convertedUser.mimeType.split("/")[1] || "png"}`);
+          if (charRef) {
+            form.append("images[]", convertedUser.blob, `user_ref.${convertedUser.mimeType.split("/")[1] || "png"}`);
+          }
+        }
+      }
       body = form;
     } else {
       headers["Content-Type"] = "application/json";

@@ -693,6 +693,10 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
     size: "1024x1024",
     quality: "auto",
     extraPrompt: "",
+    scenePrompt: "",
+    triggerMode: "auto",
+    userAppearanceAnchor: "",
+    characterAnchors: {},
     novelai: {
         apiKey: "",
         activePresetId: DEFAULT_NOVELAI_PRESET.id,
@@ -745,6 +749,16 @@ function normalizeImageGenerationSettings(settings: Partial<ImageGenerationSetti
     const refs = settings?.characterReferences && typeof settings.characterReferences === "object"
         ? settings.characterReferences
         : {};
+    const charAnchors = settings?.characterAnchors && typeof settings.characterAnchors === "object"
+        ? settings.characterAnchors
+        : {};
+    const userRef = settings?.userReference && typeof settings.userReference === "object"
+        ? {
+            assetId: typeof settings.userReference.assetId === "string" ? settings.userReference.assetId : "",
+            updatedAt: typeof settings.userReference.updatedAt === "number" ? settings.userReference.updatedAt : Date.now(),
+        }
+        : undefined;
+    const triggerMode = settings?.triggerMode === "manual" ? "manual" : "auto";
     const provider = settings?.provider === "novelai" ? "novelai" : "openai";
     const requestMode = settings?.requestMode === "server" || settings?.requestMode === "direct"
         ? settings.requestMode
@@ -810,6 +824,11 @@ function normalizeImageGenerationSettings(settings: Partial<ImageGenerationSetti
         activeOpenAiPresetId,
         novelai,
         characterReferences: refs,
+        characterAnchors: charAnchors,
+        userReference: userRef,
+        userAppearanceAnchor: typeof settings?.userAppearanceAnchor === "string" ? settings.userAppearanceAnchor : "",
+        scenePrompt: typeof settings?.scenePrompt === "string" ? settings.scenePrompt : "",
+        triggerMode,
         imageHosting: {
             ...DEFAULT_IMAGE_GENERATION_SETTINGS.imageHosting,
             ...hosting,

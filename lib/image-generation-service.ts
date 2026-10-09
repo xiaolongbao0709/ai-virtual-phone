@@ -392,6 +392,7 @@ async function generateImageViaServerOrProxy(params: {
   settings: ImageGenerationSettings;
   prompt: string;
   referenceImageDataUrl: string | null;
+  userReferenceImageDataUrl?: string | null;
   signal?: AbortSignal;
 }): Promise<ImageGenerationApiResponse> {
   if (IMAGE_GEN_PROXY_URL) {
@@ -425,9 +426,10 @@ async function generateImageViaServer(params: {
   settings: ImageGenerationSettings;
   prompt: string;
   referenceImageDataUrl: string | null;
+  userReferenceImageDataUrl?: string | null;
   signal?: AbortSignal;
 }): Promise<ImageGenerationApiResponse> {
-  const { settings, prompt, referenceImageDataUrl, signal } = params;
+  const { settings, prompt, referenceImageDataUrl, userReferenceImageDataUrl, signal } = params;
   throwIfAborted(signal);
   // 防"无限卡住":函数被平台中途击杀时流可能既不关闭也不报错。
   // 总超时 180s + 断流检测(心跳每 3s 一个字节,超过 25s 没有任何字节视为断流)。
@@ -450,6 +452,7 @@ async function generateImageViaServer(params: {
         size: settings.size,
         quality: settings.quality,
         referenceImageDataUrl: referenceImageDataUrl || undefined,
+        userReferenceImageDataUrl: userReferenceImageDataUrl || undefined,
       }),
     });
     throwIfAborted(signal);
@@ -728,6 +731,7 @@ export async function generateImageFromConfiguredApi(params: {
   description: string;
   characterId?: string;
   useReferenceImage?: boolean;
+  useUserReferenceImage?: boolean;
   settings?: ImageGenerationSettings;
   signal?: AbortSignal;
 }): Promise<ImageGenerationResult | null> {
@@ -788,11 +792,50 @@ export async function generateImageFromConfiguredApi(params: {
     ? await normalizeReferenceImageForEdit(rawReferenceImageDataUrl)
     : null;
   throwIfAborted(params.signal);
-  const prompt = mergePrompt(description, openaiSettings.extraPrompt);
+
+  // User 参考图
+  const userRefAssetId = settings.userReference?.assetId;
+  const rawUserRefDataUrl = params.useUserReferenceImage && userRefAssetId
+    ? await getChatImageFromIndexedDB(userRefAssetId)
+    : null;
+  throwIfAborted(params.signal);
+  const userReferenceImageDataUrl = rawUserRefDataUrl
+    ? await normalizeReferenceImageForEdit(rawUserRefDataUrl)
+    : null;
+  throwIfAborted(params.signal);
+
+  const isUsingAnyRef = Boolean(referenceImageDataUrl || userReferenceImageDataUrl);
+
+  // 提示词组装：若使用了参考图，拼接外貌锚点与参考图提示词；否则纯场景提示词
+  let finalPrompt = description;
+  if (isUsingAnyRef) {
+    const anchorParts: string[] = [];
+    if (referenceImageDataUrl && params.characterId) {
+      const charAnchor = settings.characterAnchors?.[params.characterId]?.trim();
+      if (charAnchor) anchorParts.push(`(character: ${charAnchor})`);
+    }
+    if (userReferenceImageDataUrl) {
+      const userAnchor = settings.userAppearanceAnchor?.trim();
+      if (userAnchor) anchorParts.push(`(user: ${userAnchor})`);
+    }
+    const anchorText = anchorParts.join(", ");
+    const refPrompt = openaiSettings.extraPrompt?.trim() || "";
+    if (anchorText) finalPrompt = `${finalPrompt}\n\n${anchorText}`;
+    if (refPrompt) finalPrompt = mergePrompt(finalPrompt, refPrompt);
+  } else {
+    const scenePrompt = settings.scenePrompt?.trim() || "";
+    if (scenePrompt) finalPrompt = mergePrompt(finalPrompt, scenePrompt);
+  }
 
   const data = openaiSettings.requestMode === "direct"
-    ? await generateImageDirect({ settings: openaiSettings, prompt, referenceImageDataUrl, signal: params.signal })
-    : await generateImageViaServerOrProxy({ settings: openaiSettings, prompt, referenceImageDataUrl, signal: params.signal });
+    ? await generateImageDirect({ settings: openaiSettings, prompt: finalPrompt, referenceImageDataUrl, signal: params.signal })
+    : await generateImageViaServerOrProxy({
+        settings: openaiSettings,
+        prompt: finalPrompt,
+        referenceImageDataUrl,
+        userReferenceImageDataUrl,
+        signal: params.signal,
+      });
 
   throwIfAborted(params.signal);
   const mimeType = data.mimeType || "image/png";
@@ -805,8 +848,8 @@ export async function generateImageFromConfiguredApi(params: {
     dataUrl: `data:${mimeType};base64,${data.b64}`,
     blob,
     mimeType,
-    prompt,
-    usedReferenceImage: Boolean(referenceImageDataUrl),
+    prompt: finalPrompt,
+    usedReferenceImage: isUsingAnyRef,
     revisedPrompt: data.revisedPrompt,
   };
 }
@@ -824,4 +867,9 @@ export function hasCharacterReferenceImage(characterId?: string): boolean {
   const settings = loadImageGenerationSettings();
   const ref = settings.characterReferences?.[characterId];
   return Boolean(ref?.assetId);
+}
+
+export function hasUserReferenceImage(): boolean {
+  const settings = loadImageGenerationSettings();
+  return Boolean(settings.userReference?.assetId);
 }

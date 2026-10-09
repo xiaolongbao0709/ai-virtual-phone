@@ -245,6 +245,14 @@ export type ImageGenerationSettings = {
         assetId: string;
         updatedAt: number;
     }>;
+    userReference?: {
+        assetId: string;
+        updatedAt: number;
+    };
+    userAppearanceAnchor?: string;
+    characterAnchors?: Record<string, string>;
+    scenePrompt?: string;
+    triggerMode?: "auto" | "manual";
     imageHosting: ImageHostingSettings;
 };
 

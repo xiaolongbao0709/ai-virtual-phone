@@ -67,6 +67,7 @@ export function ImageGenerationSettings() {
     const [settings, setSettings] = useState<ImageGenerationSettingsType>(DEFAULT_IMAGE_GENERATION_SETTINGS);
     const [characters, setCharacters] = useState<Character[]>([]);
     const [referencePreviews, setReferencePreviews] = useState<Record<string, string>>({});
+    const [userRefPreview, setUserRefPreview] = useState<string | null>(null);
     const [models, setModels] = useState<string[]>([]);
     const [isFetchingModels, setIsFetchingModels] = useState(false);
     const [naiModels, setNaiModels] = useState<string[]>(NOVELAI_COMMON_MODELS);
@@ -124,8 +125,17 @@ export function ImageGenerationSettings() {
             }
             setReferencePreviews(next);
         });
+
+        if (settings.userReference?.assetId) {
+            getChatImageFromIndexedDB(settings.userReference.assetId).then(dataUrl => {
+                if (!cancelled) setUserRefPreview(dataUrl);
+            });
+        } else {
+            setUserRefPreview(null);
+        }
+
         return () => { cancelled = true; };
-    }, [settings.characterReferences]);
+    }, [settings.characterReferences, settings.userReference]);
 
     useEffect(() => {
         return () => {
@@ -325,6 +335,31 @@ export function ImageGenerationSettings() {
         });
     };
 
+    const uploadUserReference = async (file: File) => {
+        const assetId = await saveChatImageToIndexedDB(file);
+        persist({
+            ...settings,
+            userReference: { assetId, updatedAt: Date.now() },
+        });
+    };
+
+    const removeUserReference = () => {
+        const next = { ...settings };
+        delete next.userReference;
+        persist(next);
+        setUserRefPreview(null);
+    };
+
+    const updateCharacterAnchor = (characterId: string, anchor: string) => {
+        const nextAnchors = { ...(settings.characterAnchors || {}) };
+        if (anchor.trim()) {
+            nextAnchors[characterId] = anchor;
+        } else {
+            delete nextAnchors[characterId];
+        }
+        persist({ ...settings, characterAnchors: nextAnchors });
+    };
+
     return (
         <div className="flex flex-col gap-6 pb-8">
             <div className="flex items-center">
@@ -337,13 +372,33 @@ export function ImageGenerationSettings() {
                         <Sparkles size={22} strokeWidth={1.75} />
                     </span>
                     <span className="settings-tools-menu-copy">
-                        <span className="menu-label appearance-menu-item-label">启用自动生图</span>
-                        <span className="menu-desc settings-tools-menu-desc">角色输出照片标签时自动调用图像生成 API。</span>
+                        <span className="menu-label appearance-menu-item-label">启用生图功能</span>
+                        <span className="menu-desc settings-tools-menu-desc">角色输出照片标签时调用图像生成 API。</span>
                     </span>
                     <span className="menu-right settings-tools-menu-toggle">
                         <Toggle checked={settings.enabled} onChange={(enabled) => updateSettings({ enabled })} className="settings-toggle-control" />
                     </span>
                 </div>
+                {settings.enabled && (
+                    <div className="menu-item border-t border-[var(--c-card-border)]/50">
+                        <span className="settings-tools-menu-copy">
+                            <span className="menu-label appearance-menu-item-label">生成模式</span>
+                            <span className="menu-desc settings-tools-menu-desc">
+                                {settings.triggerMode === "manual" ? "手动点击生成（角色输出图片时显示卡片，点击才消耗 API 出图）" : "主动自动生成（角色输出图片时立即在后台调用 API 跑图）"}
+                            </span>
+                        </span>
+                        <span className="menu-right settings-tools-menu-toggle">
+                            <Select
+                                value={settings.triggerMode || "auto"}
+                                onChange={(e) => updateSettings({ triggerMode: e.target.value as "auto" | "manual" })}
+                                className="text-xs"
+                            >
+                                <option value="auto">自动生成</option>
+                                <option value="manual">手动点击生成</option>
+                            </Select>
+                        </span>
+                    </div>
+                )}
             </div>
 
             <div className="menu-group p-4 flex flex-col gap-4">
@@ -717,15 +772,28 @@ export function ImageGenerationSettings() {
                         </div>
 
                         <div className="flex flex-col gap-1">
-                            <label className="menu-desc ml-1">补充提示词</label>
+                            <label className="menu-desc ml-1">使用参考图时的提示词 (Character / Subject Ref Prompt)</label>
                             <Textarea
                                 value={activeOpenAiPreset.extraPrompt}
                                 onChange={(event) => updateOpenAiPreset({ extraPrompt: event.target.value })}
-                                placeholder="会和角色输出的图片描述一起发送给生图模型。"
-                                rows={4}
+                                placeholder="使用参考图或人物出镜时生效，引导主体特征与风格融合。"
+                                rows={3}
                             />
                             <p className="menu-desc ml-1 opacity-70">
-                                选择尺寸后会自动在末尾追加一句「{RATIO_HINT_MARKER}…」构图提示，用于纠正部分不认 size 参数的接口（如 gpt-image-2）。可手动修改或删除。
+                                选择尺寸后会自动在末尾追加一句「{RATIO_HINT_MARKER}…」构图提示，用于纠正部分不认 size 参数的接口。
+                            </p>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">纯场景提示词 (Pure Scenery / Background Prompt)</label>
+                            <Textarea
+                                value={settings.scenePrompt || ""}
+                                onChange={(event) => updateSettings({ scenePrompt: event.target.value })}
+                                placeholder="未开启参考图（如纯风景、空镜、环境物件）时生效，彻底排除人物相关描述。"
+                                rows={3}
+                            />
+                            <p className="menu-desc ml-1 opacity-70">
+                                当生成风景或关闭人物参考时自动并入，例如：scenery, atmospheric lighting, photorealistic, no humans...
                             </p>
                         </div>
                     </>
@@ -866,6 +934,67 @@ export function ImageGenerationSettings() {
                 </div>
             ) : (
                 <div className="flex flex-col gap-2">
+                    <p className="settings-menu-section-title">User Reference</p>
+                    <div className="menu-group">
+                        <div className="menu-item flex-col !items-stretch gap-2.5">
+                            <div className="flex items-center gap-3">
+                                <span className="h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-[var(--c-input)]">
+                                    {userRefPreview ? (
+                                        <img src={userRefPreview} alt="" className="h-full w-full object-cover" />
+                                    ) : (
+                                        <span className="flex h-full w-full items-center justify-center ts-13 font-semibold text-[var(--c-icon)]">
+                                            ME
+                                        </span>
+                                    )}
+                                </span>
+                                <span className="min-w-0 flex flex-1 flex-col">
+                                    <span className="menu-label truncate">我的参考图 (User Reference)</span>
+                                    <span className="menu-desc truncate">{userRefPreview ? "已上传我的参考图" : "未上传我的参考图"}</span>
+                                </span>
+                                <span className="menu-right flex gap-2">
+                                    <button
+                                        type="button"
+                                        className="ui-link-btn"
+                                        aria-label="上传我的参考图"
+                                        onClick={() => {
+                                            const input = document.createElement("input");
+                                            input.type = "file";
+                                            input.accept = "image/*";
+                                            input.onchange = async () => {
+                                                const file = input.files?.[0];
+                                                if (file) await uploadUserReference(file);
+                                            };
+                                            input.click();
+                                        }}
+                                    >
+                                        <Upload size={18} />
+                                    </button>
+                                    {userRefPreview && (
+                                        <button
+                                            type="button"
+                                            className="ui-link-btn"
+                                            data-variant="danger"
+                                            aria-label="删除我的参考图"
+                                            onClick={removeUserReference}
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
+                                    )}
+                                </span>
+                            </div>
+                            <div className="flex flex-col gap-1 border-t border-[var(--c-card-border)]/40 pt-2">
+                                <label className="menu-desc text-xs font-medium">我的外貌锚点提示词</label>
+                                <Input
+                                    type="text"
+                                    value={settings.userAppearanceAnchor || ""}
+                                    onChange={(e) => persist({ ...settings, userAppearanceAnchor: e.target.value })}
+                                    placeholder="例如: 1girl, black long hair, brown eyes, casual white shirt..."
+                                    className="text-xs"
+                                />
+                            </div>
+                        </div>
+                    </div>
+
                     <p className="settings-menu-section-title">Character References</p>
                     <div className="menu-group">
                         {characters.length === 0 ? (
@@ -922,6 +1051,16 @@ export function ImageGenerationSettings() {
                                         </button>
                                     )}
                                 </span>
+                                </div>
+                                <div className="px-3 pb-3 pt-0">
+                                    <Input
+                                        type="text"
+                                        value={settings.characterAnchors?.[character.id] || ""}
+                                        onChange={(e) => updateCharacterAnchor(character.id, e.target.value)}
+                                        placeholder={`为 ${character.name} 设定外貌锚点提示词（如发色、服装特征）...`}
+                                        className="text-xs"
+                                    />
+                                </div>
                                 </div>
                             );
                         })}
