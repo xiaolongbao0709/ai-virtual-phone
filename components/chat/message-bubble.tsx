@@ -1302,7 +1302,7 @@ function ImageBubble({
     const [showPreview, setShowPreview] = useState(false);
 
     const [hasRef, setHasRef] = useState(() => hasCharacterReferenceImage(characterId));
-    const [hasUserRefVal, setHasUserRefVal] = useState(() => hasUserReferenceImage());
+    const [hasUserRef, setHasUserRef] = useState(() => hasUserReferenceImage());
     const [useReferenceDraft, setUseReferenceDraft] = useState(d?.useReferenceImage === true);
     const [useUserRefDraft, setUseUserRefDraft] = useState(false);
 
@@ -1322,12 +1322,12 @@ function ImageBubble({
 
     const openPromptEditor = useCallback(() => {
         const latestHasRef = hasCharacterReferenceImage(characterId);
-        const latestHasUserRef = hasUserReferenceImage();
+        const latestHasUser = hasUserReferenceImage();
         setHasRef(latestHasRef);
-        setHasUserRefVal(latestHasUserRef);
+        setHasUserRef(latestHasUser);
         setPromptDraft(d?.label?.trim() || "");
         setUseReferenceDraft(latestHasRef && d?.useReferenceImage === true);
-        setUseUserRefDraft(latestHasUserRef);
+        setUseUserRefDraft(latestHasUser);
         setRetryError("");
         setShowPromptEditor(true);
     }, [characterId, d?.label, d?.useReferenceImage]);
@@ -1342,7 +1342,7 @@ function ImageBubble({
         setShowPromptEditor(false);
         setRegenerating(true);
         setRetryError("");
-        retryChatGeneratedImage(msg, characterId, nextDescription, latestHasRef ? useReferenceDraft : undefined, hasUserRefVal ? useUserRefDraft : undefined)
+        retryChatGeneratedImage(msg, characterId, nextDescription, latestHasRef ? useReferenceDraft : undefined, hasUserRef ? useUserRefDraft : undefined)
             .then(async (updated) => {
                 if (updated?.mediaUrl) {
                     try {
@@ -1389,7 +1389,7 @@ function ImageBubble({
                     error={retryError}
                     useUserReferenceImage={useUserRefDraft}
                     onUseUserReferenceImageChange={setUseUserRefDraft}
-                    hasUserRef={hasUserRefVal}
+                    hasUserRef={hasUserRef}
                 />,
                 document.body,
             )}
