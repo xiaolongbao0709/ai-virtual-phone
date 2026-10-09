@@ -44,6 +44,10 @@ export type ChatSession = {
     backgroundImage?: string; // Add support for custom background
     autoReplied?: boolean; // Whether the initial greeting auto-reply has been triggered
     alias?: string;
+    customCharAvatar?: string;
+    customUserAvatar?: string;
+    pendingAvatarNotice?: string;
+    pendingAliasNotice?: string;
     videoBackground?: string;
     voiceBackground?: string;
     isBlacklisted?: boolean;

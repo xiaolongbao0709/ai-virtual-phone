@@ -2845,38 +2845,6 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 handleAIMediaAction(p.mediaType, charN, userN);
                 continue;
             }
-            // 角色主动换自己头像
-            if ((p.mediaType as string) === "change_char_avatar") {
-                const historyMsgs = loadChatMessages(session.id);
-                // 找到聊天中最新的一张图片作为头像
-                const lastImageMsg = [...historyMsgs].reverse().find(m => (m.mediaType === "image" || (m.mediaType === "media_file" && m.mediaData?.fileType === "image")) && m.mediaUrl);
-                if (lastImageMsg?.mediaUrl && character) {
-                    const allChars = loadCharacters();
-                    const target = allChars.find(c => c.id === character.id);
-                    if (target) {
-                        target.avatar = lastImageMsg.mediaUrl;
-                        import("@/lib/character-storage").then(({ saveCharacters }) => saveCharacters(allChars));
-                    }
-                }
-                continue;
-            }
-
-            // 角色主动给用户换头像
-            if ((p.mediaType as string) === "change_user_avatar") {
-                const historyMsgs = loadChatMessages(session.id);
-                const lastImageMsg = [...historyMsgs].reverse().find(m => (m.mediaType === "image" || (m.mediaType === "media_file" && m.mediaData?.fileType === "image")) && m.mediaUrl);
-                if (lastImageMsg?.mediaUrl) {
-                    import("@/lib/settings-storage").then(({ loadUserIdentities, saveUserIdentities }) => {
-                        const identities = loadUserIdentities();
-                        if (identities.length > 0) {
-                            identities[0].avatarUrl = lastImageMsg.mediaUrl;
-                            saveUserIdentities(identities);
-                        }
-                    });
-                }
-                continue;
-            }
-
             // Music: convert to plain text [音乐:xxx] (stays in history for AI), auto-play
             if (p.mediaType === "music") {
                 const mTitle = p.mediaData?.musicTitle || p.mediaData?.label;
@@ -2888,6 +2856,35 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     continue;
                 }
             }
+            // 角色主动换自己头像（支持 [[照片头像:名称]] 和 [更换头像]）
+            if ((p.mediaType as string) === "change_char_avatar" || (p.mediaType as string) === "photo_avatar") {
+                const historyMsgs = loadChatMessages(session.id);
+                const lastImageMsg = [...historyMsgs].reverse().find(m => (m.mediaType === "image" || (m.mediaType === "media_file" && m.mediaData?.fileType === "image")) && m.mediaUrl);
+                if (lastImageMsg?.mediaUrl) {
+                    updateSession({
+                        customCharAvatar: lastImageMsg.mediaUrl,
+                    });
+                }
+                continue;
+            }
+
+            // 角色主动换情头 / 换用户头像（支持 [[情侣头像:...]] 和 [更换你的头像]）
+            if ((p.mediaType as string) === "change_user_avatar" || (p.mediaType as string) === "couple_avatar") {
+                const historyMsgs = loadChatMessages(session.id);
+                const userImages = [...historyMsgs].reverse().filter(m => (m.mediaType === "image" || (m.mediaType === "media_file" && m.mediaData?.fileType === "image")) && m.mediaUrl);
+                if (userImages.length >= 2) {
+                    updateSession({
+                        customCharAvatar: userImages[1].mediaUrl,
+                        customUserAvatar: userImages[0].mediaUrl,
+                    });
+                } else if (userImages.length === 1) {
+                    updateSession({
+                        customUserAvatar: userImages[0].mediaUrl,
+                    });
+                }
+                continue;
+            }
+
             // Poke: keep mediaType so UI renders it as a system notice, while preserving response order.
             if (p.mediaType === "poke") {
                 const pokeSender = (p.mediaData?.pokeSender === "我" ? charN : p.mediaData?.pokeSender) || charN;
@@ -6003,11 +6000,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                             : character;
                                                         if (targetChar) sendRichMessage("poke", { pokeTarget: targetChar.name });
                                                     }} className="w-[40px] h-[40px] rounded-[20px] bg-[var(--c-input)] overflow-hidden cursor-pointer">
-                                                        {senderChar?.avatar ? (
-                                                            <img src={senderChar.avatar} className="w-full h-full object-cover" alt="" />
-                                                        ) : (
-                                                            <ChatFallbackAvatar />
-                                                        )}
+                                                        {(() => {
+                                                            const displayAvatar = (!session.isGroup ? session.customCharAvatar : undefined) || senderChar?.avatar;
+                                                            return displayAvatar ? (
+                                                                <img src={displayAvatar} className="w-full h-full object-cover" alt="" />
+                                                            ) : (
+                                                                <ChatFallbackAvatar />
+                                                            );
+                                                        })()}
                                                     </div>
                                                             </>
                                                         );
@@ -6084,11 +6084,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                         )}
                                         {msg.role === "user" && !isEmptyBubble && (
                                             <div className="chat-msg-avatar w-[40px] h-[40px] rounded-[20px] bg-[var(--c-page-body-bg)] shrink-0 flex items-center justify-center overflow-hidden">
-                                                {userIdentity?.avatarUrl ? (
-                                                    <img src={userIdentity.avatarUrl} alt="Me" className="w-full h-full object-cover rounded-[20px]" />
-                                                ) : (
-                                                    <User size={20} color="var(--c-text)" />
-                                                )}
+                                                {(() => {
+                                                    const displayUserAvatar = (!session.isGroup ? session.customUserAvatar : undefined) || userIdentity?.avatarUrl;
+                                                    return displayUserAvatar ? (
+                                                        <img src={displayUserAvatar} alt="Me" className="w-full h-full object-cover rounded-[20px]" />
+                                                    ) : (
+                                                        <User size={20} color="var(--c-text)" />
+                                                    );
+                                                })()}
                                             </div>
                                         )}
                                     </>

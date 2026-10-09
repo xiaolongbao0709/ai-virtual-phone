@@ -70,21 +70,21 @@ const RICH_PATTERNS: {
     build: (m: RegExpMatchArray) => ParsedMessagePart;
 }[] = [
     {
-        // 角色主动换自己头像指令：[更换头像] 或 [换头像]
-        regex: /\[(?:更换头像|换头像)\]/,
+        // 换照片头像：[[照片头像:名称]] 或 [照片头像:名称] 或 [更换头像]
+        regex: /(?:\[\[照片头像[：:][^\]]+\]\]|\[照片头像[：:][^\]]+\]|\[(?:更换头像|换头像)\])/,
         build: () => ({
             content: "",
-            mediaType: "change_char_avatar" as any,
-            mediaData: { label: "更换头像" },
+            mediaType: "photo_avatar" as any,
+            mediaData: { label: "照片头像" },
         }),
     },
     {
-        // 角色主动给用户换头像指令：[更换你的头像] 或 [换你的头像]
-        regex: /\[(?:更换你的头像|换你的头像)\]/,
+        // 换情侣头像：[[情侣头像:...]] 或 [情侣头像:...] 或 [更换你的头像]
+        regex: /(?:\[\[情侣头像[：:][^\]]+\]\]|\[情侣头像[：:][^\]]+\]|\[(?:更换你的头像|换你的头像|更换情侣头像|换情头)\])/,
         build: () => ({
             content: "",
-            mediaType: "change_user_avatar" as any,
-            mediaData: { label: "更换用户头像" },
+            mediaType: "couple_avatar" as any,
+            mediaData: { label: "情侣头像" },
         }),
     },
     {
