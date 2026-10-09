@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
+import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { getAllPosts, deleteMomentPost, getUnreadMomentsNotifications, saveMomentsLastSeen, addMomentComment } from "@/lib/moments-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
+import { getActiveChatWorldId, setActiveChatWorldId } from "@/lib/character-world-storage";
 import { saveChatImageToIndexedDB, getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import type { MomentComment, MomentPost } from "@/lib/moments-types";
 import { MomentPostCard } from "./moment-post-card";
@@ -43,6 +44,7 @@ type MomentsFeedProps = {
 
 export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
     const [posts, setPosts] = useState<MomentPost[]>([]);
+    const [activeWorldId, setActiveWorldId] = useState<string>(() => getActiveChatWorldId());
     const [showCompose, setShowCompose] = useState(false);
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     // 后台生图失败：弹一次弹窗提示，关掉即消失（同时多条失败只提示第一条）
@@ -50,7 +52,10 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
     const [coverUrl, setCoverUrl] = useState<string | null>(null);
     const coverInputRef = useRef<HTMLInputElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
-    const userIdentity = resolveUserIdentity(undefined, "chat");
+    const [userIdentity, setUserIdentity] = useState<any>(() => resolveUserIdentity(undefined, "chat"));
+    useEffect(() => {
+        setUserIdentity(resolveUserIdentity(undefined, "chat"));
+    }, [activeWorldId]);
     const [signature, setSignature] = useState(() => {
         if (typeof window !== "undefined") {
             return kvGet("moments_signature") || "make every day count (●ˇ∀ˇ●)";
@@ -100,7 +105,8 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
 
     const refreshPosts = useCallback(() => {
         const contactIds = new Set(loadChatContacts().map(c => c.characterId));
-        setPosts(getAllPosts().filter(p => p.authorType === "user" || contactIds.has(p.authorId)));
+        let allFiltered = getAllPosts().filter(p => p.authorType === "user" || contactIds.has(p.authorId));
+        setPosts(allFiltered);
         setUnreadNotifs(getUnreadMomentsNotifications());
     }, []);
 
@@ -187,8 +193,29 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
         }, 3000);
     }, [getScrollElement, restoreScrollAnchor, stopLoadMoreAnchorTracking]);
 
-    const visiblePosts = posts.slice(0, visiblePostCount);
-    const hasMorePosts = visiblePostCount < posts.length;
+    const worldGroups = useMemo(() => {
+        return (typeof window !== "undefined") ? require("@/lib/character-world-storage").loadCharacterWorldGroups() : [];
+    }, []);
+
+    const activeWorld = activeWorldId === "all" ? null : worldGroups.find((g: any) => g.id === activeWorldId);
+    const activeWorldMemberIds = useMemo(
+        () => (activeWorld ? new Set<string>(activeWorld.memberIds) : null),
+        [activeWorld]
+    );
+
+    const filteredPosts = useMemo(() => {
+        if (!activeWorldMemberIds) return posts;
+        return posts.filter(post => {
+            if (post.authorType === 'character') {
+                return activeWorldMemberIds.has(post.authorId);
+            }
+            // 用户自己的动态：只有可见名单里至少有一个本世界角色时，才出现在该世界
+            return (post.visibility ?? []).some(id => activeWorldMemberIds.has(id));
+        });
+    }, [posts, activeWorldMemberIds]);
+
+    const visiblePosts = filteredPosts.slice(0, visiblePostCount);
+    const hasMorePosts = visiblePostCount < filteredPosts.length;
 
     const handleLoadMorePosts = useCallback(() => {
         if (!hasMorePosts) return;
@@ -403,6 +430,7 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
                 <MomentsCompose
                     onClose={() => setShowCompose(false)}
                     onPublished={handlePublished}
+                    allowedCharacterIds={activeWorldMemberIds ? Array.from(activeWorldMemberIds) : undefined}
                 />
             ) : activeComposer ? (
                 <div className="feed-comment-modal-layer" data-ui="modal">
@@ -540,8 +568,25 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
                     </button>
                 )}
 
+                {/* World Filter */}
+                {worldGroups.length > 1 && (
+                    <div className="px-5 mb-2 flex justify-end">
+                        <select
+                            className="bg-[var(--c-input)] text-[var(--c-text)] text-xs rounded-md px-2 py-1 outline-none appearance-none"
+                            style={{ minWidth: "80px", textAlign: "center" }}
+                            value={activeWorldId}
+                            onChange={(e) => { setActiveWorldId(e.target.value); setActiveChatWorldId(e.target.value); }}
+                        >
+                            <option value="all">所有世界</option>
+                            {worldGroups.map((g: any) => (
+                                <option key={g.id} value={g.id}>{g.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+
                 {/* Posts list */}
-                {posts.length === 0 ? (
+                {filteredPosts.length === 0 ? (
                     <div className="feed-empty-state py-10 text-center text-[var(--c-icon)] ts-14">
                         还没有动态，发一条吧
                     </div>

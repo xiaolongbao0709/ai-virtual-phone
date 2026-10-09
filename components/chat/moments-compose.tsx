@@ -12,9 +12,12 @@ import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 type Props = {
     onClose: () => void;
     onPublished: () => void;
+    /** 当前世界的角色 id；传入时只能对这些角色可见/@，实现世界隔离 */
+    allowedCharacterIds?: string[];
 };
 
-export function MomentsCompose({ onClose, onPublished }: Props) {
+export function MomentsCompose({ onClose, onPublished, allowedCharacterIds }: Props) {
+    const allowedSet = allowedCharacterIds ? new Set(allowedCharacterIds) : null;
     const [text, setText] = useState("");
     const [photoAssetId, setPhotoAssetId] = useState<string | null>(null);
     const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -33,6 +36,7 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
         const chars = loadCharacters();
         const map: Record<string, boolean> = {};
         contacts.forEach(c => {
+            if (allowedSet && !allowedSet.has(c.characterId)) return;
             const char = chars.find(ch => ch.id === c.characterId);
             if (char) map[c.characterId] = true;
         });
@@ -47,7 +51,8 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
 
     const enrichedContacts = contacts
         .map(c => ({ ...c, char: chars.find(ch => ch.id === c.characterId) }))
-        .filter(c => c.char);
+        .filter(c => c.char)
+        .filter(c => !allowedSet || allowedSet.has(c.characterId));
 
     const visibleCount = Object.values(visibility).filter(Boolean).length;
     const isAllSelected = enrichedContacts.length > 0 && enrichedContacts.every(c => visibility[c.characterId]);
