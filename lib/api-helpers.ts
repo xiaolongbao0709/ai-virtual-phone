@@ -10,7 +10,7 @@ const SIMPLE_ANTHROPIC_AUTO_MAX_TOKENS = 8192;
 /**
  * Resolve the base URL for an API config.
  * Priority: user-configured baseUrl > provider default.
- * Supports all 11 UI providers + Custom (relies on baseUrl field).
+ * Supports all 12 UI providers + Custom (relies on baseUrl field).
  */
 export function determineBaseUrl(config: { provider: string; baseUrl?: string }): string {
     if (config.baseUrl) return config.baseUrl;
@@ -25,6 +25,7 @@ export function determineBaseUrl(config: { provider: string; baseUrl?: string })
         case "Zhipu":       return "https://open.bigmodel.cn/api/paas/v4";
         case "SiliconFlow": return "https://api.siliconflow.cn/v1";
         case "TogetherAI":  return "https://api.together.xyz/v1";
+        case "AtlasCloud":  return "https://api.atlascloud.ai/v1";
         case "Custom":      return ""; // must be set via baseUrl
         default:            return "";
     }

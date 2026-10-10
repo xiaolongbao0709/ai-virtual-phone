@@ -1165,6 +1165,7 @@ function determineBaseUrl(apiConfig) {
     case "Zhipu": return "https://open.bigmodel.cn/api/paas/v4";
     case "SiliconFlow": return "https://api.siliconflow.cn/v1";
     case "TogetherAI": return "https://api.together.xyz/v1";
+    case "AtlasCloud": return "https://api.atlascloud.ai/v1";
     case "Anthropic": return "https://api.anthropic.com/v1";
     case "Google": return "https://generativelanguage.googleapis.com/v1beta";
     default: return "";

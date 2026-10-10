@@ -322,6 +322,7 @@ export function ApiSettings() {
                                                 <option value="Zhipu">Zhipu (GLM)</option>
                                                 <option value="SiliconFlow">SiliconFlow</option>
                                                 <option value="TogetherAI">Together AI</option>
+                                                <option value="AtlasCloud">Atlas Cloud</option>
                                                 <option value="Custom">自定义 (Custom)</option>
                                             </select>
                                         </div>
