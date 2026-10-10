@@ -856,6 +856,58 @@ export function ImageGenerationSettings() {
                 </div>
             </div>
 
+            <div className="flex flex-col gap-2">
+                <p className="settings-menu-section-title">Appearance Prompts</p>
+                <div className="menu-group">
+                    <div className="flex flex-col gap-3 p-3">
+                        <p className="menu-desc opacity-70">
+                            上面的“补充提示词”会发给所有图片，适合只写画风与质感。人物的外貌词请写在这里：角色发的图按角色追加，描述里提到用户时再追加用户外貌词。全部留空则和以前完全一样。
+                        </p>
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">角色默认外貌词</label>
+                            <Textarea
+                                value={settings.characterExtraPrompt || ""}
+                                onChange={(event) => persist({ ...settings, characterExtraPrompt: event.target.value })}
+                                placeholder="角色发的图统一追加，例如：男性角色的体型、衣着特征。"
+                                rows={3}
+                            />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">用户外貌词</label>
+                            <Textarea
+                                value={settings.userExtraPrompt || ""}
+                                onChange={(event) => persist({ ...settings, userExtraPrompt: event.target.value })}
+                                placeholder="仅当图片描述提到用户时追加，例如：女性体型与衣着特征。"
+                                rows={3}
+                            />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">用户触发词</label>
+                            <Input
+                                value={settings.userTriggerKeywords || ""}
+                                onChange={(event) => persist({ ...settings, userTriggerKeywords: event.target.value })}
+                                placeholder="用逗号分隔，如：合照,合影,妻主"
+                            />
+                            <p className="menu-desc ml-1 opacity-70">用户身份的姓名会自动作为触发词，无需重复填写。</p>
+                        </div>
+                    </div>
+                    {characters.map(character => (
+                        <div key={`appearance-${character.id}`} className="flex flex-col gap-1 p-3">
+                            <label className="menu-desc ml-1">{character.name} 的专属外貌词（可选，填写后替代默认值）</label>
+                            <Textarea
+                                value={settings.characterPrompts?.[character.id] || ""}
+                                onChange={(event) => persist({
+                                    ...settings,
+                                    characterPrompts: { ...(settings.characterPrompts || {}), [character.id]: event.target.value },
+                                })}
+                                placeholder="留空则使用角色默认外貌词"
+                                rows={2}
+                            />
+                        </div>
+                    ))}
+                </div>
+            </div>
+
             {settings.provider === "novelai" ? (
                 <div className="flex flex-col gap-2">
                     <p className="settings-menu-section-title">Character References</p>

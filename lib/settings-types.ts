@@ -245,6 +245,14 @@ export type ImageGenerationSettings = {
         assetId: string;
         updatedAt: number;
     }>;
+    /** 角色默认外貌追加词：角色作为画面主角的图片（朋友圈、聊天照片等）统一追加。 */
+    characterExtraPrompt?: string;
+    /** 单个角色的专属外貌追加词；填写后替代上面的默认值（空字符串视为未设置）。 */
+    characterPrompts?: Record<string, string>;
+    /** 用户外貌追加词：仅当图片描述提到用户（姓名或触发词）时追加。 */
+    userExtraPrompt?: string;
+    /** 额外触发词，逗号/顿号/换行分隔；用户身份的姓名会自动作为触发词。 */
+    userTriggerKeywords?: string;
     imageHosting: ImageHostingSettings;
 };
 

@@ -1,5 +1,5 @@
 import type { ImageGenerationSettings, NovelAiPreset } from "./settings-types";
-import { loadImageGenerationSettings, DEFAULT_NOVELAI_PRESET } from "./settings-storage";
+import { loadImageGenerationSettings, loadUserIdentities, DEFAULT_NOVELAI_PRESET } from "./settings-storage";
 import JSZip from "jszip";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import { storeMediaBlob } from "./media-cache-storage";
@@ -54,6 +54,44 @@ function mergePrompt(description: string, extraPrompt: string): string {
   const main = description.trim();
   const extra = extraPrompt.trim();
   return extra ? `${main}\n\n${extra}` : main;
+}
+
+/**
+ * 按画面主角追加外貌词：
+ * - 角色作者发的图 → 追加该角色专属词，没填则用「角色默认外貌词」；
+ * - 描述里提到用户（用户身份姓名或触发词）→ 额外追加「用户外貌词」。
+ * 全部留空时返回空数组，行为与旧版完全一致。
+ */
+function collectAppearanceParts(description: string, characterId: string | undefined, settings: ImageGenerationSettings): string[] {
+  const parts: string[] = [];
+  if (characterId) {
+    const own = settings.characterPrompts?.[characterId]?.trim();
+    const fallback = settings.characterExtraPrompt?.trim();
+    if (own) parts.push(own);
+    else if (fallback) parts.push(fallback);
+  }
+  const userPrompt = settings.userExtraPrompt?.trim();
+  if (userPrompt) {
+    const triggers = new Set<string>();
+    for (const item of (settings.userTriggerKeywords || "").split(/[,，、\n]/)) {
+      const word = item.trim();
+      if (word) triggers.add(word);
+    }
+    try {
+      for (const identity of loadUserIdentities()) {
+        if (identity.name?.trim()) triggers.add(identity.name.trim());
+      }
+    } catch {
+      // 读取用户身份失败时只使用手动触发词
+    }
+    for (const word of triggers) {
+      if (description.includes(word)) {
+        parts.push(userPrompt);
+        break;
+      }
+    }
+  }
+  return parts;
 }
 
 function base64ToBlob(b64: string, mimeType: string): Blob {
@@ -750,6 +788,7 @@ export async function generateImageFromConfiguredApi(params: {
     const positiveParts: string[] = [];
     if (activePreset.positivePrompt?.trim()) positiveParts.push(activePreset.positivePrompt.trim());
     if (description) positiveParts.push(description);
+    positiveParts.push(...collectAppearanceParts(description, params.characterId, settings));
     const fullPrompt = positiveParts.join(", ");
 
     const data = settings.requestMode === "direct"
@@ -788,7 +827,7 @@ export async function generateImageFromConfiguredApi(params: {
     ? await normalizeReferenceImageForEdit(rawReferenceImageDataUrl)
     : null;
   throwIfAborted(params.signal);
-  const prompt = mergePrompt(description, openaiSettings.extraPrompt);
+  const prompt = [mergePrompt(description, openaiSettings.extraPrompt), ...collectAppearanceParts(description, params.characterId, settings)].join("\n\n");
 
   const data = openaiSettings.requestMode === "direct"
     ? await generateImageDirect({ settings: openaiSettings, prompt, referenceImageDataUrl, signal: params.signal })

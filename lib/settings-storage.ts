@@ -699,6 +699,10 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
         presets: [DEFAULT_NOVELAI_PRESET],
     },
     characterReferences: {},
+    characterExtraPrompt: "",
+    characterPrompts: {},
+    userExtraPrompt: "",
+    userTriggerKeywords: "合照,合影,妻主",
     imageHosting: {
         provider: "none",
         imgbbApiKey: "",
@@ -810,6 +814,14 @@ function normalizeImageGenerationSettings(settings: Partial<ImageGenerationSetti
         activeOpenAiPresetId,
         novelai,
         characterReferences: refs,
+        characterExtraPrompt: typeof settings?.characterExtraPrompt === "string" ? settings.characterExtraPrompt : "",
+        characterPrompts: settings?.characterPrompts && typeof settings.characterPrompts === "object"
+            ? Object.fromEntries(Object.entries(settings.characterPrompts).filter(([, v]) => typeof v === "string"))
+            : {},
+        userExtraPrompt: typeof settings?.userExtraPrompt === "string" ? settings.userExtraPrompt : "",
+        userTriggerKeywords: typeof settings?.userTriggerKeywords === "string"
+            ? settings.userTriggerKeywords
+            : DEFAULT_IMAGE_GENERATION_SETTINGS.userTriggerKeywords,
         imageHosting: {
             ...DEFAULT_IMAGE_GENERATION_SETTINGS.imageHosting,
             ...hosting,
