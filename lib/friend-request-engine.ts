@@ -22,6 +22,8 @@ import {
     getLatestRequestForCharacter,
     clearRequestsForCharacter,
     dispatchFriendRequestUpdated,
+    getPendingFriendRequests,
+    getAutoAcceptDays,
 } from "./friend-request-storage";
 import type { ContentAppId } from "./settings-types";
 import { kvSet, registerDynamicPrefix } from "./kv-db";
@@ -89,9 +91,17 @@ export async function triggerRejectReaction(characterId: string): Promise<void> 
  * Handle user accepting a friend request.
  * Re-adds contact, records system messages, triggers AI chat reply.
  */
+export type AcceptFriendOptions = {
+    /** 批量/自动通过：不触发角色打招呼，也不逐个刷新界面 */
+    silent?: boolean;
+    /** 自动通过时写入会话的系统提示 */
+    systemNote?: string;
+};
+
 export async function handleAcceptFriendRequest(
     characterId: string,
     requestMessage: string,
+    options: AcceptFriendOptions = {},
 ): Promise<ChatSession> {
     const chars = loadCharacters();
     const char = chars.find(c => c.id === characterId);
@@ -107,12 +117,12 @@ export async function handleAcceptFriendRequest(
     pushChatMessage({
         sessionId: session.id,
         role: "system",
-        content: `${userName}通过了${char?.name ?? "角色"}的好友申请`,
+        content: options.systemNote ?? `${userName}通过了${char?.name ?? "角色"}的好友申请`,
     });
 
     // Clean up friend requests for this character
     clearRequestsForCharacter(characterId);
-    dispatchFriendRequestUpdated();
+    if (!options.silent) dispatchFriendRequestUpdated();
 
     // Reset autoReplied so the greeting flow doesn't interfere
     const sessions = loadChatSessions();
@@ -123,11 +133,56 @@ export async function handleAcceptFriendRequest(
     }
 
     // Set flag for ChatRoom to trigger AI reply on mount
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && !options.silent) {
         kvSet(PENDING_REPLY_PREFIX + session.id, "1");
     }
 
     return session;
+}
+
+/** 一键通过所有待处理申请（静默：不触发角色打招呼）。返回通过人数。 */
+export async function acceptAllPendingFriendRequests(): Promise<number> {
+    const seen = new Set<string>();
+    let count = 0;
+    for (const req of getPendingFriendRequests()) {
+        if (seen.has(req.characterId)) continue;
+        seen.add(req.characterId);
+        try {
+            await handleAcceptFriendRequest(req.characterId, req.message, { silent: true });
+            count++;
+        } catch (err) {
+            console.warn("[FriendRequest] accept-all failed for", req.characterId, err);
+        }
+    }
+    if (count > 0) dispatchFriendRequestUpdated();
+    return count;
+}
+
+/** 保底：待处理超过 N 天（设置里可调，0=关闭）的申请自动通过。返回通过人数。 */
+export async function autoAcceptStaleFriendRequests(): Promise<number> {
+    const days = getAutoAcceptDays();
+    if (days <= 0) return 0;
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const seen = new Set<string>();
+    let count = 0;
+    for (const req of getPendingFriendRequests()) {
+        const created = new Date(req.createdAt).getTime();
+        if (!Number.isFinite(created) || created > cutoff) continue;
+        if (seen.has(req.characterId)) continue;
+        seen.add(req.characterId);
+        try {
+            const name = loadCharacters().find(c => c.id === req.characterId)?.name ?? "角色";
+            await handleAcceptFriendRequest(req.characterId, req.message, {
+                silent: true,
+                systemNote: `${name}的好友申请超过${days}天未处理，已自动通过`,
+            });
+            count++;
+        } catch (err) {
+            console.warn("[FriendRequest] auto-accept failed for", req.characterId, err);
+        }
+    }
+    if (count > 0) dispatchFriendRequestUpdated();
+    return count;
 }
 
 // ── Internal ──

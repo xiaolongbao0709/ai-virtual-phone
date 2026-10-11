@@ -95,6 +95,23 @@ export function clearRequestsForCharacter(characterId: string): void {
     saveFriendRequests(all.filter(r => r.characterId !== characterId));
 }
 
+// ── 自动通过设置：好友申请超过 N 天没处理，自动转为联系人（0 = 关闭）──
+const AUTO_ACCEPT_DAYS_KEY = "ai_phone_friend_request_auto_accept_days_v1";
+export const DEFAULT_AUTO_ACCEPT_DAYS = 3;
+
+export function getAutoAcceptDays(): number {
+    if (typeof window === "undefined") return 0;
+    const raw = kvGet(AUTO_ACCEPT_DAYS_KEY);
+    if (raw === null || raw === undefined || raw === "") return DEFAULT_AUTO_ACCEPT_DAYS;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_AUTO_ACCEPT_DAYS;
+}
+
+export function setAutoAcceptDays(days: number): void {
+    if (typeof window === "undefined") return;
+    kvSet(AUTO_ACCEPT_DAYS_KEY, String(Math.max(0, Math.floor(days))));
+}
+
 /** Dispatch event for UI refresh. */
 export function dispatchFriendRequestUpdated(): void {
     if (typeof window !== "undefined") {
