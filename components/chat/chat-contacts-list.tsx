@@ -9,12 +9,19 @@ import { Character } from "@/lib/character-types";
 import { loadMomentPosts } from "@/lib/moments-storage";
 import {
     getPendingFriendRequests,
+    getAutoAcceptDays,
+    setAutoAcceptDays,
     clearRequestsForCharacter,
     updateFriendRequestStatus,
     dispatchFriendRequestUpdated,
     type FriendRequest,
 } from "@/lib/friend-request-storage";
-import { handleAcceptFriendRequest, triggerRejectReaction } from "@/lib/friend-request-engine";
+import {
+    handleAcceptFriendRequest,
+    triggerRejectReaction,
+    acceptAllPendingFriendRequests,
+    autoAcceptStaleFriendRequests,
+} from "@/lib/friend-request-engine";
 import { PageShell } from "@/components/ui/page-shell";
 import { pinyin } from "pinyin-pro";
 import { kvSet } from "@/lib/kv-db";
@@ -47,6 +54,8 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
     const [showRequestList, setShowRequestList] = useState(false);
     const [selectedRequest, setSelectedRequest] = useState<FriendRequest | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [confirmAcceptAll, setConfirmAcceptAll] = useState(false);
+    const [autoDays, setAutoDays] = useState<number>(() => getAutoAcceptDays());
     const [isAddFriendOpen, setIsAddFriendOpen] = useState(false);
     const [addQuery, setAddQuery] = useState("");
     const [addResult, setAddResult] = useState<Character | null | undefined>(undefined);
@@ -101,6 +110,8 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
     }
 
     const refresh = useCallback(() => {
+        // 保底：超时未处理的好友申请自动通过（完成后会派发事件再刷新一次）
+        autoAcceptStaleFriendRequests().catch(() => {});
         const rawContacts = loadChatContacts();
         const enriched = rawContacts.map(c => ({
             ...c,
@@ -158,6 +169,22 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
             onSelectSession(session);
         } catch (err) {
             console.warn("[Contacts] Accept friend request failed:", err);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
+    const handleAcceptAll = async () => {
+        if (!confirmAcceptAll) {
+            setConfirmAcceptAll(true);
+            return;
+        }
+        setIsProcessing(true);
+        try {
+            await acceptAllPendingFriendRequests();
+            setConfirmAcceptAll(false);
+            setShowRequestList(false);
+            refresh();
         } finally {
             setIsProcessing(false);
         }
@@ -328,6 +355,19 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                         <div className="ts-17 font-semibold text-center text-[var(--c-text-title)]">
                             新的朋友
                         </div>
+                        {pendingRequests.length > 1 && (
+                            <button
+                                onClick={handleAcceptAll}
+                                disabled={isProcessing}
+                                className="ui-btn ui-btn-success w-full"
+                            >
+                                {isProcessing
+                                    ? "处理中..."
+                                    : confirmAcceptAll
+                                        ? `再点一次，确认全部通过（${pendingRequests.length}人）`
+                                        : `全部同意（${pendingRequests.length}人）`}
+                            </button>
+                        )}
                         {pendingRequests.length === 0 ? (
                             <div className="py-6 text-center text-[var(--c-text)] ts-14">
                                 暂无好友申请
@@ -364,8 +404,26 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                                 })}
                             </div>
                         )}
+                        <div className="ts-12 text-[var(--c-text)] flex items-center justify-between gap-2">
+                            <span>超过多久没处理，自动通过</span>
+                            <select
+                                value={autoDays}
+                                onChange={e => {
+                                    const n = Number(e.target.value);
+                                    setAutoDays(n);
+                                    setAutoAcceptDays(n);
+                                }}
+                                style={{ padding: "2px 6px", borderRadius: 6, border: "1px solid var(--c-border, #ddd)", background: "transparent", color: "inherit" }}
+                            >
+                                <option value={0}>关闭</option>
+                                <option value={1}>1天</option>
+                                <option value={3}>3天</option>
+                                <option value={7}>7天</option>
+                                <option value={14}>14天</option>
+                            </select>
+                        </div>
                         <button
-                            onClick={() => setShowRequestList(false)}
+                            onClick={() => { setConfirmAcceptAll(false); setShowRequestList(false); }}
                             className="ui-btn ui-btn-ghost w-full"
                         >
                             关闭
@@ -531,7 +589,7 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
                                         className="ui-textarea ui-input-inline min-h-[60px]"
                                     />
                                     <button onClick={() => setGreetingText("")} className="ui-bare-btn text-[var(--c-icon)]">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 6.41 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z" /></svg>
                                     </button>
                                 </div>
                             </div>
