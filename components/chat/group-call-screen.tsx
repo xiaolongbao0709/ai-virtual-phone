@@ -1,5 +1,6 @@
 "use client";
 
+import { stripTtsMarkup } from "@/lib/tts-markup";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, getLatestCharacterStateValues } from "@/lib/chat-storage";
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
@@ -242,8 +243,9 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
                     getLatestCharacterStateValues(r.characterId),
                 );
                 const textParts = parts.filter(p => !p.mediaType && p.content.trim());
-                const displayText = textParts.map(p => p.content).join("\n");
+                let displayText = textParts.map(p => p.content).join("\n");
                 const speechText = stripBilingualForSpeech(displayText);
+                displayText = stripTtsMarkup(displayText); // 字幕里不显示〔语气〕标记，合成时保留
 
                 if (!displayText && !(statusPanel || innerMonologue)) continue;
 
