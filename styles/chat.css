@@ -73,6 +73,238 @@
   display: none;
 }
 
+/* 角色自主线下邀约悬浮胶囊：紧贴在角色名标题栏正下方一行 */
+.chat-app .chat-room-wrapper .chat-offline-invite-capsule-wrapper {
+  position: absolute;
+  top: calc(var(--safe-area-top, 48px) + var(--page-header-content-height, 42px) + 6px);
+  left: 0;
+  right: 0;
+  z-index: 25;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.chat-app .chat-room-wrapper .chat-offline-invite-capsule-wrapper > * {
+  pointer-events: auto;
+}
+
+/* 强制来黑红质感弹窗进场动画：心跳微震与边缘微动 */
+@keyframes offline-invite-forced-tremor {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translate(0, 8px);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1.035) translate(-4.5px, -2.5px) rotate(-0.8deg);
+  }
+  38% {
+    transform: scale(0.985) translate(4.5px, 2px) rotate(0.8deg);
+  }
+  54% {
+    transform: scale(1.018) translate(-3px, -1.2px) rotate(-0.4deg);
+  }
+  70% {
+    transform: scale(0.995) translate(2px, 1px) rotate(0.3deg);
+  }
+  85% {
+    transform: scale(1.005) translate(-1px, -0.5px) rotate(0deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translate(0, 0) rotate(0deg);
+  }
+}
+
+@keyframes offline-invite-glitch-border {
+  0%, 100% {
+    opacity: 0.25;
+    box-shadow: 0 0 14px rgba(255, 59, 48, 0.35);
+    clip-path: inset(0 0 0 0);
+    transform: translate(0, 0);
+  }
+  1.5% {
+    opacity: 0.95;
+    box-shadow: -4px 0 16px rgba(255, 59, 48, 0.95), 4px 0 16px rgba(0, 240, 255, 0.7);
+    clip-path: inset(16% 0 50% 0);
+    transform: translate(-3.5px, 1px);
+  }
+  3% {
+    opacity: 0.35;
+    box-shadow: 0 0 10px rgba(255, 59, 48, 0.4);
+    clip-path: inset(0 0 0 0);
+    transform: translate(0, 0);
+  }
+  5% {
+    opacity: 0.9;
+    box-shadow: 4px -2px 18px rgba(255, 59, 48, 1), -3px 2px 16px rgba(0, 240, 255, 0.65);
+    clip-path: inset(58% 0 14% 0);
+    transform: translate(3.5px, -1.5px);
+  }
+  7% {
+    opacity: 0.25;
+    box-shadow: 0 0 14px rgba(255, 59, 48, 0.35);
+    clip-path: inset(0 0 0 0);
+    transform: translate(0, 0);
+  }
+  48% {
+    opacity: 0.25;
+    box-shadow: 0 0 14px rgba(255, 59, 48, 0.35);
+    clip-path: inset(0 0 0 0);
+    transform: translate(0, 0);
+  }
+  50% {
+    opacity: 0.85;
+    box-shadow: -3px 0 14px rgba(255, 59, 48, 0.85), 3px 0 14px rgba(0, 240, 255, 0.55);
+    clip-path: inset(8% 0 76% 0);
+    transform: translate(-2.5px, 0.5px);
+  }
+  52% {
+    opacity: 0.25;
+    box-shadow: 0 0 14px rgba(255, 59, 48, 0.35);
+    clip-path: inset(0 0 0 0);
+    transform: translate(0, 0);
+  }
+}
+
+.offline-invite-dialog-forced {
+  background: linear-gradient(175deg, rgba(26, 21, 28, 0.96) 0%, rgba(15, 12, 18, 0.98) 100%) !important;
+  border: 1px solid rgba(255, 59, 48, 0.45) !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.8), 0 0 24px rgba(255, 59, 48, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.2) !important;
+  animation: offline-invite-forced-tremor 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
+  overflow: hidden;
+}
+
+.offline-invite-dialog-forced::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 1rem;
+  background: transparent;
+  border: 1px solid rgba(255, 59, 48, 0.7);
+  pointer-events: none;
+  z-index: 10;
+  animation: offline-invite-glitch-border 3s ease-out infinite;
+}
+
+/* 1-2 视触踩点微颤动画（对应物理震动节律） */
+@keyframes offline-invite-12-tremor {
+  /* 第 1 下重颤：0% ~ 24%（约 0ms ~ 230ms，对应 200ms 物理沉长震） */
+  0% { transform: scale(1) translate(0, 0) rotate(0deg); }
+  6% { transform: scale(1.035) translate(-4.5px, -2.5px) rotate(-0.8deg); }
+  12% { transform: scale(0.985) translate(4px, 2px) rotate(0.6deg); }
+  18% { transform: scale(1.01) translate(-1.5px, -0.8px) rotate(-0.2deg); }
+  24% { transform: scale(1) translate(0, 0) rotate(0deg); }
+
+  /* 停顿悬停：25% ~ 50%（约 240ms ~ 480ms，对应 260ms 物理静止与留白喘息） */
+  25%, 50% { transform: scale(1) translate(0, 0) rotate(0deg); }
+
+  /* 第 2 连颤的前半跳：51% ~ 68%（约 490ms ~ 650ms，对应第 1 个 120ms 短脆震） */
+  55% { transform: scale(1.025) translate(3.5px, -2px) rotate(0.5deg); }
+  62% { transform: scale(0.99) translate(-2px, 1px) rotate(-0.3deg); }
+  68% { transform: scale(1) translate(0, 0) rotate(0deg); }
+
+  /* 双震之间的微隙喘息：69% ~ 78%（约 660ms ~ 750ms，对应 100ms 短停顿） */
+  69%, 78% { transform: scale(1) translate(0, 0) rotate(0deg); }
+
+  /* 第 2 连颤的后半跳：79% ~ 96%（约 760ms ~ 920ms，对应第 2 个 120ms 短脆震） */
+  83% { transform: scale(1.025) translate(-3.5px, 2px) rotate(-0.5deg); }
+  90% { transform: scale(0.99) translate(2px, -1px) rotate(0.3deg); }
+  96% { transform: scale(1) translate(0, 0) rotate(0deg); }
+
+  /* 平稳归正：97% ~ 100% */
+  100% { transform: scale(1) translate(0, 0) rotate(0deg); }
+}
+
+.offline-invite-12-pulse {
+  animation: offline-invite-12-tremor 0.96s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+/* 强制来顶栏胶囊黑红曜石质感 */
+.offline-invite-capsule-forced {
+  background: linear-gradient(175deg, rgba(26, 21, 28, 0.95) 0%, rgba(15, 12, 18, 0.97) 100%) !important;
+  border: 1px solid rgba(255, 59, 48, 0.45) !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18), 0 0 8px rgba(255, 59, 48, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.18) !important;
+}
+
+/* 长按卡片/头像温存拥抱样式（柔粉过渡与实底防透光） */
+.offline-invite-dialog-base {
+  background: var(--c-panel, #ffffff);
+  border: 1px solid var(--c-panel-border, rgba(0, 0, 0, 0.08));
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  transition: all 0.5s cubic-bezier(0.2, 0.8, 0.25, 1) !important;
+}
+
+.offline-invite-dialog-hug {
+  background: #ffffff !important;
+  border-color: rgba(244, 114, 182, 0.35) !important;
+  box-shadow: 0 18px 40px rgba(244, 114, 182, 0.18), 0 4px 16px rgba(0, 0, 0, 0.06) !important;
+  transition: all 0.5s cubic-bezier(0.2, 0.8, 0.25, 1) !important;
+}
+
+.offline-invite-avatar-hug {
+  transform: scale(0.96);
+  border-color: rgba(244, 114, 182, 0.45) !important;
+  box-shadow: 0 0 16px rgba(244, 114, 182, 0.25), inset 0 0 8px rgba(244, 114, 182, 0.1) !important;
+  transition: all 0.5s cubic-bezier(0.2, 0.8, 0.25, 1) !important;
+}
+
+.offline-invite-avatar-base {
+  transition: all 0.5s cubic-bezier(0.2, 0.8, 0.25, 1) !important;
+}
+
+/* 长按头像扩散柔粉极细光环线动画 */
+@keyframes offline-invite-hug-ring-expand {
+  0% {
+    transform: scale(0.96);
+    opacity: 0.32;
+  }
+  40% {
+    opacity: 0.2;
+  }
+  100% {
+    transform: scale(2.05);
+    opacity: 0;
+  }
+}
+
+.offline-invite-hug-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1px solid rgba(244, 114, 182, 0.28);
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 0;
+  animation: offline-invite-hug-ring-expand 2.2s cubic-bezier(0.15, 0.75, 0.3, 1) infinite;
+}
+
+.offline-invite-hug-ring-2 {
+  animation-delay: 1.1s;
+}
+
+.offline-invite-btn-hug {
+  background: linear-gradient(135deg, #f472b6 0%, #e87a90 100%) !important;
+  box-shadow: 0 4px 18px rgba(244, 114, 182, 0.45) !important;
+}
+
+.offline-invite-badge-hug {
+  background: #f472b6 !important;
+  box-shadow: 0 2px 10px rgba(244, 114, 182, 0.6) !important;
+}
+
+.offline-invite-tag-hug {
+  background: #fdeef2 !important;
+  color: #e87994 !important;
+  border-color: rgba(244, 114, 182, 0.35) !important;
+}
+
+.offline-invite-desc-hug {
+  background: #fdf5f7 !important;
+  border-color: rgba(244, 114, 182, 0.25) !important;
+}
+
+
 /* 插件自绘设置区（settings.section 坑位）在插件管理卡片内的内边距 */
 .chat-plugin-settings-section {
   padding: 12px 16px 4px;
@@ -995,6 +1227,9 @@
   position: static;
   bottom: auto;
   align-self: auto;
+  white-space: pre-line;
+  text-align: center;
+  line-height: 1.45;
 }
 
 /* ── Bubble role defaults ── */
@@ -7226,3 +7461,230 @@
   background: currentColor;
   animation: chat-stream-cursor-blink 1s steps(2, start) infinite;
 }
+
+/* ── 线下封禁弹窗（精致实底 SVG UI 双按钮特调） ─────────────── */
+.offline-lock-dialog.modal-dialog {
+  background: var(--c-panel);
+  border: 1px solid var(--c-panel-border, rgba(0, 0, 0, 0.08));
+  border-radius: 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
+  padding: 24px 20px 20px;
+  width: min(86%, 320px);
+  max-width: 320px;
+  gap: 14px;
+  animation: modalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.offline-lock-icon-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  gap: 4px;
+  margin-bottom: -2px;
+}
+
+.offline-lock-icon-wrap {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-text-title);
+  background: color-mix(in srgb, var(--c-text-title) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-text-title) 10%, transparent);
+  margin-bottom: 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── 轻敲锁显现心防小圆点 ── */
+.offline-lock-dots-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 6px;
+  margin: 0;
+  transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.offline-lock-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  transition: all 0.25s ease;
+}
+
+.offline-lock-dot.filled {
+  background: var(--c-text-title);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--c-text-title) 35%, transparent);
+}
+
+.offline-lock-dot.empty {
+  background: transparent;
+  border: 1.2px solid color-mix(in srgb, var(--c-text-title) 30%, transparent);
+}
+
+.offline-lock-dialog .modal-header {
+  padding: 0;
+  margin: 0;
+  border-bottom: none;
+}
+
+.offline-lock-dialog .modal-title {
+  font-size: calc(15.5px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: var(--c-text-title);
+  letter-spacing: 0.01em;
+  margin: 0;
+  text-align: center;
+}
+
+.offline-lock-dialog .modal-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 6px;
+  width: 100%;
+}
+
+.offline-lock-dialog-desc {
+  font-size: calc(13.6px * var(--app-text-scale, 1)) !important;
+  color: var(--c-text) !important;
+  line-height: 1.62 !important;
+  margin: 0 !important;
+  text-align: center;
+}
+
+.offline-lock-dialog-footer {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 0;
+}
+
+.offline-lock-dialog-footer .ui-btn {
+  flex: 1;
+  min-height: 42px;
+  border-radius: 12px;
+  font-weight: 500;
+  font-size: calc(14px * var(--app-text-scale, 1));
+  transition: all 0.2s ease;
+}
+
+.offline-lock-btn-reapply:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+/* ── 独立“申请中…”沉浸加载弹窗 ──────────────────── */
+.offline-applying-dialog.modal-dialog {
+  background: var(--c-panel);
+  border: 1px solid var(--c-panel-border, rgba(0, 0, 0, 0.08));
+  border-radius: 18px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
+  padding: 26px 20px;
+  width: min(80%, 260px);
+  max-width: 260px;
+  gap: 14px;
+  animation: modalSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.offline-applying-pulse {
+  animation: lockPulseAnim 1s ease-in-out infinite;
+}
+
+@keyframes lockPulseAnim {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.88;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+.offline-applying-dialog .modal-header {
+  padding: 0;
+  margin: 0;
+  border-bottom: none;
+}
+
+.offline-applying-title {
+  font-size: calc(14.5px * var(--app-text-scale, 1));
+  font-weight: 600;
+  color: var(--c-text-title);
+  letter-spacing: 0.01em;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.offline-applying-dots span {
+  display: inline-block;
+  opacity: 0;
+  animation: dotFadeAnim 1.2s infinite;
+}
+
+.offline-applying-dots span:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.offline-applying-dots span:nth-child(2) {
+  animation-delay: 0.25s;
+}
+
+.offline-applying-dots span:nth-child(3) {
+  animation-delay: 0.5s;
+}
+
+@keyframes dotFadeAnim {
+  0%, 20% {
+    opacity: 0;
+  }
+  40%, 80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ── 线下邀约与封禁附属项专属样式（从属浅灰底与精致细线） ── */
+.menu-item-sub {
+  background-color: color-mix(in srgb, var(--c-card-border) 32%, var(--c-panel));
+  position: relative;
+}
+
+.menu-item-sub-divider::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 16px;
+  right: 16px;
+  height: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--c-card-border) 45%, transparent);
+  pointer-events: none;
+}
+
+.menu-item-sub-top-divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 0;
+  border-top: 1px solid color-mix(in srgb, var(--c-card-border) 45%, transparent);
+  pointer-events: none;
+}
+
+
+

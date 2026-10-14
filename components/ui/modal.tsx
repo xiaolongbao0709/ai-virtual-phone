@@ -7,7 +7,7 @@ import { type LucideIcon, X, Check } from "lucide-react";
 /* ── Confirm Dialog (center) ── */
 export type ConfirmDialogProps = {
   title: string;
-  message?: string;
+  message?: string | ReactNode;
   icon?: LucideIcon;
   confirmLabel?: string;
   cancelLabel?: string;
@@ -37,7 +37,11 @@ export function ConfirmDialog({
           {Icon && <div className="ui-icon-circle" data-variant={variant === "default" ? undefined : variant}><Icon size={20} /></div>}
           <h3 className="modal-title">{title}</h3>
         </div>
-        {message && <div className="modal-body" data-ui="modal-body"><p>{message}</p></div>}
+        {message && (
+          <div className="modal-body" data-ui="modal-body">
+            {typeof message === "string" ? <p>{message}</p> : message}
+          </div>
+        )}
         <div className="modal-footer" data-ui="modal-footer">
           {cancelLabel && <button className="ui-btn ui-btn-ghost" onClick={onCancel}>{cancelLabel}</button>}
           <button className={`ui-btn ui-btn-${variant === "default" ? "primary" : variant}`} onClick={onConfirm}>{confirmLabel}</button>

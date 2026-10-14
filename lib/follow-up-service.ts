@@ -16,8 +16,12 @@ import {
     updateMessageMediaData,
     createResponseBatchId,
     getLatestCharacterStateValues,
+    applyOfflineLockDirective,
+    applyOfflineUnlockDirective,
+    type OfflineLockData,
 } from "./chat-storage";
 import type { ChatMessage, StateValue } from "./chat-storage";
+import { kvGet } from "./kv-db";
 import { generateChatCompletion, flattenCompletionResult } from "./chat-engine";
 import { armFollowUpBailout, armIdleReconnectBailout, cancelBailoutKey, cancelBailoutPrefix, cancelFollowUpBailout, startBailoutHeartbeat } from "./push-bailout-client";
 import { isWithinPushQuietHours } from "./push-client";
@@ -442,6 +446,10 @@ async function fireFollowUp(sched: { sessionId: string; count: number; delaySec?
         const lastUserMsg = [...latestMessages].reverse().find(m => m.role === "user");
         const lastUserTime = lastUserMsg ? new Date(lastUserMsg.createdAt).getTime() : Date.now();
 
+        const isOfflineMeetingActive = typeof window !== "undefined"
+            ? (kvGet("chat_offline_invite_active_session_" + session.id) === "1" || kvGet("offline_invite_active_session_" + session.id) === "1")
+            : false;
+
         // Build message list with follow-up round markers so AI knows its history
         const annotatedMessages: ChatMessage[] = [];
         let currentRound = 0;
@@ -451,11 +459,14 @@ async function fireFollowUp(sched: { sessionId: string; count: number; delaySec?
                 currentRound = msg.followUpIndex;
                 const markerTime = new Date(msg.createdAt).getTime();
                 const silenceSec = Math.round((markerTime - lastUserTime) / 1000);
+                const markerContent = isOfflineMeetingActive
+                    ? `[线下共处互动]：对方在此刻面对面共处中仍在看手机，距上次微信互动已过约${silenceSec}秒`
+                    : `[对方没有回复你的消息，距上次回复已过约${silenceSec}秒]`;
                 annotatedMessages.push({
                     id: `_marker_${currentRound}_${Date.now()}`,
                     sessionId: session.id,
                     role: "user",
-                    content: `[对方没有回复你的消息，距上次回复已过约${silenceSec}秒]`,
+                    content: markerContent,
                     status: "sent",
                     createdAt: msg.createdAt,
                 });
@@ -465,13 +476,16 @@ async function fireFollowUp(sched: { sessionId: string; count: number; delaySec?
 
         const nowMs = Date.now();
         const finalSilenceSec = Math.round((nowMs - lastUserTime) / 1000);
+        const silenceHintContent = isOfflineMeetingActive
+            ? `[特殊情境·线下共处互动]：你们双方此刻正处于现实面对面的线下约会/共处中。对方刚才切回手机后有片刻安静未在微信发信，你正坐在对方身边/对面看着对方看手机。请根据你的性格与当下氛围，自如主动在微信上给对方发一条消息（如：抬头调侃打趣、敲桌面提醒对方抬头看你、顺着情趣发个好玩的表情包逗对方、或轻声关切询问等，完全自由发挥，拒绝刻板模板）。【绝对严禁以为相隔两地而问“你在哪”、“怎么不理我”等出戏断片的话】！`
+            : `[对方没有回复你的消息，距上次回复已过约${finalSilenceSec}秒]`;
         const messagesWithHint: ChatMessage[] = [
             ...annotatedMessages,
             {
                 id: `_silence_${nowMs}`,
                 sessionId: session.id,
                 role: "system",
-                content: `[对方没有回复你的消息，距上次回复已过约${finalSilenceSec}秒]`,
+                content: silenceHintContent,
                 status: "sent",
                 createdAt: new Date().toISOString(),
             },
@@ -547,6 +561,8 @@ function pollIdleReconnect(now: number) {
         if (firingSet.has(rule.sessionId)) continue;
         // 追问链正在管这个会话时不叠加打扰
         if (loadAllFollowUpSchedules().some(sched => sched.sessionId === rule.sessionId)) continue;
+        // 线下碰面共处中不触发冷场重连
+        if (kvGet("chat_offline_invite_active_session_" + rule.sessionId) === "1" || kvGet("offline_invite_active_session_" + rule.sessionId) === "1") continue;
 
         const messages = loadChatMessages(rule.sessionId);
         const lastUser = [...messages].reverse().find(m => m.role === "user");
@@ -932,10 +948,45 @@ export async function parseAndSaveResponse(
         return parts.length;
     };
 
+    let pendingOfflineLockNotice: { text: string; lockData: OfflineLockData } | null = null;
+    let pendingOfflineUnlockNotice: { text: string } | null = null;
+
     const filteredParts: ParsedMessagePart[] = [];
     for (const p of parts) {
         if (p.mediaType === "voice_call") { triggerCall = "voice"; continue; }
         if (p.mediaType === "video_call") { triggerCall = "video"; continue; }
+        if (p.mediaType === "offline_lock") {
+            if (sess?.enableOfflineLock && !sess.isGroup && p.mediaData?.offlineLock) {
+                const { newLock, noticeText } = applyOfflineLockDirective(
+                    sessionId,
+                    charName,
+                    p.mediaData.offlineLock,
+                    responseBatchId,
+                );
+                if (noticeText) {
+                    pendingOfflineLockNotice = {
+                        text: noticeText,
+                        lockData: newLock,
+                    };
+                }
+                if (typeof window !== "undefined") {
+                    window.dispatchEvent(new CustomEvent("offline-lock-updated", { detail: { sessionId } }));
+                }
+            }
+            continue;
+        }
+        if (p.mediaType === "offline_unlock") {
+            if (sess?.enableOfflineLock && !sess.isGroup) {
+                const { noticeText } = applyOfflineUnlockDirective(sessionId, charName);
+                pendingOfflineUnlockNotice = {
+                    text: noticeText,
+                };
+                if (typeof window !== "undefined") {
+                    window.dispatchEvent(new CustomEvent("offline-lock-updated", { detail: { sessionId } }));
+                }
+            }
+            continue;
+        }
         // 「丢弃角色输出的无效表情包」开关（主动消息路径）
         if (p.mediaType === "sticker" && sess?.discardInvalidStickers === true) {
             const senderIds = sess.isGroup ? (sess.participantIds ?? []) : [sess.contactId];
@@ -1009,6 +1060,27 @@ export async function parseAndSaveResponse(
                 content: `发出快捷动作「${shortcutMarker.name}」`,
                 createdAt: Number.isFinite(baseMs) ? new Date(baseMs + 2).toISOString() : undefined,
                 mediaType: "tool_notice",
+            });
+        }
+        if (pendingOfflineLockNotice) {
+            pushChatMessage({
+                sessionId,
+                role: "system",
+                content: pendingOfflineLockNotice.text,
+                mediaType: "offline_lock_system_notice",
+                mediaData: { offlineLock: pendingOfflineLockNotice.lockData },
+                responseBatchId,
+                createdAt: options?.createdAt,
+            });
+        }
+        if (pendingOfflineUnlockNotice) {
+            pushChatMessage({
+                sessionId,
+                role: "system",
+                content: pendingOfflineUnlockNotice.text,
+                mediaType: "offline_unlock_system_notice",
+                responseBatchId,
+                createdAt: options?.createdAt,
             });
         }
         // Emit call trigger event for chat-room to pick up
@@ -1089,6 +1161,29 @@ export async function parseAndSaveResponse(
         savedMessages.push(saved);
     }
     if (markerPartIdx >= filteredParts.length) saveShortcutMarkerPair();
+    if (pendingOfflineLockNotice) {
+        const sysSaved = pushChatMessage({
+            sessionId,
+            role: "system",
+            content: pendingOfflineLockNotice.text,
+            mediaType: "offline_lock_system_notice",
+            mediaData: { offlineLock: pendingOfflineLockNotice.lockData },
+            responseBatchId,
+            createdAt: nextCreatedAt(),
+        });
+        savedMessages.push(sysSaved);
+    }
+    if (pendingOfflineUnlockNotice) {
+        const sysSaved = pushChatMessage({
+            sessionId,
+            role: "system",
+            content: pendingOfflineUnlockNotice.text,
+            mediaType: "offline_unlock_system_notice",
+            responseBatchId,
+            createdAt: nextCreatedAt(),
+        });
+        savedMessages.push(sysSaved);
+    }
 
     await dispatchBackgroundMessagesOneByOne(sessionId, savedMessages, options?.silent === true);
     if (imageReplacementTasks.length > 0) {
