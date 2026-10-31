@@ -1801,6 +1801,13 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
         kvSet("ai_phone_orphan_db_cleaned_v1", "1");
       }
 
+      // One-time cleanup of orphaned 3D WorldBuilder IndexedDB databases
+      if (!kvGet("ai_phone_worldbuilder_db_cleaned_v1")) {
+        void deleteDatabase("world-builder-models");
+        void deleteDatabase("world-builder-scenes");
+        kvSet("ai_phone_worldbuilder_db_cleaned_v1", "1");
+      }
+
       if (cancelled) return;
       startFollowUpService();
       startMomentsService();

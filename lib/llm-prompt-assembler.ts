@@ -23,7 +23,8 @@ export type LLMToolCallPayload = { id: string; name: string; args: Record<string
 
 export type LLMContentPart =
     | { type: "text"; text: string }
-    | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } };
+    | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
+    | { type: "input_audio"; input_audio: { dataUrl: string; mimeType: string } };
 
 export type LLMMessage = {
     role: LLMMessageRole;
@@ -997,13 +998,31 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
             let imageUrl: string | undefined;
 
             // Format rich-media messages as bracket markers so the AI sees them in context
+    console.log("[PromptAssembler] message mediaType:", msg.mediaType, "mediaUrl:", msg.mediaUrl, "mediaData:", msg.mediaData);
+            let contentParts: LLMContentPart[] | undefined;
             if (msg.mediaType) {
-                const visionImageUrl = visionEnabled ? getPromptVisionImageUrl(msg) : undefined;
-                if (visionImageUrl) {
-                    body = formatDirectVisionBody(msg, resolvedUserName, character?.name || "对方");
-                    imageUrl = visionImageUrl;
+                const rawAudioUrl = msg.mediaUrl || (msg.mediaData as any)?.audioUrl;
+                // 彻底放开：只要是最新一条消息（idx === historyLen - 1）且是语音，不管有没有 rawAudioUrl，强制挂载 input_audio，有 audioUrl 就传音频，没有就带标记
+                if (msg.mediaType === "audio" && idx === historyLen - 1) {
+                    if (rawAudioUrl) {
+                        contentParts = [
+                            { type: "text", text: `（用户发送的原生语音，请聆听语气、背景音和情绪并作出沉浸回复）：` },
+                            { type: "input_audio", input_audio: { dataUrl: rawAudioUrl, mimeType: "audio/webm" } }
+                        ];
+                    } else {
+                        contentParts = [
+                            { type: "text", text: `[系统检测到用户发送了语音消息，但音频数据未获取到]` }
+                        ];
+                    }
+                    body = `[原生语音留言]`;
                 } else {
-                    body = formatRichMediaForHistory(msg, resolvedUserName, character?.name || "对方");
+                    const visionImageUrl = visionEnabled ? getPromptVisionImageUrl(msg) : undefined;
+                    if (visionImageUrl) {
+                        body = formatDirectVisionBody(msg, resolvedUserName, character?.name || "对方");
+                        imageUrl = visionImageUrl;
+                    } else {
+                        body = formatRichMediaForHistory(msg, resolvedUserName, character?.name || "对方");
+                    }
                 }
             }
 
@@ -1013,7 +1032,8 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
                 ? formatAssistantImageHistoryText(msg, body, Boolean(showTs), ts)
                 : (showTs ? `${ts}\n${body}` : body);
             blocks.push({
-                text,
+                text: contentParts ? "" : text,
+                contentParts,
                 role: isAssistantImage ? "user" : promptRole,
                 depth: distFromBottom,
                 order: 999,
@@ -1067,7 +1087,19 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
                !finalPayload[finalPayload.length - 1].toolCalls?.length &&
                finalPayload[finalPayload.length - 1].role !== "tool");
 
-        if (b.imageUrl) {
+        if (b.contentParts) {
+            // 原生多模态内容（含音频或多模态切片）
+            finalPayload.push({
+                role: b.role,
+                content: b.contentParts,
+                reasoning: b.reasoning,
+                openRouterReasoningDetails: b.openRouterReasoningDetails,
+                toolCalls: b.toolCalls,
+                toolCallId: b.toolCallId,
+                name: b.toolName,
+                _debugMeta: { marker: b.marker, depth: b.depth, order: b.order, _fromHistory: b.fromHistory },
+            });
+        } else if (b.imageUrl) {
             // Vision message: build multi-part content with image (never merged)
             const parts: LLMContentPart[] = [];
             if (processedText) parts.push({ type: "text", text: processedText });
@@ -1177,8 +1209,12 @@ export function formatRichMediaForHistory(msg: ChatMessage, userName: string, ch
                 return formatImageGenerationDirective(msg);
             }
             return msg.content;
-        case "audio":
-            return `[语音条:${d?.label ?? "语音消息"}]`;
+        case "audio": {
+            const voiceText = d?.speechText || d?.label || msg.content;
+            return voiceText && voiceText !== "语音消息" && voiceText !== "[语音消息]"
+                ? `[语音条: ${voiceText}]`
+                : (d?.label ? `[语音条:${d.label}]` : "[语音条]");
+        }
         case "location":
             return `[位置:${d?.label ?? "位置"}]`;
         case "group_admin_notice":
@@ -2182,21 +2218,36 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
             prevTs = ts;
             prevRole = promptRole;
             let body = msg.content; // Already annotated with [SenderName]: prefix
+            let content: string | LLMContentPart[] = body;
             let imageUrl: string | undefined;
 
             const visionImageUrl = groupVisionEnabled ? getPromptVisionImageUrl(msg) : undefined;
             if (visionImageUrl) {
                 body = formatAnnotatedVisionBody(msg, body);
                 imageUrl = visionImageUrl;
+                content = [{ type: "text", text: body }, { type: "image_url", image_url: { url: imageUrl } }];
+            }
+
+            // 升级：支持原生音频输入 (Native Audio)
+            // 兼容读取 msg.mediaUrl 或 msg.mediaData?.audioUrl
+            const rawAudioUrl = msg.mediaUrl || (msg.mediaData as any)?.audioUrl;
+            if (msg.mediaType === "audio" && rawAudioUrl && idx === historyLen - 1) {
+                content = [
+                    { type: "text", text: body || (msg.mediaData?.label as string) || "[语音消息]" },
+                    { type: "input_audio", input_audio: { dataUrl: rawAudioUrl, mimeType: "audio/webm" } }
+                ];
             }
 
             const isAssistantImage = imageUrl && msg.role === "assistant" && msg.mediaType === "media_file";
-            const text = isAssistantImage
-                ? formatAssistantImageHistoryText(msg, body, Boolean(showTs), ts)
-                : (showTs ? `${ts}\n${body}` : body);
+            
+            // 如果 content 还是 string，处理下时间戳前缀
+            const finalContent = typeof content === "string" 
+                ? (isAssistantImage ? formatAssistantImageHistoryText(msg, content, Boolean(showTs), ts) : (showTs ? `${ts}\n${content}` : content))
+                : content;
 
             blocks.push({
-                text,
+                text: typeof finalContent === "string" ? finalContent : "",
+                contentParts: typeof finalContent !== "string" ? finalContent : undefined,
                 role: isAssistantImage ? "user" : promptRole,
                 depth: distFromBottom,
                 order: 999,
@@ -2229,7 +2280,19 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
             !finalPayload[finalPayload.length - 1].toolCalls?.length &&
             finalPayload[finalPayload.length - 1].role !== "tool";
 
-        if (b.imageUrl) {
+        if (b.contentParts) {
+            // 原生多模态内容（含音频或多模态切片）
+            finalPayload.push({
+                role: b.role,
+                content: b.contentParts,
+                reasoning: b.reasoning,
+                openRouterReasoningDetails: b.openRouterReasoningDetails,
+                toolCalls: b.toolCalls,
+                toolCallId: b.toolCallId,
+                name: b.toolName,
+                _debugMeta: { marker: b.marker, depth: b.depth, order: b.order, _fromHistory: b.fromHistory },
+            });
+        } else if (b.imageUrl) {
             // Vision message: build multi-part content with image (never merged)
             const parts: LLMContentPart[] = [];
             if (processedText) parts.push({ type: "text", text: processedText });

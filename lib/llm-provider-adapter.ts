@@ -346,7 +346,11 @@ function stringifyEnumValues(value: unknown): unknown {
 
 function textFromContent(content: string | LLMContentPart[]): string {
     if (typeof content === "string") return content;
-    return content.map((part) => part.type === "text" ? part.text : "[vision content omitted]").join("\n");
+    return content.map((part) => {
+        if (part.type === "text") return part.text;
+        if (part.type === "input_audio") return "[语音内容]";
+        return "[vision content omitted]";
+    }).join("\n");
 }
 
 function debugTextFromUnknownContent(content: unknown): string {
@@ -468,6 +472,16 @@ function geminiContentFromParts(content: string | LLMContentPart[]): unknown[] {
     if (typeof content === "string") return content ? [{ text: content }] : [];
     return content.flatMap<unknown>((part) => {
         if (part.type === "text") return part.text ? [{ text: part.text }] : [];
+        if (part.type === "input_audio") {
+            const parsed = parseDataUrl(part.input_audio.dataUrl);
+            if (!parsed) return [{ text: "[语音解析失败]" }];
+            return [{
+                inlineData: {
+                    mimeType: part.input_audio.mimeType || parsed.mimeType,
+                    data: parsed.data,
+                },
+            }];
+        }
         const parsed = parseDataUrl(part.image_url.url);
         if (!parsed) return [{ text: "[image omitted: unsupported image URL]" }];
         return [{

@@ -5,7 +5,7 @@
 // 装饰材料的 CSS 以 <style> 注入本画面容器（认 .mix-* 官方语义类）。
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ChevronLeft, Copy, History, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sun, WandSparkles, X } from "lucide-react";
+import { ArrowUpToLine, ChevronLeft, Copy, History, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Sun, WandSparkles, X } from "lucide-react";
 import { continueMix, editMixTurn, generateMixReply, canReplayMixFrom, MIX_STORE_SNAPSHOT_TURNS, mixTurnRawText, recordMixPanelStore, refreshMixOpening, regenerateMixTail, rerollMixReply, rerunMixFilters, runMixEditSync, runMixSessionEnd, truncateMixAfterTurn } from "@/lib/mixology/engine";
 import { findMixConnector, getMixMaterial, getMixSession, isMixBuiltinId, listMixPickables, MIX_CABINET_UPDATED_EVENT, resolveMixRecipeMaterials, saveMixMaterial, saveMixSession } from "@/lib/mixology/storage";
 import { applyMixMacros, MIX_DEFAULT_USER_NAME } from "@/lib/mixology/assembler";
@@ -567,6 +567,20 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
         return () => window.removeEventListener("message", onFrameResize);
     }, [applyStick, restoreLoadMoreAnchor]);
 
+    /** 一键回到对话最开头：展开全部收起的早先轮次，并将滚动条滚到最顶部 */
+    const scrollToBeginning = useCallback(() => {
+        stickRef.current = "free";
+        loadMoreAnchorRef.current = null;
+        setHiddenTurnCount(0);
+        requestAnimationFrame(() => {
+            const el = scrollRef.current;
+            if (el) {
+                el.scrollTo({ top: 0, behavior: "smooth" });
+                lastTopRef.current = 0;
+            }
+        });
+    }, []);
+
     /** 展开更早的一批：先记下最上面那条在屏幕上的位置，展开后钉回去；同时撒手，不再跟底 */
     const loadMoreTurns = useCallback(() => {
         const el = scrollRef.current;
@@ -1063,6 +1077,9 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
                         {layout.icon || "◈"}
                     </button>
                 ))}
+                <button type="button" className="mix-icon-btn" onClick={scrollToBeginning} aria-label="回到开头" title="回到开头">
+                    <ArrowUpToLine size={19} />
+                </button>
                 <button type="button" className="mix-icon-btn" onClick={() => setBgTuneOpen((v) => !v)} aria-label="背景观感" title="背景观感">
                     <Sun size={19} />
                 </button>

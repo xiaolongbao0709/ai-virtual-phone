@@ -258,6 +258,12 @@ export type ChatMessage = {
     // Group chat fields
     senderCharacterId?: string; // which character sent this assistant message in a group chat
     senderName?: string; // cached display name to avoid repeated lookups
+    reactions?: Array<{
+        emoji: string;
+        senderId: string; // "user" or characterId
+        senderName?: string;
+        createdAt: string;
+    }>;
 };
 
 export type ChatAppSettings = {
@@ -456,6 +462,46 @@ function getStableMessageOrder(msg: ChatMessage): number | null {
 function getMessageTimeValue(msg: Pick<ChatMessage, "createdAt">): number {
     const value = new Date(msg.createdAt).getTime();
     return Number.isFinite(value) ? value : 0;
+}
+
+export function toggleMessageReaction(
+    messageId: string,
+    emoji: string,
+    senderId: string,
+    senderName?: string
+): ChatMessage | null {
+    const raw = localStorage.getItem("chat_messages");
+    if (!raw) return null;
+    let all: ChatMessage[] = [];
+    try { all = JSON.parse(raw); } catch { return null; }
+    const idx = all.findIndex(m => m.id === messageId);
+    if (idx === -1) return null;
+    const msg = all[idx];
+    const reactions = [...(msg.reactions || [])];
+    const existingIdx = reactions.findIndex(r => r.senderId === senderId);
+    if (existingIdx !== -1) {
+        if (reactions[existingIdx].emoji === emoji) {
+            reactions.splice(existingIdx, 1);
+        } else {
+            reactions[existingIdx] = {
+                emoji,
+                senderId,
+                senderName: senderName || reactions[existingIdx].senderName,
+                createdAt: new Date().toISOString(),
+            };
+        }
+    } else {
+        reactions.push({
+            emoji,
+            senderId,
+            senderName,
+            createdAt: new Date().toISOString(),
+        });
+    }
+    const updated = { ...msg, reactions: reactions.length > 0 ? reactions : undefined };
+    all[idx] = updated;
+    localStorage.setItem("chat_messages", JSON.stringify(all));
+    return updated;
 }
 
 export function compareChatMessages(a: ChatMessage, b: ChatMessage): number {

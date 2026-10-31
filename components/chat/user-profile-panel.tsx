@@ -16,6 +16,7 @@ import { PageShell } from "@/components/ui/page-shell";
 import { CHAT_APP_CSS_EXAMPLE } from "@/lib/css-examples";
 import { Toggle } from "@/components/ui/form";
 import { StickerManager } from "./sticker-manager";
+import { ChatFavoritesPanel } from "./chat-favorites-panel";
 import { ChatPluginManager } from "./chat-plugin-manager";
 import { ChatPluginPageBoundary } from "./chat-plugin-page-boundary";
 import { WalletPanel } from "./wallet-panel";
@@ -61,6 +62,7 @@ import {
     ThumbsUp,
     Trash2,
     User,
+    Bookmark,
     type LucideIcon,
 } from "lucide-react";
 import { BINDING_ACCENTS, CONTENT_APP_ACCENTS } from "@/lib/ui-accent-colors";
@@ -156,6 +158,7 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const [showCSSEditor, setShowCSSEditor] = useState(false);
     const [showMomentsSettings, setShowMomentsSettings] = useState(false);
     const [showWalletPanel, setShowWalletPanel] = useState(false);
+    const [showFavoritesPanel, setShowFavoritesPanel] = useState(false);
     const [identity, setIdentity] = useState<UserIdentity | null>(null);
     const [notifEnabled, setNotifEnabled] = useState(false);
     const [notifHint, setNotifHint] = useState<string | null>(null);
@@ -279,6 +282,9 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     if (showWalletPanel) {
         return <WalletPanel onBack={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowWalletPanel(false); }} />;
     }
+    if (showFavoritesPanel) {
+        return <ChatFavoritesPanel onClose={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowFavoritesPanel(false); }} />;
+    }
 
     return (
         <>
@@ -396,6 +402,12 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                                 <Sticker size={22} strokeWidth={2} />
                             </div>
                             <span className="ts-12 font-semibold text-[var(--c-text-title)]">表情包仓储</span>
+                        </button>
+                        <button className="flex flex-col items-center gap-2 flex-1" onClick={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: true })); setShowFavoritesPanel(true); }}>
+                            <div className="w-[42px] h-[42px] rounded-[14px] bg-[#3b82f6]/15 text-[#3b82f6] flex items-center justify-center">
+                                <Bookmark size={22} strokeWidth={2} />
+                            </div>
+                            <span className="ts-12 font-semibold text-[var(--c-text-title)]">我的收藏</span>
                         </button>
                         <button className="flex flex-col items-center gap-2 flex-1" onClick={() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: true })); setShowCSSEditor(true); }}>
                             <div className="w-[42px] h-[42px] rounded-[14px] bg-[color-mix(in_srgb,var(--c-danger)_15%,transparent)] text-[var(--c-danger)] flex items-center justify-center">

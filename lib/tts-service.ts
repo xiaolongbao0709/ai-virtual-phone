@@ -2,6 +2,7 @@
 
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
 import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
+import { synthesizeElevenLabs } from "./elevenlabs-tts";
 
 export type VoiceApiConfigResolved = VoiceApiConfig;
 
@@ -39,6 +40,9 @@ export async function synthesizeSpeech(
         return synthesizeMinimax(text, voiceConfig, options?.emotion);
     }
 
+    if (provider === "ElevenLabs") {
+    return synthesizeElevenLabs(text, voiceConfig);
+}
     if (provider === "OpenAI") {
         return synthesizeOpenAI(text, voiceConfig);
     }

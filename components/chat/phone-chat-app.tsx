@@ -14,7 +14,7 @@ import { loadCharacters } from "@/lib/character-storage";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { kvGet } from "@/lib/kv-db";
 import { formatXiaohongshuShareForPrompt, type ChatSharePayload } from "@/lib/chat-share";
-import { CHAT_OPEN_SESSION_EVENT, CHAT_OPEN_ADD_CONTACT_EVENT } from "@/lib/chat-notification-events";
+import { CHAT_OPEN_SESSION_EVENT, CHAT_OPEN_ADD_CONTACT_EVENT, CHAT_JUMP_TO_MESSAGE_EVENT, type ChatJumpToMessageDetail } from "@/lib/chat-notification-events";
 import { CHAT_SESSIONS_MERGED_EVENT, type ChatSessionsMergedDetail } from "@/lib/chat-session-merge";
 import { getMascotSettingsSnapshot } from "@/lib/mascot-settings";
 
@@ -89,6 +89,21 @@ export const PhoneChatApp = memo(function PhoneChatApp({ onClose, initialSession
         };
         window.addEventListener(CHAT_OPEN_SESSION_EVENT, handler);
         return () => window.removeEventListener(CHAT_OPEN_SESSION_EVENT, handler);
+    }, []);
+
+    // 收藏夹等外部组件跳转进入会话消息
+    useEffect(() => {
+        const jumpHandler = (e: Event) => {
+            const detail = (e as CustomEvent<ChatJumpToMessageDetail>).detail;
+            if (!detail?.sessionId) return;
+            const session = loadChatSessions().find(s => s.id === detail.sessionId);
+            if (!session) return;
+            setActiveMascot(false);
+            setActiveSession(session);
+            setActiveTab("messages");
+        };
+        window.addEventListener(CHAT_JUMP_TO_MESSAGE_EVENT, jumpHandler);
+        return () => window.removeEventListener(CHAT_JUMP_TO_MESSAGE_EVENT, jumpHandler);
     }, []);
 
     // 重复会话被合并：被删会话的聊天室缓存一并卸载

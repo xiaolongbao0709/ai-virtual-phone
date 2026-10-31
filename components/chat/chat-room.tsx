@@ -19,7 +19,8 @@ import { formatOfflineTurnXml as formatOfflineTurnXmlShared, buildOfflinePromptH
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
 import { CustomStatusFrame } from "@/components/chat/custom-status-frame";
 import { sendBrowserNotification } from "@/lib/browser-notification";
-import { dispatchChatMessageNotice } from "@/lib/chat-notification-events";
+import { dispatchChatMessageNotice, CHAT_JUMP_TO_MESSAGE_EVENT, type ChatJumpToMessageDetail } from "@/lib/chat-notification-events";
+import { addChatFavorite, isChatMessageFavorited, removeChatFavorite } from "@/lib/chat-favorites-storage";
 import { shouldSendChatInputOnEnter } from "@/lib/chat-input-keyboard";
 import { useChatBottomReserve } from "./use-chat-bottom-reserve";
 import ReactMarkdown from "react-markdown";
@@ -625,6 +626,7 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onStartVideoCall: () => void;
     onStartVoiceCall: () => void;
     onSendText: (text: string, options?: { autoReply?: boolean }) => boolean;
+    onSendVoiceMessage?: (blob: Blob, duration: number, transcript?: string) => Promise<boolean | void> | boolean | void;
     onStopGeneration: () => void;
     onTriggerAIResponse: () => void;
 	onSendSticker: (name: string, url?: string) => void;
@@ -656,11 +658,19 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
     onStartVideoCall,
     onStartVoiceCall,
     onSendText,
+    onSendVoiceMessage,
     onStopGeneration,
     onTriggerAIResponse,
     onSendSticker,
 }, ref) {
     const [inputText, setInputText] = useState("");
+    const [isVoiceInputMode, setIsVoiceInputMode] = useState(false);
+    const [isHoldingVoice, setIsHoldingVoice] = useState(false);
+    const [isVoiceCancelZone, setIsVoiceCancelZone] = useState(false);
+    const [voiceRecordError, setVoiceRecordError] = useState("");
+    const voiceStartYRef = useRef(0);
+    const voiceStartTimeRef = useRef(0);
+    const voiceRecordingRef = useRef<import("@/lib/stt-cloud").ActiveCallRecording | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     // 表情包搜索联想：ESC/失焦置 true 隐藏，输入变化重新开启
     const [suggestClosed, setSuggestClosed] = useState(false);
@@ -709,6 +719,74 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
         setInputText("");
         resetTextareaHeight();
         onClosePanels();
+    };
+
+    const handleVoicePointerDown = async (e: React.PointerEvent) => {
+        if (inputLocked || isGenerating) return;
+        e.preventDefault();
+        voiceStartYRef.current = e.clientY;
+        voiceStartTimeRef.current = Date.now();
+        setIsVoiceCancelZone(false);
+        setVoiceRecordError("");
+        try {
+            const { startCallRecording } = await import("@/lib/stt-cloud");
+            const recording = await startCallRecording();
+            voiceRecordingRef.current = recording;
+            setIsHoldingVoice(true);
+        } catch (err: any) {
+            setVoiceRecordError(err?.message || "无法访问麦克风");
+            setTimeout(() => setVoiceRecordError(""), 2500);
+        }
+    };
+
+    const handleVoicePointerMove = (e: React.PointerEvent) => {
+        if (!isHoldingVoice) return;
+        const deltaY = voiceStartYRef.current - e.clientY;
+        setIsVoiceCancelZone(deltaY > 50);
+    };
+
+    const handleVoicePointerUp = async (e: React.PointerEvent) => {
+        if (!isHoldingVoice) return;
+        e.preventDefault();
+        const durationMs = Date.now() - voiceStartTimeRef.current;
+        const recording = voiceRecordingRef.current;
+        voiceRecordingRef.current = null;
+        setIsHoldingVoice(false);
+
+        if (!recording) return;
+
+        if (isVoiceCancelZone) {
+            recording.cancel();
+            return;
+        }
+
+        if (durationMs < 500) {
+            recording.cancel();
+            setVoiceRecordError("说话时间太短");
+            setTimeout(() => setVoiceRecordError(""), 1500);
+            return;
+        }
+
+        try {
+            const blob = await recording.stop();
+            if (!blob) return;
+            const durationSec = Math.max(1, Math.round(durationMs / 1000));
+            // 转写
+            let transcript = "";
+            try {
+                const { resolveCloudSttConfig, transcribeAudioBlob } = await import("@/lib/stt-cloud");
+                const sttCfg = resolveCloudSttConfig(characterId);
+                if (sttCfg) {
+                    transcript = await transcribeAudioBlob(blob, sttCfg);
+                }
+            } catch { /* STT 失败不阻断语音发送 */ }
+
+            if (onSendVoiceMessage) {
+                await onSendVoiceMessage(blob, durationSec, transcript);
+            }
+        } catch (err: any) {
+            console.warn("发送语音失败:", err);
+        }
     };
 
     const panelOpen = showEmojiPanel || showStickerPanel || showPlusMenu;
@@ -778,43 +856,178 @@ const ChatTextInputBar = memo(forwardRef<ChatTextInputHandle, {
                     onClose={() => setSuggestClosed(true)}
                 />
             )}
-            <textarea
-                ref={textareaRef}
-                rows={1}
-                value={inputText}
-                onChange={e => {
-                    setInputText(e.target.value);
-                    setSuggestClosed(false);
-                    e.target.style.height = "auto";
-                    e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
-                }}
-                onFocus={(e) => {
-                    if (panelOpen) {
-                        e.target.blur();
+            <div className="imessage-input-capsule flex items-center gap-2 w-full px-2 py-1.5 rounded-[24px] bg-[rgba(255,255,255,0.08)] dark:bg-[rgba(30,30,35,0.35)] border border-white/30 dark:border-white/15 shadow-[0_4px_20px_rgba(0,0,0,0.08)] backdrop-blur-2xl">
+                <button
+                    type="button"
+                    onClick={onTogglePlusMenu}
+                    disabled={inputLocked}
+                    className="imessage-plus-btn w-[30px] h-[30px] rounded-full flex items-center justify-center bg-[rgba(140,140,145,0.32)] text-white hover:bg-[rgba(140,140,145,0.45)] transition-colors shrink-0"
+                    aria-label="功能菜单"
+                >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                </button>
+
+                {isVoiceInputMode ? (
+                    <div
+                        className="chat-voice-hold-btn flex-1 select-none flex items-center justify-center font-medium ts-15 text-[var(--c-text)] py-1.5 rounded-full bg-black/10 dark:bg-white/10 active:bg-black/20 cursor-pointer transition-colors"
+                        style={{ touchAction: "none", WebkitUserSelect: "none" }}
+                        onPointerDown={handleVoicePointerDown}
+                        onPointerMove={handleVoicePointerMove}
+                        onPointerUp={handleVoicePointerUp}
+                        onPointerCancel={handleVoicePointerUp}
+                        onContextMenu={e => e.preventDefault()}
+                    >
+                        {isHoldingVoice ? "松开 结束" : "按住 说话"}
+                    </div>
+                ) : (
+                    <textarea
+                        ref={textareaRef}
+                        rows={1}
+                        value={inputText}
+                        onChange={e => {
+                            setInputText(e.target.value);
+                            setSuggestClosed(false);
+                            e.target.style.height = "auto";
+                            e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
+                        }}
+                        onFocus={(e) => {
+                            if (panelOpen) {
+                                e.target.blur();
+                                onClosePanels();
+                                const target = e.target as HTMLTextAreaElement;
+                                requestAnimationFrame(() => requestAnimationFrame(() => target.focus()));
+                            }
+                            setSuggestClosed(false);
+                        }}
+                        onBlur={() => setSuggestClosed(true)}
+                        onKeyDown={e => {
+                            if (e.key === "Escape") {
+                                setSuggestClosed(true);
+                                return;
+                            }
+                            if (shouldSendChatInputOnEnter(e, enterToSendEnabled)) {
+                                e.preventDefault();
+                                handleSubmit();
+                            }
+                        }}
+                        enterKeyHint={enterToSendEnabled ? "send" : "enter"}
+                        className="imessage-input-textarea flex-1 bg-transparent border-none outline-none ts-15 text-[var(--c-text)] placeholder:text-[var(--c-icon)]/70 resize-none py-1 px-1.5 leading-snug"
+                        disabled={inputLocked}
+                        placeholder={inputLocked
+                            ? (isSpectator ? "围观中，你不在这个群里" : `禁言中，剩余${Math.ceil(muteRemainingMs / 60000)}分钟`)
+                            : (theaterMode ? "写下番外指令..." : "iMessage 信息")}
+                    />
+                )}
+
+                <button
+                    type="button"
+                    onClick={() => {
+                        setIsVoiceInputMode(!isVoiceInputMode);
                         onClosePanels();
-                        const target = e.target as HTMLTextAreaElement;
-                        requestAnimationFrame(() => requestAnimationFrame(() => target.focus()));
-                    }
-                    setSuggestClosed(false);
-                }}
-                onBlur={() => setSuggestClosed(true)}
-                onKeyDown={e => {
-                    if (e.key === "Escape") {
-                        setSuggestClosed(true);
-                        return;
-                    }
-                    if (shouldSendChatInputOnEnter(e, enterToSendEnabled)) {
-                        e.preventDefault();
-                        handleSubmit();
-                    }
-                }}
-                enterKeyHint={enterToSendEnabled ? "send" : "enter"}
-                className="chat-input-textarea"
-                disabled={inputLocked}
-                placeholder={inputLocked
-                    ? (isSpectator ? "围观中，你不在这个群里" : `禁言中，剩余${Math.ceil(muteRemainingMs / 60000)}分钟`)
-                    : (theaterMode ? "写下番外指令..." : undefined)}
-            />
+                    }}
+                    disabled={inputLocked}
+                    className="imessage-voice-toggle-btn w-[30px] h-[30px] rounded-full flex items-center justify-center text-[var(--c-icon)] hover:text-[var(--c-text)] transition-colors shrink-0"
+                    aria-label={isVoiceInputMode ? "键盘输入" : "录音输入"}
+                >
+                    {isVoiceInputMode ? (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="2" y="4" width="20" height="16" rx="2" />
+                            <line x1="6" y1="8" x2="6" y2="8" /><line x1="10" y1="8" x2="10" y2="8" /><line x1="14" y1="8" x2="14" y2="8" /><line x1="18" y1="8" x2="18" y2="8" />
+                            <line x1="6" y1="12" x2="6" y2="12" /><line x1="18" y1="12" x2="18" y2="12" />
+                            <line x1="8" y1="16" x2="16" y2="16" />
+                        </svg>
+                    ) : (
+                        /* iMessage 经典的声波音频图标 */
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="3" y="10" width="2" height="4" rx="1" />
+                            <rect x="7" y="6" width="2" height="12" rx="1" />
+                            <rect x="11" y="4" width="2" height="16" rx="1" />
+                            <rect x="15" y="7" width="2" height="10" rx="1" />
+                            <rect x="19" y="10" width="2" height="4" rx="1" />
+                        </svg>
+                    )}
+                </button>
+
+                {/* 存在输入内容时显示发送箭头，无内容时显示触发 AI 回复闪烁魔法棒图标 */}
+                {inputText.trim() ? (
+                    <button
+                        type="button"
+                        onClick={handleSubmit}
+                        className="imessage-send-arrow-btn w-[30px] h-[30px] rounded-full bg-[var(--c-action-blue,#007aff)] text-white flex items-center justify-center shadow-md animate-scale-in shrink-0"
+                        aria-label="发送"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="19" x2="12" y2="5" />
+                            <polyline points="5 12 12 5 19 12" />
+                        </svg>
+                    </button>
+                ) : (
+                    <button
+                        type="button"
+                        onClick={() => {
+                            if (isGenerating) {
+                                onStopGeneration();
+                            } else {
+                                onTriggerAIResponse();
+                            }
+                            onClosePanels();
+                        }}
+                        disabled={inputLocked}
+                        className="w-[30px] h-[30px] rounded-full flex items-center justify-center text-[var(--c-icon)] hover:text-[var(--c-icon-active)] transition-colors shrink-0"
+                        aria-label={isGenerating ? "停止生成" : "触发对方回复"}
+                        title={isGenerating ? "停止生成" : "触发对方回复"}
+                    >
+                        {isGenerating ? (
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <circle cx="12" cy="12" r="10" />
+                                <rect x="9" y="9" width="6" height="6" rx="1" />
+                            </svg>
+                        ) : (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.582a.5.5 0 0 1 0 .963L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+                                <path d="M20 3v4" /><path d="M22 5h-4" />
+                            </svg>
+                        )}
+                    </button>
+                )}
+            </div>
+
+            {/* 微信同款录音 HUD 浮层 */}
+            {isHoldingVoice && (
+                <div className="chat-voice-record-hud fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+                    <div className={`p-6 rounded-2xl flex flex-col items-center gap-3 backdrop-blur-md shadow-2xl transition-colors duration-200 ${
+                        isVoiceCancelZone ? "bg-red-500/90 text-white" : "bg-black/75 text-white"
+                    }`}>
+                        {isVoiceCancelZone ? (
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <circle cx="12" cy="12" r="10" />
+                                <line x1="15" y1="9" x2="9" y2="15" />
+                                <line x1="9" y1="9" x2="15" y2="15" />
+                            </svg>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-pulse">
+                                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                                    <line x1="12" y1="19" x2="12" y2="22" />
+                                </svg>
+                            </div>
+                        )}
+                        <span className="ts-14 font-medium tracking-wide">
+                            {isVoiceCancelZone ? "松开手指，取消发送" : "手指上滑，取消发送"}
+                        </span>
+                    </div>
+                </div>
+            )}
+
+            {voiceRecordError && (
+                <div className="chat-voice-record-error fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-black/80 text-white ts-13 shadow-lg pointer-events-none animate-fade-in">
+                    {voiceRecordError}
+                </div>
+            )}
 
             <div className="chat-input-actions">
                 <button
@@ -2098,6 +2311,43 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         window.addEventListener("ai-call-trigger", handler);
         return () => window.removeEventListener("ai-call-trigger", handler);
     }, [session.id]);
+
+    // 外部（如收藏夹）请求跳转定位指定消息
+    useEffect(() => {
+        const handleJump = (e: Event) => {
+            const detail = (e as CustomEvent<ChatJumpToMessageDetail>).detail;
+            if (!detail || detail.sessionId !== session.id || !detail.messageId) return;
+            const targetId = detail.messageId;
+            const storedAll = loadChatMessages(session.id);
+            const targetIndex = storedAll.findIndex(m => m.id === targetId);
+            if (targetIndex === -1) return;
+
+            // 检查目标消息是否已经在当前可见消息列表中
+            const alreadyLoaded = messages.some(m => m.id === targetId);
+            if (!alreadyLoaded) {
+                // 需要扩大可见切片，保证包含 targetId
+                const neededCount = storedAll.length - targetIndex;
+                const nextCount = Math.max(messages.length + 50, neededCount + 20);
+                const sliced = storedAll.slice(-Math.min(storedAll.length, nextCount));
+                visibleMessagesRef.current = sliced;
+                setMessages(sliced);
+                setHasMore(sliced.length < storedAll.length);
+                hasMoreRef.current = sliced.length < storedAll.length;
+            }
+
+            pendingSearchJumpRef.current = { messageId: targetId };
+            requestAnimationFrame(() => {
+                const el = scrollRef.current;
+                const target = document.getElementById(`message-${targetId}`);
+                if (el && target) {
+                    scrollElementWithinContainer(el, target, { behavior: "smooth", block: "center" });
+                    flashMessageHighlight(targetId);
+                }
+            });
+        };
+        window.addEventListener(CHAT_JUMP_TO_MESSAGE_EVENT, handleJump);
+        return () => window.removeEventListener(CHAT_JUMP_TO_MESSAGE_EVENT, handleJump);
+    }, [session.id, messages, flashMessageHighlight]);
 
     // Helper: handle AI accepting/declining user's red packet or transfer
     const buildAssistantActionEditMeta = (rawResponseText: string) => ({
@@ -3469,6 +3719,41 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             role: "system",
             content: trimmed,
             mediaType: "system_instruction",
+        });
+        setMessages(prev => [...prev, newMsg]);
+        setPendingGenerate(true);
+        return true;
+    };
+
+    const handleSendVoiceMessage = async (blob: Blob, durationSec: number, transcript?: string): Promise<boolean> => {
+        if (!ensureGroupSpeakPermission()) return false;
+        if (isGenerating) {
+            showChatToast("请先等待对方回复");
+            return false;
+        }
+        cancelFollowUp(session.id);
+
+        const dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => resolve("");
+            reader.readAsDataURL(blob);
+        });
+
+        const text = transcript?.trim() || "";
+        const finalContent = text || "（给你发了一条语音消息）";
+
+        const newMsg = pushChatMessage({
+            sessionId: session.id,
+            role: "user",
+            content: finalContent,
+            mediaType: "audio",
+            mediaUrl: dataUrl || undefined,
+            mediaData: {
+                label: text || "语音消息",
+                voiceDuration: durationSec,
+                speechText: text,
+            },
         });
         setMessages(prev => [...prev, newMsg]);
         setPendingGenerate(true);
@@ -4875,17 +5160,28 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         return "displaySourceId" in msg && msg.displaySourceId ? msg.displaySourceId : msg.id;
     };
 
+    const handleTapbackReaction = (messageId: string, emoji: string) => {
+        const userN = userIdentity?.name || "你";
+        const updated = toggleMessageReaction(messageId, emoji, "user", userN);
+        if (updated) {
+            setMessages(prev => prev.map(msg => msg.id === messageId ? updated : msg));
+        }
+        setActiveMessageId(null);
+    };
+
     /** Reusable context menu for user/assistant bubbles */
     const renderBubbleContextMenu = (m: ChatMessage, options?: { allowMultiSelect?: boolean }) => {
         const storedMessageId = getStoredActionMessageId(m);
+
         const menu = (
             <div
                 onPointerDown={e => e.stopPropagation()}
                 ref={positionFloatingContextMenu}
                 style={getContextMenuInitialStyle()}
-                className="ctx-menu chat-floating-ctx-menu flex flex-col items-center gap-[6px] py-[4px] px-0"
+                className="chat-floating-ctx-menu flex flex-col items-center gap-[8px]"
                 data-role={m.role}>
-                <div className="flex">
+                {/* iMessage 原生高斯模糊圆角操作卡片（无 Tapback） */}
+                <div className="imessage-actions-card flex flex-col">
                     <button onClick={() => {
                         const text = m.content;
                         const fallbackCopy = () => {
@@ -4904,27 +5200,84 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                             fallbackCopy();
                         }
                         setActiveMessageId(null);
-                    }} className="ctx-menu-btn">复制</button>
-                    <button onClick={() => (m.role === "assistant" ? handleEditResponseStart(m) : handleEditMessageStart(m))} className="ctx-menu-btn">
-                        {m.role === "assistant" && (m.rawResponseText || m.editableResponseText) ? "编辑回复" : "编辑"}
+                    }} className="imessage-action-item">
+                        <span>拷贝</span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                     </button>
+
+                    <button onClick={() => { setQuotingMessage(m); setActiveMessageId(null); }} className="imessage-action-item">
+                        <span>回复 (引用)</span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+                    </button>
+
+                    <button onClick={() => (m.role === "assistant" ? handleEditResponseStart(m) : handleEditMessageStart(m))} className="imessage-action-item">
+                        <span>{m.role === "assistant" && (m.rawResponseText || m.editableResponseText) ? "编辑回复" : "编辑"}</span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                    </button>
+
                     {m.mediaType === "audio" && m.mediaData?.label && (
-                        <button onClick={() => { setVoiceTextIds(prev => { const next = new Set(prev); if (next.has(m.id)) next.delete(m.id); else next.add(m.id); return next; }); setActiveMessageId(null); }} className="ctx-menu-btn">转文字</button>
+                        <button onClick={() => { setVoiceTextIds(prev => { const next = new Set(prev); if (next.has(m.id)) next.delete(m.id); else next.add(m.id); return next; }); setActiveMessageId(null); }} className="imessage-action-item">
+                            <span>转文字</span>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        </button>
                     )}
+
                     {m.role === "user" && (
-                        <button onClick={() => handleRetractMessage(storedMessageId)} className="ctx-menu-btn">撤回消息</button>
+                        <button onClick={() => handleRetractMessage(storedMessageId)} className="imessage-action-item">
+                            <span>撤回</span>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                        </button>
                     )}
+
                     {m.role === "assistant" && (
-                        <button onClick={() => handleRetry(storedMessageId)} className="ctx-menu-btn ctx-menu-btn-danger">重试以下</button>
+                        <button onClick={() => handleRetry(storedMessageId)} className="imessage-action-item is-danger">
+                            <span>重试以下</span>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                        </button>
                     )}
-                </div>
-                <div className="flex">
-                    <button onClick={() => { setQuotingMessage(m); setActiveMessageId(null); }} className="ctx-menu-btn">引用</button>
+
+                    <button onClick={() => {
+                        const favItem = {
+                            messageId: storedMessageId,
+                            sessionId: session.id,
+                            role: m.role,
+                            content: m.content,
+                            mediaType: m.mediaType,
+                            mediaData: m.mediaData as Record<string, unknown> | undefined,
+                            characterId: session.isGroup ? m.senderCharacterId : session.contactId,
+                            senderName: m.role === "user" ? (userIdentity?.name || "我") : (m.senderName || character?.name || "对方"),
+                            createdAt: m.createdAt,
+                        };
+                        const isFav = isChatMessageFavorited(storedMessageId);
+                        if (isFav) {
+                            removeChatFavorite(storedMessageId);
+                            showChatToast("已取消收藏");
+                        } else {
+                            addChatFavorite(favItem);
+                            showChatToast("已添加收藏");
+                        }
+                        setActiveMessageId(null);
+                    }} className="imessage-action-item">
+                        <span>{isChatMessageFavorited(storedMessageId) ? "取消收藏" : "收藏"}</span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                    </button>
+
                     {options?.allowMultiSelect !== false && (
-                        <button onClick={() => startMultiSelectFromMessage(m)} className="ctx-menu-btn">多选</button>
+                        <button onClick={() => startMultiSelectFromMessage(m)} className="imessage-action-item">
+                            <span>更多 (多选)</span>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                        </button>
                     )}
-                    <button onClick={() => handleDeleteMessage(storedMessageId)} className="ctx-menu-btn ctx-menu-btn-danger">删除</button>
-                    <button onClick={() => handleDeleteMessagesFrom(storedMessageId)} className="ctx-menu-btn ctx-menu-btn-danger">删除以下</button>
+
+                    <button onClick={() => handleDeleteMessage(storedMessageId)} className="imessage-action-item is-danger">
+                        <span>删除</span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+
+                    <button onClick={() => handleDeleteMessagesFrom(storedMessageId)} className="imessage-action-item is-danger">
+                        <span>删除以下</span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                    </button>
                 </div>
                 {(() => {
                     // 聊天插件注册的消息操作菜单项
@@ -5421,23 +5774,38 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             <header className="page-header chat-room-main-pane" data-ui="header">
                 <div className="page-header-safe-area" />
                 <div className="page-header-content">
-                    <button className="page-back-btn" type="button" onClick={onBack} aria-label="返回">
-                        <ChevronLeft size={24} strokeWidth={1.5} />
+                    <button className="page-back-btn flex items-center gap-0.5" type="button" onClick={onBack} aria-label="返回">
+                        <ChevronLeft size={26} strokeWidth={1.6} />
+                        <span className="imessage-back-badge ts-13 font-semibold px-1.5 py-0.5 rounded-full bg-[var(--c-icon-active)] text-white leading-none">
+                            {messages.length > 99 ? "99+" : Math.max(1, Math.min(messages.length, 17))}
+                        </span>
                     </button>
-                    <span className="page-title" style={{ position: 'relative' }}>
-                        {offlineMode ? "线下 · " : ""}
-                        {session.isGroup
-                            ? `${session.groupName || "群聊"}(${(session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1)})`
-                            : (session.alias || character?.name || `User_${session.contactId.slice(-4)}`)}
+                    <div className="imessage-header-center flex flex-col items-center justify-center cursor-pointer" onClick={() => setShowSettings(true)}>
+                        <div className="w-[38px] h-[38px] rounded-full overflow-hidden border border-white/20 shadow-sm shrink-0 bg-[var(--c-input)]">
+                            {character?.avatar ? <img src={character.avatar} className="w-full h-full object-cover" alt="" /> : <ChatFallbackAvatar />}
+                        </div>
+                        <div className="imessage-header-name-pill flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-full bg-black/15 text-white/95 ts-11 font-medium backdrop-blur-md">
+                            <span className="truncate max-w-[120px]">{session.alias || character?.name || "对方"}</span>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+                        </div>
                         {(isGenerating || isOfflineGenerating) && (
-                            <span className="chat-typing-indicator">
+                            <span className="chat-typing-indicator !bottom-[-16px]">
                                 {offlineMode ? "线下生成中" : "对方正在输入"}<span className="chat-typing-dots"><i/><i/><i/></span>
                             </span>
                         )}
-                    </span>
-                    <span className="page-header-right">
-                        <button className="page-back-btn" type="button" onClick={() => setShowSettings(true)} aria-label="更多">
-                            <MoreHorizontal size={22} strokeWidth={1.5} />
+                    </div>
+                    <span className="page-header-right flex items-center gap-1">
+                        <button
+                            className="page-back-btn text-[var(--c-icon-active)]"
+                            type="button"
+                            onClick={() => { setShowPlusMenu(false); setCallInitiator("user"); setShowVideoCall(true); }}
+                            aria-label="FaceTime 视频通话"
+                            title="视频通话"
+                        >
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14v-4z" />
+                                <rect x="3" y="6" width="12" height="12" rx="3" />
+                            </svg>
                         </button>
                     </span>
                 </div>
@@ -6062,18 +6430,34 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                     </>
                                 )}
                             </div>
-                            {/* Voice message: text transcription bubble */}
+                            {/* Voice message: text transcription bubble (iMessage 毛玻璃贴附气泡 + 一键收起) */}
                             {renderMsg.mediaType === "audio" && voiceTextIds.has(msg.id) && renderMsg.mediaData?.label && (
-                                <div className={`chat-msg-wrapper`} data-role={uiRole(msg)} style={{ marginTop: -12 }}>
-                                    {msg.role !== "user" && <div className="w-[40px] shrink-0" />}
-                                    <div className="voice-msg-text-bubble">
-                                        <BilingualTextBlock
-                                            text={msg.displayProjected ? (renderMsg.mediaData?.label || "") : renderDisplayText(renderMsg.mediaData?.label || "", msg.role === "user" ? 1 : 2, false)}
-                                            mode="markdown"
-                                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                                        />
+                                <div className="chat-msg-wrapper" data-role={uiRole(msg)} style={{ marginTop: -4 }}>
+                                    <div className={`chat-msg-content-wrap flex flex-col min-w-0 max-w-[76%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
+                                        <div className="imessage-voice-transcript-bubble relative group select-none">
+                                            <BilingualTextBlock
+                                                text={msg.displayProjected ? (renderMsg.mediaData?.label || "") : renderDisplayText(renderMsg.mediaData?.label || "", msg.role === "user" ? 1 : 2, false)}
+                                                mode="markdown"
+                                                defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setVoiceTextIds(prev => {
+                                                        const next = new Set(prev);
+                                                        next.delete(msg.id);
+                                                        return next;
+                                                    });
+                                                }}
+                                                className="imessage-voice-transcript-close absolute -top-2 -right-2 w-[20px] h-[20px] rounded-full bg-black/40 text-white flex items-center justify-center ts-12 shadow-sm hover:scale-110 active:scale-90 transition-transform cursor-pointer"
+                                                title="收起文字"
+                                                aria-label="收起文字"
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
                                     </div>
-                                    {msg.role === "user" && <div className="w-[40px] shrink-0" />}
                                 </div>
                             )}
                             {/* 状态栏：一律裸渲染，不套便利贴外框（自定义模式下交给用户的渲染代码，
@@ -6252,6 +6636,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 onStartVideoCall={() => { cancelFollowUp(session.id); setShowPlusMenu(false); setCallInitiator("user"); setShowVideoCall(true); }}
                 onStartVoiceCall={() => { cancelFollowUp(session.id); setShowPlusMenu(false); setCallInitiator("user"); setShowVoiceCall(true); }}
                 onSendText={handleSendText}
+                onSendVoiceMessage={handleSendVoiceMessage}
                 onStopGeneration={clearStuckGeneration}
                 onTriggerAIResponse={triggerAIResponse}
                 onSendSticker={(name, url) => { setShowStickerPanel(false); sendRichMessage("sticker", { label: name, stickerUrl: url }); }}
@@ -6385,7 +6770,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     characterId={session.contactId}
                     onSend={(text, audioDataUrl) => {
                         setRichModal(null);
-                        sendRichMessage("audio", { label: text }, "", audioDataUrl);
+                        // 确保音频 DataURL 被明确传递与持久化
+                        sendRichMessage("audio", { label: text, audioUrl: audioDataUrl }, text || "[语音消息]", audioDataUrl);
                     }}
                     onClose={() => setRichModal(null)}
                 />
