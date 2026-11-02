@@ -1190,11 +1190,37 @@ export function saveUserIdentities(identities: UserIdentity[]): void {
 export function resolveUserIdentity(characterId?: string, appId?: string): UserIdentity | null {
     const identities = loadUserIdentities();
     if (identities.length === 0) return null;
+
+    // 1. 若角色有独立的绑定或应用覆盖，优先遵循角色级别绑定
     const config = loadBindingConfig();
     const resolved = resolveBinding(config, characterId, appId);
     if (resolved.userIdentityId) {
         return identities.find(i => i.id === resolved.userIdentityId) || identities[0];
     }
+
+    // 2. 世界级专属身份联动：
+    // 若指定了 characterId，从角色所属世界查找绑定的身份；
+    // 若未指定 characterId（如聊天列表总览），从当前激活的世界查找绑定的身份。
+    if (typeof window !== "undefined") {
+        try {
+            const { loadCharacterWorldGroups, getActiveChatWorldId } = require("./character-world-storage");
+            const groups = loadCharacterWorldGroups();
+            let targetGroup = null;
+            if (characterId) {
+                targetGroup = groups.find((g: any) => g.memberIds?.includes(characterId));
+            } else {
+                const activeWorldId = getActiveChatWorldId();
+                if (activeWorldId && activeWorldId !== "all") {
+                    targetGroup = groups.find((g: any) => g.id === activeWorldId);
+                }
+            }
+            if (targetGroup?.userIdentityId) {
+                const worldIdentity = identities.find(i => i.id === targetGroup.userIdentityId);
+                if (worldIdentity) return worldIdentity;
+            }
+        } catch { /* ignore */ }
+    }
+
     return identities[0];
 }
 

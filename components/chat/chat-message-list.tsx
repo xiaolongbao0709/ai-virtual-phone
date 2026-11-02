@@ -90,6 +90,26 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
     const [sessions, setSessions] = useState<ChatSession[]>([]);
     const [listFilter, setListFilter] = useState("");
     const [listTab, setListTab] = useState<"all" | "private" | "group">("all");
+    const [activeWorldId, setActiveWorldId] = useState<string>(() => {
+        if (typeof window !== "undefined") {
+            try {
+                return require("@/lib/character-world-storage").getActiveChatWorldId();
+            } catch { return "all"; }
+        }
+        return "all";
+    });
+
+    useEffect(() => {
+        const handler = (e: any) => {
+            const wid = e.detail?.worldId;
+            if (wid !== undefined) {
+                setActiveWorldId(wid);
+                setIdentity(resolveUserIdentity());
+            }
+        };
+        window.addEventListener("chat-world-changed", handler);
+        return () => window.removeEventListener("chat-world-changed", handler);
+    }, []);
     const [showPlusMenu, setShowPlusMenu] = useState(false);
     const plusMenuRef = React.useRef<HTMLSpanElement>(null);
     useEffect(() => {
@@ -178,6 +198,10 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
         setMergePrompt(null);
     };
 
+    const worldGroups = React.useMemo(() => {
+        return (typeof window !== "undefined") ? require("@/lib/character-world-storage").loadCharacterWorldGroups() : [];
+    }, []);
+
     return (
         <div className="relative flex-1 h-full">
             <PageShell
@@ -265,23 +289,48 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                         />
                     </div>
                 </div>
-                <div className="chat-list-tabs" style={{ paddingLeft: 20, paddingRight: 20 }}>
-                    {(["all", "private", "group"] as const).map(tab => (
-                        <button
-                            key={tab}
-                            type="button"
-                            className={`chat-list-tab${listTab === tab ? " active" : ""}`}
-                            onClick={() => setListTab(tab)}
+                <div className="flex items-center justify-between px-5 mb-2">
+                    <div className="chat-list-tabs" style={{ flex: 1, overflowX: "auto" }}>
+                        {(["all", "private", "group"] as const).map(tab => (
+                            <button
+                                key={tab}
+                                type="button"
+                                className={`chat-list-tab${listTab === tab ? " active" : ""}`}
+                                onClick={() => setListTab(tab)}
+                            >
+                                {{ all: "All", private: "Private", group: "Groups" }[tab]}
+                            </button>
+                        ))}
+                    </div>
+                    {worldGroups.length > 1 && (
+                        <select
+                            className="ml-2 bg-[var(--c-input)] text-[var(--c-text)] text-xs rounded-md px-2 py-1 outline-none appearance-none"
+                            style={{ minWidth: "80px", textAlign: "center" }}
+                            value={activeWorldId}
+                            onChange={(e) => {
+                                const newWid = e.target.value;
+                                setActiveWorldId(newWid);
+                                try {
+                                    require("@/lib/character-world-storage").setActiveChatWorldId(newWid);
+                                } catch { }
+                                setIdentity(resolveUserIdentity());
+                            }}
                         >
-                            {{ all: "All", private: "Private", group: "Groups" }[tab]}
-                        </button>
-                    ))}
+                            <option value="all">所有世界</option>
+                            {worldGroups.map((g: any) => (
+                                <option key={g.id} value={g.id}>{g.name}</option>
+                            ))}
+                        </select>
+                    )}
                 </div>
                 <div className="px-5 pt-2 flex flex-col">
                     {(() => {
                             const contactIds = new Set(loadChatContacts().map(c => c.characterId));
                             const allChars = loadCharacters();
                             const keyword = listFilter.trim().toLowerCase();
+                            const activeWorld = activeWorldId === "all" ? null : worldGroups.find((g: any) => g.id === activeWorldId);
+                            const activeWorldMemberIds = activeWorld ? new Set(activeWorld.memberIds) : null;
+
                             const showMascot = mascotSettings.chatEnabled
                                 && listTab !== "group"
                                 && (!keyword || (mascotSettings.nickname || "AI助手").toLowerCase().includes(keyword));
@@ -291,6 +340,19 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                                 if (!hasSessionListContent(s.id)) return false;
                                 if (listTab === "private" && s.isGroup) return false;
                                 if (listTab === "group" && !s.isGroup) return false;
+                                
+                                // 世界隔离过滤
+                                if (activeWorldMemberIds) {
+                                    if (s.isGroup) {
+                                        // 群聊：群成员中必须至少有一人属于当前世界
+                                        const participants = s.participantIds || [];
+                                        if (!participants.some(id => activeWorldMemberIds.has(id))) return false;
+                                    } else {
+                                        // 单聊：角色必须属于当前世界
+                                        if (!activeWorldMemberIds.has(s.contactId)) return false;
+                                    }
+                                }
+
                                 if (!keyword) return true;
                                 if (s.isGroup) return (s.groupName || "群聊").toLowerCase().includes(keyword);
                                 const name = s.alias || allChars.find(c => c.id === s.contactId)?.name || "";

@@ -61,23 +61,31 @@ export function WorldCaseSheet({
   group,
   onRename,
   onUpdateDescription,
+  onUpdateIdentity,
   onDelete,
   onClose,
 }: {
   group: CharacterWorldGroup;
   onRename: (name: string) => void;
   onUpdateDescription: (description: string) => void;
+  onUpdateIdentity?: (identityId?: string) => void;
   onDelete: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(group.name);
   const [description, setDescription] = useState(group.description);
+  const [identityId, setIdentityId] = useState(group.userIdentityId || "");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const isDefault = group.id === DEFAULT_CHARACTER_WORLD_ID;
+
+  const identities = (typeof window !== "undefined")
+    ? require("@/lib/settings-storage").loadUserIdentities()
+    : [];
 
   const save = () => {
     if (name.trim() && name.trim() !== group.name) onRename(name.trim());
     if (description.trim() !== group.description) onUpdateDescription(description.trim());
+    if (identityId !== (group.userIdentityId || "")) onUpdateIdentity?.(identityId || undefined);
     onClose();
   };
 
@@ -95,6 +103,20 @@ export function WorldCaseSheet({
           disabled={isDefault}
         />
         {isDefault && <p className="wt-paper-hint">默认世界不可改名或删除，删除其他世界时角色会回到这里。</p>}
+        <label className="wt-paper-label">世界专属用户身份（进入该世界时自动切换为此头像与昵称）</label>
+        <select
+          className="wt-paper-input"
+          value={identityId}
+          onChange={e => setIdentityId(e.target.value)}
+          style={{ marginBottom: 12 }}
+        >
+          <option value="">跟随默认身份</option>
+          {identities.map((item: any) => (
+            <option key={item.id} value={item.id}>
+              {item.name} {item.bio ? `(${item.bio.slice(0, 15)}...)` : ""}
+            </option>
+          ))}
+        </select>
         <label className="wt-paper-label">世界观描述（会注入该世界所有角色的上下文）</label>
         <textarea
           className="wt-paper-textarea"

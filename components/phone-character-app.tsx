@@ -1438,6 +1438,11 @@ function CharListView({
           group={currentGroup}
           onRename={name => renameCharacterWorldGroup(currentGroup.id, name)}
           onUpdateDescription={description => updateCharacterWorldDescription(currentGroup.id, description)}
+          onUpdateIdentity={identityId => {
+            try {
+              require("@/lib/character-world-storage").updateCharacterWorldIdentity(currentGroup.id, identityId);
+            } catch { }
+          }}
           onDelete={() => {
             deleteCharacterWorldGroup(currentGroup.id);
             setShowWorldEditor(false);
