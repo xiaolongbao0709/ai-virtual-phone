@@ -2,6 +2,7 @@
 
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
 import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
+import { prepareSpeechText } from "./tts-markup";
 
 export type VoiceApiConfigResolved = VoiceApiConfig;
 
@@ -25,6 +26,7 @@ export function resolveVoiceConfig(characterId: string, appId?: ContentAppId): V
  * Supported providers:
  * - Minimax: REST API → hex-encoded mp3
  * - OpenAI: REST API → binary audio blob
+ * - FishAudio: 经本站 /api/voice/fish-tts 转发（Fish 不允许浏览器直连）→ mp3
  */
 export async function synthesizeSpeech(
     text: string,
@@ -34,6 +36,9 @@ export async function synthesizeSpeech(
     if (!text.trim()) return null;
 
     const provider = voiceConfig.provider;
+    // 〔英文语气标记〕（仅在用户开启 Fish 语气预设条目后才会出现）：Fish 换成原生写法，其它服务商去掉
+    text = prepareSpeechText(text, provider, voiceConfig.model);
+    if (!text.trim()) return null;
 
     if (provider === "Minimax") {
         return synthesizeMinimax(text, voiceConfig, options?.emotion);
@@ -41,6 +46,10 @@ export async function synthesizeSpeech(
 
     if (provider === "OpenAI") {
         return synthesizeOpenAI(text, voiceConfig);
+    }
+
+    if (provider === "FishAudio") {
+        return synthesizeFish(text, voiceConfig);
     }
 
     return null;
@@ -172,6 +181,106 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig): Promise<B
 
     const blob = await response.blob();
     return new Blob([await blob.arrayBuffer()], { type: "audio/mpeg" });
+}
+
+// ── Fish Audio TTS ──────────────────────────────────
+
+/** 从 Fish Audio 音色页链接（如 https://fish.audio/zh-CN/m/<id>/）或纯 ID 里取出 Voice ID */
+export function extractFishVoiceId(value: string | undefined): string {
+    const raw = String(value || "").trim();
+    const m = raw.match(/[0-9a-f]{32}/i);
+    return m ? m[0].toLowerCase() : raw;
+}
+
+// Fish 官方接口只有语速和音量，没有音调参数。音调在手机本地实现：
+//   1) 请求 Fish 时把语速除以变调倍率（Fish 的变速不改音高）；
+//   2) 拿到音频后按倍率重采样（音高和速度一起变），
+// 两步抵消，最终语速不变、只有音高改变。失败时退回原声，不影响播放。
+const FISH_PITCH_MIN = -12;
+const FISH_PITCH_MAX = 12;
+
+function normalizeFishPitch(pitch: number | undefined): number {
+    if (typeof pitch !== "number" || !Number.isFinite(pitch)) return 0;
+    return Math.min(FISH_PITCH_MAX, Math.max(FISH_PITCH_MIN, Math.round(pitch)));
+}
+
+async function synthesizeFish(text: string, config: VoiceApiConfig): Promise<Blob | null> {
+    if (!config.apiKey) throw new Error("Fish Audio API Key 未配置");
+    const userSpeed = typeof config.speechSpeed === "number" && Number.isFinite(config.speechSpeed)
+        ? Math.min(2, Math.max(0.5, config.speechSpeed))
+        : 1;
+    const pitch = normalizeFishPitch(config.speechPitch);
+    const ratio = pitch ? Math.pow(2, pitch / 12) : 1;
+    const requestSpeed = Math.min(2, Math.max(0.5, userSpeed / ratio));
+    const response = await fetchWithTimeout("/api/voice/fish-tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            apiKey: config.apiKey,
+            text,
+            model: config.model || "s2.1-pro",
+            referenceId: extractFishVoiceId(config.defaultVoice),
+            ...(requestSpeed !== 1 ? { speed: Number(requestSpeed.toFixed(3)) } : {}),
+        }),
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err && (err.error || err.message)) || `Fish Audio 请求失败 (${response.status})`);
+    }
+    const buf = await response.arrayBuffer();
+    if (!buf.byteLength) throw new Error("Fish Audio 未返回音频数据");
+    if (pitch) {
+        const shifted = await shiftPitchLocally(buf, ratio).catch(() => null);
+        if (shifted) return shifted;
+        // 本地变调失败（极老的浏览器）：退回原声，但把语速还原成用户设置
+        if (requestSpeed !== userSpeed) return synthesizeFish(text, { ...config, speechPitch: 0 });
+    }
+    return new Blob([buf], { type: "audio/mpeg" });
+}
+
+/** 重采样变调：音高 × ratio，时长 ÷ ratio。输出 24kHz 单声道 WAV（人声足够清晰，体积可控） */
+async function shiftPitchLocally(mp3: ArrayBuffer, ratio: number): Promise<Blob | null> {
+    if (typeof window === "undefined") return null;
+    const w = window as unknown as { OfflineAudioContext?: typeof OfflineAudioContext; webkitOfflineAudioContext?: typeof OfflineAudioContext };
+    const OAC = w.OfflineAudioContext || w.webkitOfflineAudioContext;
+    if (!OAC) return null;
+    const OUT_RATE = 24000;
+    const decoder = new OAC(1, 1, OUT_RATE);
+    const decoded: AudioBuffer = await new Promise((resolve, reject) => {
+        const p = decoder.decodeAudioData(mp3.slice(0), resolve, reject);
+        if (p && typeof (p as Promise<AudioBuffer>).then === "function") (p as Promise<AudioBuffer>).then(resolve, reject);
+    });
+    const length = Math.max(1, Math.ceil((decoded.duration / ratio) * OUT_RATE));
+    const offline = new OAC(1, length, OUT_RATE);
+    const source = offline.createBufferSource();
+    source.buffer = decoded;
+    source.playbackRate.value = ratio;
+    source.connect(offline.destination);
+    source.start(0);
+    const rendered: AudioBuffer = await new Promise((resolve, reject) => {
+        offline.oncomplete = (e) => resolve(e.renderedBuffer);
+        const p = offline.startRendering();
+        if (p && typeof p.then === "function") p.then(resolve, reject);
+    });
+    return encodeWav16(rendered);
+}
+
+function encodeWav16(buffer: AudioBuffer): Blob {
+    const data = buffer.getChannelData(0);
+    const rate = buffer.sampleRate;
+    const bytes = new ArrayBuffer(44 + data.length * 2);
+    const v = new DataView(bytes);
+    const str = (o: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, "RIFF"); v.setUint32(4, 36 + data.length * 2, true); str(8, "WAVE");
+    str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, "data"); v.setUint32(40, data.length * 2, true);
+    let o = 44;
+    for (let i = 0; i < data.length; i++, o += 2) {
+        const x = Math.max(-1, Math.min(1, data[i]));
+        v.setInt16(o, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+    }
+    return new Blob([bytes], { type: "audio/wav" });
 }
 
 // ── iOS audio playback that coexists with speech recognition ──────────
