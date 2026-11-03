@@ -43,7 +43,8 @@ import { TransferTargetModal } from "./transfer-target-modal";
 import { GiftPickerModal } from "./gift-picker-modal";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { deleteWeixinCloudMessagesFromCloud, emitWeixinSyncToast, syncAllWeixinBotRuntimesToCloud } from "@/lib/weixin-cloud-sync";
-import { loadBindingConfig, loadPresets, loadRegexes, resolveBinding, resolveUserIdentity } from "@/lib/settings-storage";
+import { loadApiConfigs, loadBindingConfig, loadPresets, loadRegexes, resolveBinding, resolveUserIdentity } from "@/lib/settings-storage";
+import { simpleLLMCall } from "@/lib/api-helpers";
 import { generateGroupChatCompletion, generateGroupOfflineChatCompletion, parseGroupChatResponse, buildEditableGroupRoundText } from "@/lib/group-chat-engine";
 import { appendChatOfflineTurn, deleteChatOfflineTurn, deleteChatOfflineTurnsFrom, extractThinkingTag, loadChatOfflineTurns, parseOfflineResponse, saveChatOfflineTurns, updateChatOfflineTurn, type ChatOfflineTurn } from "@/lib/chat-offline-storage";
 import { applyDisplayRegex, applyEditRegex } from "@/lib/llm-prompt-assembler";
@@ -1313,6 +1314,49 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             setReasoningTranslating(false);
         }
     };
+    // ── 心声（长按气泡 → 查看角色说这句话时的内心想法）──
+    const [innerVoiceMsg, setInnerVoiceMsg] = useState<ChatMessage | null>(null);
+    const [innerVoiceText, setInnerVoiceText] = useState("");
+    const [innerVoiceLoading, setInnerVoiceLoading] = useState(false);
+
+    const handleShowInnerVoice = useCallback(async (msg: ChatMessage) => {
+        setInnerVoiceMsg(msg);
+        setInnerVoiceText("");
+        setInnerVoiceLoading(true);
+        try {
+            const bindingConfig = loadBindingConfig();
+            const slot = resolveBinding(bindingConfig, session.contactId, "chat");
+            const apiConfigs = loadApiConfigs();
+            const apiConfig = apiConfigs.find(c => c.id === slot.apiConfigId) || apiConfigs[0];
+            if (!apiConfig) throw new Error("未配置 API");
+
+            const allMsgs = loadChatMessages(session.id);
+            const targetIdx = allMsgs.findIndex(m => m.id === msg.id);
+            const contextMsgs = allMsgs.slice(Math.max(0, targetIdx - 6), targetIdx + 1);
+
+            const charName = character?.name || "角色";
+            const llmMessages: { role: string; content: string }[] = contextMsgs.map(m => ({
+                role: m.role === "user" ? "user" : "assistant",
+                content: m.content,
+            }));
+            llmMessages.push({
+                role: "user",
+                content: `[系统指令] 请以${charName}的第一人称视角，用2-3句话写出说上面最后那句话时的内心真实想法和情绪。只输出内心独白本身，不要加引号、前缀或解释。`,
+            });
+
+            const result = await simpleLLMCall(apiConfig, llmMessages, {
+                temperature: 0.8,
+                max_tokens: 256,
+                label: "心声",
+            });
+            setInnerVoiceText(result.content || "（未能生成心声）");
+        } catch (e) {
+            setInnerVoiceText("生成失败：" + (e instanceof Error ? e.message : String(e)));
+        } finally {
+            setInnerVoiceLoading(false);
+        }
+    }, [session.id, session.contactId, character?.name]);
+
     const [voiceTextIds, setVoiceTextIds] = useState<Set<string>>(new Set());
     const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
     const [editingContent, setEditingContent] = useState("");
@@ -4917,6 +4961,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     {m.role === "assistant" && (
                         <button onClick={() => handleRetry(storedMessageId)} className="ctx-menu-btn ctx-menu-btn-danger">重试以下</button>
                     )}
+                    {m.role === "assistant" && (
+                        <button onClick={() => { setActiveMessageId(null); handleShowInnerVoice(m); }} className="ctx-menu-btn">心声</button>
+                    )}
                 </div>
                 <div className="flex">
                     <button onClick={() => { setQuotingMessage(m); setActiveMessageId(null); }} className="ctx-menu-btn">引用</button>
@@ -6751,6 +6798,41 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     onRestore={() => setCallMinimized(false)}
                     onEnd={() => returnFromCall(() => setShowVideoCall(false))}
                 />
+            )}
+
+            {/* 心声弹窗：长按 assistant 气泡 → 点"心声" → AI 补写角色内心想法 */}
+            {innerVoiceMsg && (
+                <div className="modal-overlay" data-ui="modal" onClick={() => setInnerVoiceMsg(null)}>
+                    <div
+                        className="chat-thought-card"
+                        onClick={e => e.stopPropagation()}
+                        style={{
+                            position: "fixed",
+                            bottom: "20%",
+                            left: "50%",
+                            transform: "translateX(-50%)",
+                            width: "80%",
+                            maxWidth: 320,
+                            zIndex: 999,
+                        }}
+                    >
+                        <div className="chat-thought-tape-left" />
+                        <div className="chat-thought-tape-right" />
+                        <div className="chat-thought-title">💭 心声</div>
+                        <div className="chat-thought-body" style={{ minHeight: 40 }}>
+                            {innerVoiceLoading ? (
+                                <div style={{ textAlign: "center", padding: "12px 0", opacity: 0.6 }}>
+                                    读取内心中...
+                                </div>
+                            ) : (
+                                <div style={{ whiteSpace: "pre-wrap" }}>{innerVoiceText}</div>
+                            )}
+                        </div>
+                        <div className="chat-thought-sig">
+                            — {character?.name || "TA"}
+                        </div>
+                    </div>
+                </div>
             )}
 
         </div >
