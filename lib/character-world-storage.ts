@@ -1,5 +1,5 @@
 import { loadCharacters } from "./character-storage";
-import { loadChatContacts } from "./chat-storage";
+// Removed circular loadChatContacts import
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import type { Character } from "./character-types";
 import type { MomentComment, MomentLike, MomentPost } from "./moments-types";
@@ -23,9 +23,63 @@ export type CharacterWorldGroup = {
     description: string;
     memberIds: string[];
     relations: CharacterWorldRelation[];
+    userIdentityId?: string;
+    /** 该世界配套的世界书；进入世界时同步为全局默认世界书 */
+    worldBookIds?: string[];
     createdAt: string;
     updatedAt: string;
 };
+
+export const ACTIVE_CHAT_WORLD_ID_KEY = "ai_phone_active_chat_world_id_v1";
+
+export function getActiveChatWorldId(): string {
+    if (typeof window === "undefined") return "all";
+    return kvGet(ACTIVE_CHAT_WORLD_ID_KEY) || "all";
+}
+
+export function setActiveChatWorldId(worldId: string): void {
+    if (typeof window === "undefined") return;
+    kvSet(ACTIVE_CHAT_WORLD_ID_KEY, worldId);
+    syncGlobalBindingsToWorld(worldId);
+    window.dispatchEvent(new CustomEvent("chat-world-changed", { detail: { worldId } }));
+}
+
+/**
+ * 切换世界时，把「全局默认」里的用户人设、世界书同步成该世界卷宗绑定的内容。
+ * 全局默认总有值，会盖过世界绑定，所以必须直接改全局设定才会生效。
+ * "all" 或该世界没绑对应项时，该项不改动。
+ */
+function syncGlobalBindingsToWorld(worldId: string): void {
+    if (!worldId || worldId === "all") return;
+    try {
+        const group = loadCharacterWorldGroups().find(g => g.id === worldId);
+        if (!group) return;
+        // 懒加载，避免与 settings-storage 形成循环依赖
+        const { loadUserIdentities, loadWorldBooks, loadBindingConfig, saveBindingConfig } = require("./settings-storage");
+        const config = loadBindingConfig();
+        const nextDefaults = { ...config.globalDefaults };
+        let changed = false;
+
+        const identityId = group.userIdentityId;
+        if (identityId
+            && loadUserIdentities().some((i: { id: string }) => i.id === identityId)
+            && nextDefaults.userIdentityId !== identityId) {
+            nextDefaults.userIdentityId = identityId;
+            changed = true;
+        }
+
+        const existingBookIds = new Set<string>(loadWorldBooks().map((b: { id: string }) => b.id));
+        const bookIds = (group.worldBookIds ?? []).filter(id => existingBookIds.has(id));
+        const currentBookIds: string[] = nextDefaults.worldBookIds ?? [];
+        if (bookIds.length > 0
+            && (bookIds.length !== currentBookIds.length || bookIds.some((id, i) => id !== currentBookIds[i]))) {
+            nextDefaults.worldBookIds = bookIds;
+            changed = true;
+        }
+
+        if (changed) saveBindingConfig({ ...config, globalDefaults: nextDefaults });
+    } catch { /* ignore */ }
+}
 
 function isBrowser(): boolean {
     return typeof window !== "undefined";
@@ -108,6 +162,10 @@ function normalizeGroups(groups: CharacterWorldGroup[], characters: Character[])
                 description: typeof group.description === "string" ? group.description.trim() : "",
                 memberIds: members,
                 relations,
+                userIdentityId: typeof group.userIdentityId === "string" ? group.userIdentityId : undefined,
+                worldBookIds: Array.isArray(group.worldBookIds)
+                    ? group.worldBookIds.filter((id): id is string => typeof id === "string")
+                    : undefined,
                 createdAt: group.createdAt || now,
                 updatedAt: group.updatedAt || now,
             };
@@ -182,6 +240,24 @@ export function updateCharacterWorldDescription(groupId: string, description: st
     saveCharacterWorldGroups(loadCharacterWorldGroups().map(group =>
         group.id === groupId
             ? { ...group, description, updatedAt: now }
+            : group
+    ));
+}
+
+export function updateCharacterWorldIdentity(groupId: string, userIdentityId?: string): void {
+    const now = new Date().toISOString();
+    saveCharacterWorldGroups(loadCharacterWorldGroups().map(group =>
+        group.id === groupId
+            ? { ...group, userIdentityId: userIdentityId || undefined, updatedAt: now }
+            : group
+    ));
+}
+
+export function updateCharacterWorldBooks(groupId: string, worldBookIds: string[]): void {
+    const now = new Date().toISOString();
+    saveCharacterWorldGroups(loadCharacterWorldGroups().map(group =>
+        group.id === groupId
+            ? { ...group, worldBookIds: worldBookIds.length > 0 ? [...worldBookIds] : undefined, updatedAt: now }
             : group
     ));
 }
@@ -332,7 +408,11 @@ export function formatCharacterRelationsForPrompt(characterId: string): string {
     const characters = loadCharacters();
     const nameById = new Map(characters.map(character => [character.id, character.name]));
     // 标注哪些同世界角色已是用户好友——供「推荐联系人」判断是否还需要发名片
-    const contactIds = new Set(loadChatContacts().map(contact => contact.characterId));
+    let contactIds = new Set<string>();
+    try {
+        const { loadChatContacts } = require("./chat-storage");
+        contactIds = new Set(loadChatContacts().map((contact: any) => contact.characterId));
+    } catch { /* ignore */ }
     const memberNames = group.memberIds
         .map(memberId => {
             const name = nameById.get(memberId);
