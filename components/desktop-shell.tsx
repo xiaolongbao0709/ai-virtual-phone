@@ -1172,9 +1172,10 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     startX: number;
     startY: number;
     deltaX: number;
+    pageWidth: number;
     locked: "x" | "y" | null;
     pointerId: number | null;
-  }>({ startX: 0, startY: 0, deltaX: 0, locked: null, pointerId: null });
+  }>({ startX: 0, startY: 0, deltaX: 0, pageWidth: 0, locked: null, pointerId: null });
   const swipeLayerRef = useRef<HTMLDivElement | null>(null);
 
   // ── Edit mode (long-press drag) ──
@@ -3711,6 +3712,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     s.startX = e.clientX;
     s.startY = e.clientY;
     s.deltaX = 0;
+    s.pageWidth = 0;
     s.locked = null;
     s.pointerId = e.pointerId;
     // Suppress the settle transition for 1:1 finger tracking while dragging.
@@ -3804,6 +3806,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
       if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
         s.locked = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
         if (s.locked === "x") {
+          s.pageWidth = getSwipePageWidth();
           (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         }
       } else {
@@ -3816,7 +3819,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
     // Compute the pixel position from the committed page + finger delta, with
     // rubber-banding past the first/last page, then express it as an offset from
     // the current page's base (= the --swipe-drag CSS var).
-    const pageWidth = getSwipePageWidth();
+    const pageWidth = s.pageWidth || getSwipePageWidth();
     const page = currentPageIndexRef.current;
     let translateX = -page * pageWidth + dx;
     const minTranslateX = -Math.max(0, pageCount - 1) * pageWidth;
@@ -3861,7 +3864,8 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
     const dx = s.deltaX;
     s.deltaX = 0;
-    const pageWidth = getSwipePageWidth();
+    const pageWidth = s.pageWidth || getSwipePageWidth();
+    s.pageWidth = 0;
     const swipeThreshold = Math.max(SWIPE_MIN_THRESHOLD, pageWidth * SWIPE_THRESHOLD_RATIO);
 
     const page = currentPageIndexRef.current;
