@@ -21,6 +21,7 @@ import {
     splitCustomAppDirectiveArgs,
     type RegisteredCustomAppChatDirective,
 } from "./custom-app-chat-directives";
+import { voiceDisplayText, voiceSpeechText } from "./voice-expression";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -252,11 +253,14 @@ const RICH_PATTERNS: {
     {
         // [语音条:文字内容] — voice message
         regex: new RegExp(`\\[语音条${C}([^\\]]+)\\]`),
-        build: (m) => ({
-            content: "",
-            mediaType: "audio" as const,
-            mediaData: { label: m[1].trim() },
-        }),
+build: (m) => ({
+    content: "",
+    mediaType: "audio" as const,
+    mediaData: {
+        label: voiceDisplayText(m[1]),
+        speechText: voiceSpeechText(m[1]),
+    },
+}),
     },
     {
         regex: /\[我向[^\]]+发起了语音通话\]/,

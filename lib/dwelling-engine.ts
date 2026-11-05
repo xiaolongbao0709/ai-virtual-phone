@@ -1,4 +1,4 @@
-import type { DwellingFurniture, DwellingLayout, DwellingMarker, DwellingPosition } from "./dwelling-storage";
+import type { DwellingFurniture, DwellingLayout, DwellingMarker, DwellingPosition, DwellingRoom } from "./dwelling-storage";
 import { loadDwellingLayout } from "./dwelling-storage";
 import type { ApiConfig, PresetConfig, RegexConfig, WorldBookConfig } from "./settings-types";
 import { loadCharacters } from "./character-storage";
@@ -364,4 +364,52 @@ export async function previewDwellingPromptPayload(
         model: apiConfig.defaultModel,
         presetName: preset?.name ?? "默认预设",
     };
+}
+
+// ── Generate items for a single room ──────────
+
+export async function generateSingleRoomItems(
+    characterId: string,
+    room: DwellingRoom,
+): Promise<{ room: DwellingRoom | null; error?: string }> {
+    const { apiConfig, preset, worldBooks, regexes } = resolveDwellingConfigs(characterId);
+    if (!apiConfig) return { room: null, error: "未找到可用的 API 配置" };
+
+    const character = loadCharacters().find(c => c.id === characterId);
+    const furnitureList = room.furniture.map(f => `- 家具【${f.label}】(id: "${f.id}")`).join("\n");
+    const appTags = ["dwelling", "items"];
+    const promptContext = `[单房间物品更新: ${room.name} (${room.en || ""})]\n当前房间保持现有家具不变，请根据最新生活状态为每件家具构思 2~4 件物品：\n${furnitureList}`;
+
+    try {
+        const llmMessages = await buildDwellingMessages(characterId, preset, worldBooks, regexes, appTags, promptContext);
+        llmMessages.push({
+            role: "user",
+            content: `请只更新【${room.name}】中家具包含的物品。保持每件家具原有 id，为每件家具生成 2~4 个物品。只输出纯 JSON，格式如下：\n{\n  "furniture": [\n    {\n      "id": "家具对应ID",\n      "items": [\n        { "id": "英文新ID", "name": "物品名", "preview": "一句话外观细节" }\n      ]\n    }\n  ]\n}`,
+        });
+
+        const rawOutput = await sendLLMRequest(apiConfig, preset, llmMessages, regexes, {
+            characterName: character?.name,
+        }, {
+            appId: "dwelling",
+            appTags,
+        });
+
+        if (!rawOutput) return { room: null, error: "LLM 返回为空" };
+        const parsed = extractJSON(rawOutput) as { furniture?: Array<{ id: string; items: DwellingFurniture["items"] }> } | null;
+        if (!parsed || !Array.isArray(parsed.furniture)) {
+            return { room: null, error: "无法解析新物品列表" };
+        }
+
+        const newRoom = structuredClone(room);
+        const itemMap = new Map(parsed.furniture.map(f => [f.id, f.items]));
+        for (const f of newRoom.furniture) {
+            const newItems = itemMap.get(f.id);
+            if (Array.isArray(newItems) && newItems.length > 0) {
+                f.items = newItems;
+            }
+        }
+        return { room: newRoom };
+    } catch (e) {
+        return { room: null, error: e instanceof Error ? e.message : "刷新房间物品失败" };
+    }
 }

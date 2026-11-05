@@ -15,7 +15,7 @@ import {
     saveDwellingImageEnabled,
     collectRoomImageRefs,
 } from "@/lib/dwelling-storage";
-import { generateDwellingLayout, generateItemHtml, type DwellingRefreshMode } from "@/lib/dwelling-engine";
+import { generateDwellingLayout, generateItemHtml, generateSingleRoomItems, type DwellingRefreshMode } from "@/lib/dwelling-engine";
 import { pinyin } from "pinyin-pro";
 import { getDwellingImageAvailability, generateDwellingRoomImage, cancelDwellingRoomImage } from "@/lib/dwelling-image";
 import { deleteMediaRef, loadMediaObjectUrl } from "@/lib/media-cache-storage";
@@ -222,6 +222,40 @@ export function DwellingApp({ onClose, visible, onIdle }: DwellingAppProps) {
             await clearDwellingData(activeCharId);
         }
         await doGenerate(activeCharId, mode);
+    }
+
+    async function handleRefreshCurrentRoom() {
+        if (!activeCharId) return;
+        const cs = getCharState(activeCharId);
+        if (cs.isGenerating || !cs.layout) return;
+        const currentRoom = cs.layout.rooms[activeRoomIdx];
+        if (!currentRoom) return;
+
+        cs.isGenerating = true;
+        cs.error = null;
+        setItemDetail(null);
+        rerender();
+
+        const { room: updatedRoom, error } = await generateSingleRoomItems(activeCharId, currentRoom);
+        cs.isGenerating = false;
+
+        if (!updatedRoom) {
+            cs.error = error || "刷新当前房间物品失败";
+            rerender();
+            if (!visible && onIdle) onIdle();
+            return;
+        }
+
+        // 清理当前房间已缓存的物品 HTML 详情
+        const prefix = `${currentRoom.id}_`;
+        for (const key of Object.keys(cs.itemHtmlCache)) {
+            if (key.startsWith(prefix)) delete cs.itemHtmlCache[key];
+        }
+
+        cs.layout.rooms[activeRoomIdx] = updatedRoom;
+        await saveDwellingLayout(activeCharId, cs.layout);
+        rerender();
+        if (!visible && onIdle) onIdle();
     }
 
     async function handleDelete() {
@@ -594,10 +628,16 @@ export function DwellingApp({ onClose, visible, onIdle }: DwellingAppProps) {
                         <div className="dw-confirm-title">刷新房间</div>
                         <div className="dw-confirm-msg">选择刷新方式</div>
                         <div className="dw-confirm-actions-col">
+                            <button className="dw-confirm-option" onClick={() => { setShowRefreshConfirm(false); handleRefreshCurrentRoom(); }}>
+                                <span className="dw-confirm-option-text">
+                                    <strong>仅刷新本房间</strong>
+                                    <small>只为当前房间「{activeRoom?.name}」更新物品，不影响其他房间</small>
+                                </span>
+                            </button>
                             <button className="dw-confirm-option" onClick={() => { setShowRefreshConfirm(false); handleRefresh("items"); }}>
                                 <span className="dw-confirm-option-text">
-                                    <strong>刷新物品</strong>
-                                    <small>保留房间和家具，只更新物品</small>
+                                    <strong>刷新全部房间物品</strong>
+                                    <small>保留房间和家具，重新生成所有房间物品</small>
                                 </span>
                             </button>
                             <button className="dw-confirm-option" onClick={() => { setShowRefreshConfirm(false); handleRefresh("full"); }}>
