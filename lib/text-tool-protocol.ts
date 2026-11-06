@@ -1,3 +1,5 @@
+import { isInsideCodeSpan } from "./code-span-utils";
+
 export type TextToolDirectiveSpan = {
     start: number;
     end: number;
@@ -67,7 +69,10 @@ export function findTextToolDirectiveSpans(text: string): TextToolDirectiveSpan[
     }
     spans.push(...findActionDirectiveSpans(text));
 
+    // 反引号/围栏代码里被引用的协议是示例（模型讲解格式时常用 `[执行动作:…]`），
+    // 不能当成真指令执行或剥除，否则示例后面的正文会被整段吞掉。
     return spans
+        .filter(span => !isInsideCodeSpan(text, span.start))
         .sort((left, right) => left.start - right.start || right.end - left.end)
         .filter((span, index, all) => index === 0 || span.start >= all[index - 1].end);
 }
