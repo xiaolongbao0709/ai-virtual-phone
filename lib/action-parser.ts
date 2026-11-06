@@ -20,6 +20,7 @@ import { sendBrowserNotification } from "./browser-notification";
 import type { MomentPost, MomentComment } from "./moments-types";
 import { attachMomentPhotoInBackground, parseMomentPostResponse } from "./moments-engine";
 import { isAbortError, throwIfAborted } from "./abort-utils";
+import { isInsideCodeSpan } from "./code-span-utils";
 
 // ── Types ──
 
@@ -44,6 +45,17 @@ const ACTION_TAGS = ["朋友圈", "群消息", "评论", "回复", "消息", "�
 
 function normalizeActionQuotes(text: string): string {
     return text.replace(/[\u201C\u201D\u2018\u2019\u300C\u300D]/g, "\"");
+}
+
+/** 文本 index 是否位于行首（允许前置空白）。真动作块都按预设格式独立成段，
+ *  正文里顺口提到的 [消息]/[回复] 之类词不会落在行首。 */
+function isAtLineStart(text: string, index: number): boolean {
+    for (let i = index - 1; i >= 0; i -= 1) {
+        const ch = text[i];
+        if (ch === "\n" || ch === "\r") return true;
+        if (ch !== " " && ch !== "\t") return false;
+    }
+    return true;
 }
 
 function unwrapActionTarget(text: string): string {
@@ -101,12 +113,19 @@ function collectActionBlocks(text: string, requireClosingTag: boolean): {
         const parsed = parseActionHeader(match[1]);
         if (!parsed) continue;
 
+        // 反引号代码里被引用的标签是示例，不是真动作
+        if (isInsideCodeSpan(text, match.index)) continue;
+
         const contentStart = openTagPattern.lastIndex;
         const closingTag = `[/${parsed.type}]`;
         const closingStart = text.indexOf(closingTag, contentStart);
 
         if (closingStart < 0) {
             if (requireClosingTag) continue;
+
+            // 模型漏写闭合标签时的兜底：只认「行首开始」的标签，避免正文里
+            // 顺口提到 [消息]/[回复] 之类词时，把后面整段正文误吞成动作内容。
+            if (!isAtLineStart(text, match.index)) continue;
 
             const content = text.slice(contentStart).trim();
             if (!content) continue;

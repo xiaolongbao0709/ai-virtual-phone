@@ -5,10 +5,66 @@
 // 已经剥掉的不会再剥，未闭合的标签残留会在下一批增量到来时随全文重算被清掉。
 
 import { stripTextToolDirectives } from "./text-tool-protocol";
+import { isInsideCodeSpan } from "./code-span-utils";
 
-const TOOL_DIRECTIVE_START_RE = /\[[^\]\r\n]*?(?:执行动作|获取指令|获取工具|工具调用)\s*[:：]/;
 const MEDIA_DIRECTIVE_RE = /\[(?:代付请求|音乐分享|语音条|表情包|照片|红包|转账|位置|名片|音乐|礼物)\s*[:：][^\]\r\n]*\]/g;
 const INCOMPLETE_MEDIA_DIRECTIVE_RE = /\[(?:代付请求|音乐分享|语音条|表情包|照片|红包|转账|位置|名片|音乐|礼物)\s*[:：][^\]\r\n]*$/g;
+
+// 工具指令（[执行动作:…] 等）关键字：判断流式尾部是不是一条还没写完的指令头
+const DIRECTIVE_KEYWORDS = ["执行动作", "工具调用", "获取指令", "获取工具"] as const;
+const DIRECTIVE_HEADER_RE = /(?:执行动作|工具调用|获取指令|获取工具)\s*[:：]/;
+
+/** 在代码范围之外执行正则替换：反引号里被引用的协议示例原样保留 */
+function replaceOutsideCode(text: string, re: RegExp, replacement: string): string {
+    const scanner = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+    let out = "";
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+    while ((match = scanner.exec(text)) !== null) {
+        if (match[0].length === 0) { scanner.lastIndex += 1; continue; }
+        if (isInsideCodeSpan(text, match.index)) continue;
+        out += text.slice(cursor, match.index) + replacement;
+        cursor = match.index + match[0].length;
+    }
+    if (cursor === 0) return text;
+    return out + text.slice(cursor);
+}
+
+/** 代码范围外第一个匹配的位置；找不到返回 -1 */
+function indexOutsideCode(text: string, re: RegExp): number {
+    const scanner = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+    let match: RegExpExecArray | null;
+    while ((match = scanner.exec(text)) !== null) {
+        if (match[0].length === 0) { scanner.lastIndex += 1; continue; }
+        if (!isInsideCodeSpan(text, match.index)) return match.index;
+    }
+    return -1;
+}
+
+/** 流式正文末尾可能停在一条没写完的工具指令中间。
+ *  只有参数括号 ( 先于 ] / 换行出现，才算真的执行指令（与工具调用解析规则一致）；
+ *  否则就是正文里提到的标签（如反引号包裹的 `[执行动作: 写入]`），按原文显示，
+ *  不再从这里截断后文——这正是「AI 回复一涉及反引号里的标签就卡死」的根因。 */
+function findUnfinishedDirectiveStart(text: string): number {
+    for (let start = text.indexOf("["); start !== -1; start = text.indexOf("[", start + 1)) {
+        if (isInsideCodeSpan(text, start)) continue;
+        let argsStart = -1;
+        for (let i = start + 1; i < text.length; i += 1) {
+            const ch = text[i];
+            if (ch === "\n" || ch === "\r" || ch === "]") break;
+            if (ch === "(" || ch === "（") { argsStart = i; break; }
+        }
+        if (argsStart === -1) {
+            // 指令头还没流完（如 "…[执行动作:"）：尾部暂扣，等下一批增量
+            const tail = text.slice(start + 1);
+            if (tail.includes("]") || tail.includes("\n")) continue;
+            if (DIRECTIVE_KEYWORDS.some(k => k.startsWith(tail) || tail.startsWith(k))) return start;
+            continue;
+        }
+        if (DIRECTIVE_HEADER_RE.test(text.slice(start + 1, argsStart))) return start;
+    }
+    return -1;
+}
 
 /** 按标签名剥掉 <tag>…</tag> 整块（含未闭合的 <tag>…直到结尾），供思维链/摘要类
  *  配置型标签在预览阶段隐藏。幂等：已剥净的文本重复调用无变化。 */
@@ -51,16 +107,19 @@ export function cleanStreamText(raw: string, options?: { stripXmlTags?: readonly
     let text = raw;
     if (options?.stripXmlTags?.length) text = stripXmlTagBlocks(text, options.stripXmlTags);
     if (options?.stripLiterals?.length) text = stripLiteralTexts(text, options.stripLiterals);
-    // 成对富媒体块整块剥掉
-    text = text.replace(/\[状态栏\][\s\S]*?\[\/状态栏\]/gi, "");
-    text = text.replace(/\[内心\][\s\S]*?\[\/内心\]/gi, "");
-    // 单边开标签（还没闭合）也剥掉，避免预览里露出协议残片
-    text = text.replace(/\[状态栏\][\s\S]*?$/gi, "");
-    text = text.replace(/\[内心\][\s\S]*?$/gi, "");
+    // 成对富媒体块整块剥掉（反引号里被引用的示例原样保留）
+    text = replaceOutsideCode(text, /\[状态栏\][\s\S]*?\[\/状态栏\]/gi, "");
+    text = replaceOutsideCode(text, /\[内心\][\s\S]*?\[\/内心\]/gi, "");
+    // 单边开标签（还没闭合）也剥掉，避免预览里露出协议残片；同样跳过代码里的示例
+    const unclosedStatus = indexOutsideCode(text, /\[状态栏\]/gi);
+    if (unclosedStatus !== -1) text = text.slice(0, unclosedStatus);
+    const unclosedMono = indexOutsideCode(text, /\[内心\]/gi);
+    if (unclosedMono !== -1) text = text.slice(0, unclosedMono);
     // 工具指令参数允许嵌套数组、括号及字符串里的 ]，复用项目统一解析器，不能用 [^]] 截断。
     text = stripTextToolDirectives(text);
-    const incompleteTool = text.match(TOOL_DIRECTIVE_START_RE);
-    if (incompleteTool?.index !== undefined) text = text.slice(0, incompleteTool.index);
+    // 没写完的工具指令：按「参数括号先于 ] / 换行」判定，正文提到的标签不再吞后文
+    const unfinishedDirective = findUnfinishedDirectiveStart(text);
+    if (unfinishedDirective !== -1) text = text.slice(0, unfinishedDirective);
     // 富媒体完整标签显示为附件占位；尚未闭合时也隐藏协议正文。
     text = text.replace(MEDIA_DIRECTIVE_RE, "📎 ");
     text = text.replace(INCOMPLETE_MEDIA_DIRECTIVE_RE, "📎 ");
