@@ -429,6 +429,55 @@ export function getChatMessagePreview(msg: ChatMessage): string {
     return msg.content;
 }
 
+/** 提取消息作为引用回复时的预览文本摘要（存入 quotePreview 并用于气泡展示） */
+export function getChatMessageQuoteSummary(msg: ChatMessage): string {
+    if (msg.mediaType === "audio") {
+        const text = (msg.mediaData?.label || msg.mediaData?.synthesizedFromText || "").trim();
+        return text ? `[语音] ${text}` : "[语音]";
+    }
+    if (msg.mediaType === "media_file" && msg.mediaData?.fileType === "image") {
+        const label = msg.mediaData.label?.trim();
+        return label ? `[图片] ${label}` : "[图片]";
+    }
+    if (msg.mediaType === "image") {
+        const label = msg.mediaData?.label?.trim();
+        return label ? `[图片] ${label}` : "[图片]";
+    }
+    if (msg.mediaType === "video" || (msg.mediaType === "media_file" && msg.mediaData?.fileType === "video")) {
+        return "[视频]";
+    }
+    if (msg.mediaType === "sticker") {
+        const label = msg.mediaData?.label?.trim();
+        return label ? `[表情] ${label}` : "[表情]";
+    }
+    if (msg.mediaType === "location") {
+        const label = msg.mediaData?.label?.trim();
+        return label ? `[位置] ${label}` : "[位置]";
+    }
+    if (msg.mediaType === "red_packet") {
+        return "[微信红包]";
+    }
+    if (msg.mediaType === "transfer") {
+        return "[微信转账]";
+    }
+    if (msg.mediaType === "quote") {
+        return msg.content || (msg.mediaData?.quotePreview ? `[引用] ${msg.mediaData.quotePreview}` : "");
+    }
+    if (msg.content?.trim()) {
+        return msg.content;
+    }
+    if (msg.mediaType && MEDIA_PREVIEW_MAP[msg.mediaType]) {
+        return MEDIA_PREVIEW_MAP[msg.mediaType];
+    }
+    return msg.content || "";
+}
+
+/** 格式化输入框上方引用栏文案（例如：引用 角色名: [语音] 内容） */
+export function getChatInputQuoteBarText(msg: ChatMessage, senderName: string): string {
+    const summary = getChatMessageQuoteSummary(msg);
+    return summary ? `引用 ${senderName}: ${summary}` : `引用 ${senderName}`;
+}
+
 function hasPreviewText(text: string | undefined): boolean {
     return !!text?.trim();
 }
