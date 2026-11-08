@@ -44,3 +44,4 @@
   --font-size-lg: 17px;  --font-size-xl: 20px;
   --font-size-2xl: 24px; --font-size-3xl: 30px;
 }
+div[data-netlify-deploy-id], netlify-drawer { display: none !important; }
