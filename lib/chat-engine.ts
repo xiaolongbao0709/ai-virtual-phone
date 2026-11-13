@@ -2981,10 +2981,11 @@ export async function previewPromptPayload(
         effectiveHistory = annotated;
     }
 
-    // Use the SAME shared builder as generateChatCompletion
+    // 与真实发送一致，在供应商格式转换前执行请求阶段插件（也会触发插件自身的副作用）。
     const { llmMessages, character, config, preset } = await buildChatPromptMessages(session, effectiveHistory, options);
+    const afterPlugins = await applyChatPluginLlmRequest(preset, llmMessages, options?.appId ?? "chat", session.id);
 
-    const apiMessages = previewMessagesForApi(config, preset, llmMessages);
+    const apiMessages = previewMessagesForApi(config, afterPlugins.preset, afterPlugins.messages);
 
     return {
         messages: apiMessages,
@@ -3044,7 +3045,8 @@ export async function previewPromptRequestSnapshot(
     }
 
     const { llmMessages, character, config, preset, userIdentity, toolsEnabled } = await buildChatPromptMessages(session, effectiveHistory, options);
-    const requestMessages = toLlmRequestMessages(llmMessages);
+    const afterPlugins = await applyChatPluginLlmRequest(preset, llmMessages, options?.appId ?? "chat", session.id);
+    const requestMessages = toLlmRequestMessages(afterPlugins.messages);
     const enabledTools = toolsEnabled ? getEnabledTools(options?.appId ?? "chat") : [];
     const meta = { characterName: character.name, userName: userIdentity?.name };
 
@@ -3058,7 +3060,7 @@ export async function previewPromptRequestSnapshot(
             characterName: character.name,
             userName: userIdentity?.name ?? "用户",
         });
-        const request = buildProviderRequest(config, preset, requestMessages, { tools: nativeBundle.definitions });
+        const request = buildProviderRequest(config, afterPlugins.preset, requestMessages, { tools: nativeBundle.definitions });
         return publishDebugPromptSnapshot({
             request,
             config,
@@ -3074,7 +3076,7 @@ export async function previewPromptRequestSnapshot(
         });
     }
 
-    const request = buildProviderRequest(config, preset, requestMessages);
+    const request = buildProviderRequest(config, afterPlugins.preset, requestMessages);
     return publishDebugPromptSnapshot({
         request,
         config,
