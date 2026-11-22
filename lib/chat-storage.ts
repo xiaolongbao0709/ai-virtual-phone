@@ -9,7 +9,7 @@ import {
 } from "./chat-db";
 import { resolveUserIdentity } from "./settings-storage";
 import { loadCharacters } from "./character-storage";
-import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+import { hydrateKvDb, isKvHydrated, kvGet, kvRemove, kvSet, registerKvMigration } from "./kv-db";
 import { emitChatPluginEvent, runChatPluginTransformSync } from "./chat-plugin-hooks";
 import { parseAIResponse } from "./rich-message-parser";
 import { extractTextToolDirectiveText } from "./text-tool-protocol";
@@ -18,6 +18,12 @@ export const DEFAULT_VISION_IMAGE_PROMPT_LIMIT = 1;
 export const MAX_VISION_IMAGE_PROMPT_LIMIT = 20;
 export const CHAT_INITIAL_VISIBLE_MESSAGE_COUNT = 50;
 export const CHAT_LOAD_MORE_MESSAGE_COUNT = 30;
+
+// 线下轮次按 sessionId 存在 kv 里，前缀必须与 lib/chat-offline-storage.ts 保持一致。
+// 这里不 import chat-offline-storage（chat-storage 不能反向依赖它，见 chat-session-remove.ts
+// 顶部的说明），只按前缀对整键做搬迁；与 chat-session-remove.ts 里硬编码的
+// GENERATING_PREFIX 等属于同一类处理。
+const CHAT_OFFLINE_TURNS_PREFIX = "ai_phone_chat_offline_turns:";
 
 export function normalizeVisionImagePromptLimit(value: unknown): number {
     if (value === undefined || value === null || value === "") return DEFAULT_VISION_IMAGE_PROMPT_LIMIT;
@@ -606,9 +612,46 @@ function normalizeChatContacts(contacts: ChatContact[]): NormalizedList<ChatCont
     return { items: normalized, changed };
 }
 
+// 线下轮次的最后时间：会话去重时用来判断哪个重复会话更「活跃」，避免把最近
+// 只做过线下聊天的会话当成不活跃而丢弃。按原始 JSON 串缓存解析结果。
+const offlineTurnTimeCache = new Map<string, { raw: string | null; time: number }>();
+
+function getLastOfflineTurnTime(sessionId: string): number {
+    let raw: string | null = null;
+    try {
+        raw = kvGet(CHAT_OFFLINE_TURNS_PREFIX + sessionId);
+    } catch {
+        return 0;
+    }
+    const cached = offlineTurnTimeCache.get(sessionId);
+    if (cached && cached.raw === raw) return cached.time;
+    let time = 0;
+    if (raw) {
+        try {
+            const parsed = JSON.parse(raw) as unknown;
+            if (Array.isArray(parsed)) {
+                for (const turn of parsed) {
+                    if (!turn || typeof turn !== "object") continue;
+                    const at = (turn as { createdAt?: unknown }).createdAt;
+                    const value = parseIsoTime(typeof at === "string" ? at : undefined);
+                    if (value > time) time = value;
+                }
+            }
+        } catch {
+            time = 0;
+        }
+    }
+    offlineTurnTimeCache.set(sessionId, { raw, time });
+    return time;
+}
+
 function getSessionActivityTime(session: ChatSession): number {
     const lastVisible = getLastVisibleSessionMessage(session.id);
-    return Math.max(parseIsoTime(lastVisible?.createdAt), parseIsoTime(session.updatedAt));
+    return Math.max(
+        parseIsoTime(lastVisible?.createdAt),
+        parseIsoTime(session.updatedAt),
+        getLastOfflineTurnTime(session.id),
+    );
 }
 
 function isPreferredSession(candidate: ChatSession, current: ChatSession): boolean {
@@ -780,6 +823,67 @@ function redirectMessagesToPreferredSessions(redirects: Map<string, string>): nu
     dbPutMessages(changedMessages);
     affectedSessionIds.forEach(reindexSessionMessageOrders);
     return changedMessages.length;
+}
+
+// 会话去重会丢掉重复的私聊会话，但线下轮次是按 sessionId 单独存的：只搬迁线上
+// 消息（上面那个函数）会把被丢弃会话的线下轮次留成孤儿——它们挂在一个已不在会话
+// 列表里的 sessionId 下，loadChatOfflineProjectionEntries 扫不到，于是「最近一次
+// 线下活动」进不了群聊/私聊的提示词上下文。这里把被丢弃会话的线下轮次并到保留下来的
+// 会话，再删掉孤儿键。
+function migrateOfflineTurnsToPreferredSessions(redirects: Map<string, string>): number {
+    if (redirects.size === 0) return 0;
+    // 未水合时 kv 缓存是空的：kvGet 一律返回 null，而 kvRemove 会真删 IndexedDB 里的
+    // 记录。宁可跳过本次搬迁（hydrateChatStorage 已保证先 await hydrateKvDb），也不能
+    // 拿空数据误删真实线下记录。
+    if (!isKvHydrated()) return 0;
+    let migrated = 0;
+    for (const [fromId, toId] of redirects) {
+        if (fromId === toId) continue;
+        const fromKey = CHAT_OFFLINE_TURNS_PREFIX + fromId;
+        const toKey = CHAT_OFFLINE_TURNS_PREFIX + toId;
+        const fromRaw = kvGet(fromKey);
+        if (!fromRaw) continue; // 该会话本来就没有线下记录
+        let sourceTurns: unknown[] = [];
+        let targetTurns: unknown[] = [];
+        try {
+            const parsed = JSON.parse(fromRaw) as unknown;
+            if (Array.isArray(parsed)) sourceTurns = parsed;
+        } catch {
+            sourceTurns = [];
+        }
+        try {
+            const parsed = kvGet(toKey) ? JSON.parse(kvGet(toKey) as string) as unknown : [];
+            if (Array.isArray(parsed)) targetTurns = parsed;
+        } catch {
+            targetTurns = [];
+        }
+        // 按轮次 id 去重合并；轮次内部 sessionId 改到目标会话，与 chat-session-merge
+        // 的合并口径一致。
+        const byId = new Map<string, unknown>();
+        for (const turn of targetTurns) {
+            if (!turn || typeof turn !== "object") continue;
+            const id = String((turn as { id?: unknown }).id ?? "");
+            if (id) byId.set(id, turn);
+        }
+        for (const turn of sourceTurns) {
+            if (!turn || typeof turn !== "object") continue;
+            const id = String((turn as { id?: unknown }).id ?? "");
+            if (!id) continue;
+            byId.set(id, { ...(turn as Record<string, unknown>), sessionId: toId });
+        }
+        if (byId.size === 0) continue;
+        const merged = [...byId.values()].sort((a, b) => {
+            const at = String((a as { createdAt?: unknown }).createdAt ?? "");
+            const bt = String((b as { createdAt?: unknown }).createdAt ?? "");
+            return at.localeCompare(bt);
+        });
+        kvSet(toKey, JSON.stringify(merged));
+        kvRemove(fromKey);
+        offlineTurnTimeCache.delete(fromId);
+        offlineTurnTimeCache.delete(toId);
+        migrated += sourceTurns.length;
+    }
+    return migrated;
 }
 
 function normalizeLegacyTextToolHistory(messages: ChatMessage[]): {
@@ -957,7 +1061,12 @@ function refreshSessionPreviewMetadata(sessions: ChatSession[]): NormalizedList<
 export function hydrateChatStorage(): Promise<void> {
     if (_hydrated || typeof window === "undefined") return Promise.resolve();
     if (_hydratePromise) return _hydratePromise;
-    _hydratePromise = initChatDb().then(data => {
+    _hydratePromise = (async () => {
+        // 会话去重会把被丢弃重复私聊会话的线下轮次并到保留下来的会话。未水合时 kv
+        // 缓存为空，搬迁会读到空数据并误删 IndexedDB 里的真实线下记录，所以先等 kv
+        // 水合完成（失败也不阻塞 chat 自身水合，搬迁会自动跳过）。
+        await hydrateKvDb();
+        const data = await initChatDb();
         const normalizedToolHistory = normalizeLegacyTextToolHistory(data.messages);
         _messagesCache = normalizedToolHistory.items;
         if (normalizedToolHistory.changedMessages.length > 0) {
@@ -966,6 +1075,7 @@ export function hydrateChatStorage(): Promise<void> {
         let normalizedContacts = normalizeChatContacts(data.contacts);
         const normalizedSessions = normalizeChatSessions(data.sessions);
         const redirectedMessages = redirectMessagesToPreferredSessions(normalizedSessions.redirects);
+        migrateOfflineTurnsToPreferredSessions(normalizedSessions.redirects);
         const refreshedSessions = refreshSessionPreviewMetadata(normalizedSessions.items);
         normalizedContacts = restoreContactsForPrivateSessions(normalizedContacts.items, normalizedSessions.items);
         _contactsCache = normalizedContacts.items;
@@ -973,7 +1083,7 @@ export function hydrateChatStorage(): Promise<void> {
         if (normalizedContacts.changed) dbReplaceContacts(normalizedContacts.items);
         if (normalizedSessions.changed || redirectedMessages > 0 || refreshedSessions.changed) dbReplaceSessions(refreshedSessions.items);
         _hydrated = true;
-    }).catch(err => {
+    })().catch(err => {
         console.warn("[ChatStorage] hydration failed, will retry on next call:", err);
         _hydratePromise = null;
     });
@@ -1036,6 +1146,7 @@ export function removeChatContact(characterId: string) {
 export function loadChatSessions(): ChatSession[] {
     const normalized = normalizeChatSessions(_sessionsCache);
     const redirectedMessages = redirectMessagesToPreferredSessions(normalized.redirects);
+    migrateOfflineTurnsToPreferredSessions(normalized.redirects);
     const refreshed = refreshSessionPreviewMetadata(normalized.items);
     if (normalized.changed || redirectedMessages > 0 || refreshed.changed) {
         _sessionsCache = refreshed.items;
@@ -1047,6 +1158,7 @@ export function loadChatSessions(): ChatSession[] {
 export function saveChatSessions(sessions: ChatSession[]) {
     const normalized = normalizeChatSessions(sessions);
     const redirectedMessages = redirectMessagesToPreferredSessions(normalized.redirects);
+    migrateOfflineTurnsToPreferredSessions(normalized.redirects);
     const refreshed = refreshSessionPreviewMetadata(normalized.items);
     _sessionsCache = refreshed.items;
     if (!_hydrated && typeof window !== "undefined") {
