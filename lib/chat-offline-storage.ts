@@ -1,9 +1,8 @@
 import { loadChatSessions } from "./chat-storage";
 import { formatChatTimestamp } from "./llm-prompt-assembler";
-import { kvGet, kvRemove, kvSet, registerDynamicPrefix } from "./kv-db";
+import { kvGet, kvRemove, kvSet } from "./kv-db";
 
 const CHAT_OFFLINE_TURNS_PREFIX = "ai_phone_chat_offline_turns:";
-registerDynamicPrefix(CHAT_OFFLINE_TURNS_PREFIX);
 
 export type ChatOfflineTurn = {
     id: string;

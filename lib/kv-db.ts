@@ -217,6 +217,34 @@ export async function kvSetAsync(key: string, value: string): Promise<void> {
     }
 }
 
+// Migration writes publish to the cache only after IndexedDB commits. Check again
+// after commit because an ordinary write can update the cache while IDB is pending.
+export async function kvCommitMigration(
+    key: string,
+    value: string | null,
+    isCurrent: () => boolean,
+    onCommitted?: () => void,
+): Promise<boolean> {
+    const stale = new Error("KV migration snapshot changed");
+    try {
+        await kvDb.transaction("rw", kvDb.entries, async () => {
+            if (!isCurrent()) throw stale;
+            if (value === null) await kvDb.entries.delete(key);
+            else await kvDb.entries.put({ key, value });
+            if (!isCurrent()) throw stale;
+        });
+    } catch (err) {
+        if (err !== stale) throw err;
+        return false;
+    }
+    if (!isCurrent()) return false;
+    if (value === null) _cache.delete(key);
+    else _cache.set(key, value);
+    if (isManagedLegacyKey(key)) removeLegacyLocalStorageKey(key);
+    onCommitted?.();
+    return true;
+}
+
 // ── Delete ──
 export function kvRemove(key: string): void {
     _cache.delete(key);

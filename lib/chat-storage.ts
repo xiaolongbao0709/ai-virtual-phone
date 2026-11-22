@@ -9,7 +9,8 @@ import {
 } from "./chat-db";
 import { resolveUserIdentity } from "./settings-storage";
 import { loadCharacters } from "./character-storage";
-import { kvGet, kvSet, registerKvMigration } from "./kv-db";
+import { hydrateKvDb, isKvHydrated, kvCommitMigration, kvGet, kvSet, registerDynamicPrefix, registerKvMigration } from "./kv-db";
+import type { ChatOfflineTurn } from "./chat-offline-storage";
 import { emitChatPluginEvent, runChatPluginTransformSync } from "./chat-plugin-hooks";
 import { parseAIResponse } from "./rich-message-parser";
 import { extractTextToolDirectiveText } from "./text-tool-protocol";
@@ -18,6 +19,11 @@ export const DEFAULT_VISION_IMAGE_PROMPT_LIMIT = 1;
 export const MAX_VISION_IMAGE_PROMPT_LIMIT = 20;
 export const CHAT_INITIAL_VISIBLE_MESSAGE_COUNT = 50;
 export const CHAT_LOAD_MORE_MESSAGE_COUNT = 30;
+
+// 线下轮次按 sessionId 存在 kv 里，前缀必须与 lib/chat-offline-storage.ts 保持一致。
+// 在会话水合前注册，即使线下页面还未加载，也能读到旧版 localStorage 数据。
+const CHAT_OFFLINE_TURNS_PREFIX = "ai_phone_chat_offline_turns:";
+registerDynamicPrefix(CHAT_OFFLINE_TURNS_PREFIX);
 
 export function normalizeVisionImagePromptLimit(value: unknown): number {
     if (value === undefined || value === null || value === "") return DEFAULT_VISION_IMAGE_PROMPT_LIMIT;
@@ -562,7 +568,10 @@ let _hydrated = false;
 let _hydratePromise: Promise<void> | null = null;
 
 type NormalizedList<T> = { items: T[]; changed: boolean };
-type NormalizedSessionList = NormalizedList<ChatSession> & { redirects: Map<string, string> };
+type NormalizedSessionList = NormalizedList<ChatSession> & {
+    redirects: Map<string, string>;
+    sources: ChatSession[];
+};
 
 function parseIsoTime(value: string | undefined): number {
     if (!value) return 0;
@@ -606,9 +615,46 @@ function normalizeChatContacts(contacts: ChatContact[]): NormalizedList<ChatCont
     return { items: normalized, changed };
 }
 
+// 线下轮次的最后时间：会话去重时用来判断哪个重复会话更「活跃」，避免把最近
+// 只做过线下聊天的会话当成不活跃而丢弃。按原始 JSON 串缓存解析结果。
+const offlineTurnTimeCache = new Map<string, { raw: string | null; time: number }>();
+
+function getLastOfflineTurnTime(sessionId: string): number {
+    let raw: string | null = null;
+    try {
+        raw = kvGet(CHAT_OFFLINE_TURNS_PREFIX + sessionId);
+    } catch {
+        return 0;
+    }
+    const cached = offlineTurnTimeCache.get(sessionId);
+    if (cached && cached.raw === raw) return cached.time;
+    let time = 0;
+    if (raw) {
+        try {
+            const parsed = JSON.parse(raw) as unknown;
+            if (Array.isArray(parsed)) {
+                for (const turn of parsed) {
+                    if (!turn || typeof turn !== "object") continue;
+                    const at = (turn as { createdAt?: unknown }).createdAt;
+                    const value = parseIsoTime(typeof at === "string" ? at : undefined);
+                    if (value > time) time = value;
+                }
+            }
+        } catch {
+            time = 0;
+        }
+    }
+    offlineTurnTimeCache.set(sessionId, { raw, time });
+    return time;
+}
+
 function getSessionActivityTime(session: ChatSession): number {
     const lastVisible = getLastVisibleSessionMessage(session.id);
-    return Math.max(parseIsoTime(lastVisible?.createdAt), parseIsoTime(session.updatedAt));
+    return Math.max(
+        parseIsoTime(lastVisible?.createdAt),
+        parseIsoTime(session.updatedAt),
+        getLastOfflineTurnTime(session.id),
+    );
 }
 
 function isPreferredSession(candidate: ChatSession, current: ChatSession): boolean {
@@ -681,7 +727,8 @@ function normalizeChatSessions(sessions: ChatSession[]): NormalizedSessionList {
         }
     }
 
-    return { items: normalized, changed, redirects };
+    const sources = [...redirects.keys()].map(id => byId.get(id)!);
+    return { items: normalized, changed, redirects, sources };
 }
 
 // ── 用户主动删除的好友（墓碑）────────────────────────
@@ -780,6 +827,120 @@ function redirectMessagesToPreferredSessions(redirects: Map<string, string>): nu
     dbPutMessages(changedMessages);
     affectedSessionIds.forEach(reindexSessionMessageOrders);
     return changedMessages.length;
+}
+
+function parseOfflineTurnsForMigration(raw: string | null): ChatOfflineTurn[] {
+    const turns: unknown = raw === null ? [] : JSON.parse(raw);
+    if (!Array.isArray(turns) || !turns.every(turn =>
+        turn && typeof turn.id === "string" && turn.id.trim()
+        && typeof turn.sessionId === "string" && typeof turn.createdAt === "string"
+        && typeof turn.userContent === "string" && typeof turn.assistantContent === "string"
+    )) throw new Error("Invalid offline turns");
+    return turns;
+}
+
+async function migrateOfflineTurns(
+    fromId: string, toId: string, isCurrent: () => boolean, removeSourceSession: () => void,
+): Promise<boolean> {
+    const fromKey = CHAT_OFFLINE_TURNS_PREFIX + fromId;
+    const toKey = CHAT_OFFLINE_TURNS_PREFIX + toId;
+    const fromRaw = kvGet(fromKey);
+    if (fromRaw === null) {
+        removeSourceSession();
+        return true;
+    }
+
+    const toRaw = kvGet(toKey);
+    const source = parseOfflineTurnsForMigration(fromRaw);
+    const target = parseOfflineTurnsForMigration(toRaw);
+    const byId = new Map(target.map(turn => [turn.id, turn]));
+    for (const turn of source) {
+        if (!byId.has(turn.id)) byId.set(turn.id, { ...turn, sessionId: toId });
+    }
+    const merged = JSON.stringify([...byId.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
+    const sourceIsCurrent = () => isCurrent() && kvGet(fromKey) === fromRaw;
+    const written = await kvCommitMigration(toKey, merged, () =>
+        sourceIsCurrent() && kvGet(toKey) === toRaw,
+    );
+    if (!written) return false;
+    return kvCommitMigration(fromKey, null, () =>
+        sourceIsCurrent() && kvGet(toKey) === merged,
+        removeSourceSession,
+    );
+}
+
+let sessionMigration: Promise<void> | null = null;
+let pendingSessionRedirects: Map<string, string> | null = null;
+
+async function persistMigrationSessions(): Promise<void> {
+    // A save may have just introduced the target. Make sure both rows are durable
+    // before deleting any offline key, even if an earlier fire-and-forget save failed.
+    await chatDb.sessions.bulkPut(_sessionsCache);
+}
+
+function queueOfflineSessionMigration(redirects: Map<string, string>): void {
+    pendingSessionRedirects = redirects;
+    if (!_hydrated || typeof window === "undefined" || sessionMigration || redirects.size === 0) return;
+    sessionMigration = (async () => {
+        if (!isKvHydrated()) {
+            await hydrateKvDb();
+            if (isKvHydrated()) {
+                const prepared = prepareChatSessions(_sessionsCache);
+                _sessionsCache = prepared.items;
+                pendingSessionRedirects = prepared.redirects;
+            }
+        }
+        while (isKvHydrated() && pendingSessionRedirects?.size) {
+            const plan: Map<string, string> = pendingSessionRedirects;
+            try {
+                await persistMigrationSessions();
+            } catch (err) {
+                console.warn("[ChatStorage] offline migration deferred: could not persist session rows", err);
+                if (pendingSessionRedirects === plan) break;
+            }
+            if (pendingSessionRedirects !== plan) continue;
+            const blocked = new Set<string>();
+            for (const [fromId, toId] of plan) {
+                const isCurrent = () => pendingSessionRedirects === plan;
+                if (!isCurrent()) break;
+                if (!blocked.has(fromId)) {
+                    const removeSourceSession = () => {
+                        offlineTurnTimeCache.delete(fromId);
+                        _sessionsCache = _sessionsCache.filter(session => session.id !== fromId);
+                        dbReplaceSessions(_sessionsCache);
+                    };
+                    try {
+                        if (await migrateOfflineTurns(fromId, toId, isCurrent, removeSourceSession)) continue;
+                        // A normal write changed one of the keys. Try once with fresh inputs.
+                        if (!isCurrent()) break;
+                        if (await migrateOfflineTurns(fromId, toId, isCurrent, removeSourceSession)) continue;
+                    } catch (err) {
+                        console.warn("[ChatStorage] offline migration deferred:", fromId, toId, err);
+                    }
+                }
+                // Keep intermediate rows when an earlier edge in this chain could not move.
+                blocked.add(toId);
+            }
+            if (pendingSessionRedirects === plan) break;
+        }
+    })().finally(() => {
+        sessionMigration = null;
+    });
+}
+
+// Keep pending sources visible to offline projection and durable across a reload.
+// Preferred sessions come first so private chat creation still reuses the winner.
+function prepareChatSessions(sessions: ChatSession[]) {
+    const normalized = normalizeChatSessions(sessions);
+    const redirectedMessages = redirectMessagesToPreferredSessions(normalized.redirects);
+    const refreshed = refreshSessionPreviewMetadata([...normalized.items, ...normalized.sources]);
+    return {
+        items: refreshed.items,
+        redirects: normalized.redirects,
+        changed: redirectedMessages > 0 || refreshed.items.length !== sessions.length
+            || refreshed.items.some((session, index) => session !== sessions[index]),
+        replace: normalized.changed || redirectedMessages > 0 || refreshed.changed,
+    };
 }
 
 function normalizeLegacyTextToolHistory(messages: ChatMessage[]): {
@@ -955,25 +1116,30 @@ function refreshSessionPreviewMetadata(sessions: ChatSession[]): NormalizedList<
  * a failed attempt allows the next call to retry.
  */
 export function hydrateChatStorage(): Promise<void> {
-    if (_hydrated || typeof window === "undefined") return Promise.resolve();
     if (_hydratePromise) return _hydratePromise;
-    _hydratePromise = initChatDb().then(data => {
+    if (_hydrated || typeof window === "undefined") return Promise.resolve();
+    _hydratePromise = (async () => {
+        // 会话去重会把被丢弃重复私聊会话的线下轮次并到保留下来的会话。未水合时 kv
+        // 缓存为空，搬迁会读到空数据并误删 IndexedDB 里的真实线下记录，所以先等 kv
+        // 水合完成（失败也不阻塞 chat 自身水合，搬迁会自动跳过）。
+        await hydrateKvDb();
+        const data = await initChatDb();
         const normalizedToolHistory = normalizeLegacyTextToolHistory(data.messages);
         _messagesCache = normalizedToolHistory.items;
         if (normalizedToolHistory.changedMessages.length > 0) {
             dbPutMessages(normalizedToolHistory.changedMessages);
         }
         let normalizedContacts = normalizeChatContacts(data.contacts);
-        const normalizedSessions = normalizeChatSessions(data.sessions);
-        const redirectedMessages = redirectMessagesToPreferredSessions(normalizedSessions.redirects);
-        const refreshedSessions = refreshSessionPreviewMetadata(normalizedSessions.items);
-        normalizedContacts = restoreContactsForPrivateSessions(normalizedContacts.items, normalizedSessions.items);
+        const prepared = prepareChatSessions(data.sessions);
+        normalizedContacts = restoreContactsForPrivateSessions(normalizedContacts.items, prepared.items);
         _contactsCache = normalizedContacts.items;
-        _sessionsCache = refreshedSessions.items;
+        _sessionsCache = prepared.items;
         if (normalizedContacts.changed) dbReplaceContacts(normalizedContacts.items);
-        if (normalizedSessions.changed || redirectedMessages > 0 || refreshedSessions.changed) dbReplaceSessions(refreshedSessions.items);
+        if (prepared.changed) dbReplaceSessions(prepared.items);
         _hydrated = true;
-    }).catch(err => {
+        queueOfflineSessionMigration(prepared.redirects);
+        await sessionMigration;
+    })().catch(err => {
         console.warn("[ChatStorage] hydration failed, will retry on next call:", err);
         _hydratePromise = null;
     });
@@ -1034,28 +1200,27 @@ export function removeChatContact(characterId: string) {
 
 // ── CRUD for Sessions ─────────────────────────
 export function loadChatSessions(): ChatSession[] {
-    const normalized = normalizeChatSessions(_sessionsCache);
-    const redirectedMessages = redirectMessagesToPreferredSessions(normalized.redirects);
-    const refreshed = refreshSessionPreviewMetadata(normalized.items);
-    if (normalized.changed || redirectedMessages > 0 || refreshed.changed) {
-        _sessionsCache = refreshed.items;
-        if (_hydrated && typeof window !== "undefined") dbReplaceSessions(refreshed.items);
+    if (sessionMigration) return _sessionsCache;
+    const prepared = prepareChatSessions(_sessionsCache);
+    if (prepared.changed) {
+        _sessionsCache = prepared.items;
+        if (_hydrated && typeof window !== "undefined") dbReplaceSessions(prepared.items);
     }
+    queueOfflineSessionMigration(prepared.redirects);
     return _sessionsCache;
 }
 
 export function saveChatSessions(sessions: ChatSession[]) {
-    const normalized = normalizeChatSessions(sessions);
-    const redirectedMessages = redirectMessagesToPreferredSessions(normalized.redirects);
-    const refreshed = refreshSessionPreviewMetadata(normalized.items);
-    _sessionsCache = refreshed.items;
+    const prepared = prepareChatSessions(sessions);
+    _sessionsCache = prepared.items;
     if (!_hydrated && typeof window !== "undefined") {
         console.warn("[ChatStorage] saveChatSessions before hydration; using additive write to avoid replacing existing sessions.");
-        dbPutSessions(refreshed.items);
+        dbPutSessions(prepared.items);
         return;
     }
-    if (normalized.changed || redirectedMessages > 0 || refreshed.changed) dbReplaceSessions(refreshed.items);
-    else dbPutSessions(refreshed.items);
+    if (prepared.replace) dbReplaceSessions(prepared.items);
+    else dbPutSessions(prepared.items);
+    queueOfflineSessionMigration(prepared.redirects);
 }
 
 export function createOrGetSession(contactId: string): ChatSession {
