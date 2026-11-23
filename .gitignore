@@ -24,6 +24,11 @@ tools/weixin-local-assistant/config.txt
 自定义APP制作说明-完整版.md
 自定义APP制作说明-完整版改.md
 
+# iOS 壳构建产物
+ios-shell/build/
+ios-shell/FloatShell.xcodeproj/
+/build/ipa/
+
 # Tailscale serve cert files (written into cwd by `tailscale cert`)
 *.ts.net.crt
 *.ts.net.key

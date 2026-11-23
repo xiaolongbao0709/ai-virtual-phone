@@ -1,0 +1,73 @@
+name: Build iOS Shell IPA (unsigned)
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: "要加载的自部署站点地址（https://…）"
+        required: false
+        type: string
+  push:
+    branches: [main]
+    paths: ["ios-shell/**", ".github/workflows/ios-shell.yml"]
+
+jobs:
+  build:
+    runs-on: macos-14
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      SHELL_SITE_URL: ${{ inputs.site_url || vars.SHELL_SITE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios-shell
+        run: xcodegen generate
+
+      - name: Inject site URL
+        run: |
+          set -euo pipefail
+          if [ -z "${SHELL_SITE_URL:-}" ]; then
+            echo "::error::未配置站点地址：请在仓库 Variables 新建 SHELL_SITE_URL，或手动运行时填写 site_url"
+            exit 1
+          fi
+          URL="${SHELL_SITE_URL%/}"
+          /usr/libexec/PlistBuddy -c "Set :FloatSiteURL ${URL}" ios-shell/FloatShell/Info.plist
+          echo "FloatSiteURL = $(/usr/libexec/PlistBuddy -c 'Print :FloatSiteURL' ios-shell/FloatShell/Info.plist)"
+
+      # CODE_SIGNING_ALLOWED=NO：产出无签名 .app，交给 Sideloadly / AltStore / TrollStore 自签
+      - name: Build unsigned app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ios-shell/FloatShell.xcodeproj \
+            -scheme FloatShell \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath ios-shell/build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ARCHS=arm64 \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP="ios-shell/build/Build/Products/Release-iphoneos/FloatShell.app"
+          test -d "$APP"
+          rm -rf build/ipa
+          mkdir -p build/ipa/Payload
+          cp -R "$APP" build/ipa/Payload/
+          cd build/ipa
+          zip -qry FloatShell-unsigned.ipa Payload
+          ls -lh FloatShell-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: float-shell-ios-unsigned
+          path: build/ipa/FloatShell-unsigned.ipa
+          if-no-files-found: error
